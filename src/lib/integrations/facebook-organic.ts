@@ -190,7 +190,7 @@ async function fetchPageInsights(
     for (const point of metricBlock.values ?? []) {
       const dateStr = String(point.end_time ?? "").slice(0, 10);
       if (!dateStr) continue;
-      const date = new Date(dateStr + "T00:00:00");
+      const date = new Date(dateStr + "T00:00:00Z");
       const cur  = byDate.get(dateStr) ?? { date, impressions: 0, reach: 0, engagedUsers: 0 };
       const val  = Number(point.value ?? 0);
       if      (metricName === "page_impressions")        cur.impressions  = val;
@@ -234,7 +234,7 @@ async function fetchIgInsights(
     for (const point of metricBlock.values ?? []) {
       const dateStr = String(point.end_time ?? "").slice(0, 10);
       if (!dateStr) continue;
-      const date = new Date(dateStr + "T00:00:00");
+      const date = new Date(dateStr + "T00:00:00Z");
       const cur  = byDate.get(dateStr) ?? { date, impressions: 0, reach: 0, profileViews: 0 };
       const val  = Number(point.value ?? 0);
       if      (metricName === "impressions")   cur.impressions  = val;

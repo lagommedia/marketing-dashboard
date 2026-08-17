@@ -96,7 +96,7 @@ async function syncGoogleAdsRange(
     const spend = data.costMicros / 1_000_000;
     const cpc   = data.clicks      > 0 ? spend / data.clicks           : null;
     const ctr   = data.impressions > 0 ? data.clicks / data.impressions : null;
-    const dateKey = new Date(dateStr + "T00:00:00");
+    const dateKey = new Date(dateStr + "T00:00:00Z");
 
     await prisma.metricSnapshot.upsert({
       where: { date_platform_channel: { date: dateKey, platform: "google_ads", channel: "paid_media" } },
@@ -212,7 +212,7 @@ export async function syncCampaignData(fromDate?: Date): Promise<{ rows: number 
     const ctr   = impressions > 0 ? clicks / impressions : null;
     const cpc   = clicks      > 0 ? spend  / clicks      : null;
 
-    const date = new Date(dateStr + "T00:00:00");
+    const date = new Date(dateStr + "T00:00:00Z");
 
     await prisma.campaignDailySpend.upsert({
       where:  { campaignId_date: { campaignId, date } },

@@ -81,7 +81,7 @@ async function syncSearchConsoleRange(
     const impressions = Math.round(row.impressions ?? 0);
     const clicks      = Math.round(row.clicks      ?? 0);
     const ctr         = impressions > 0 ? clicks / impressions : null;
-    const dateKey     = new Date(dateStr + "T00:00:00");
+    const dateKey     = new Date(dateStr + "T00:00:00Z");
 
     await prisma.metricSnapshot.upsert({
       where: { date_platform_channel: { date: dateKey, platform: "google_search_console", channel: "organic" } },
@@ -172,7 +172,7 @@ export async function syncSearchConsoleQueries(
   for (const row of gscRows) {
     const [dateStr, query] = row.keys as [string, string];
     if (!dateStr || !query) continue;
-    const dateKey = new Date(dateStr + "T00:00:00");
+    const dateKey = new Date(dateStr + "T00:00:00Z");
     const clicks      = Math.round(row.clicks      ?? 0);
     const impressions = Math.round(row.impressions  ?? 0);
     const ctr         = impressions > 0 ? clicks / impressions : null;

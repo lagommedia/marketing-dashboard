@@ -138,7 +138,7 @@ async function upsertRows(rows: GaRow[]): Promise<number> {
   for (const row of rows) {
     // GA4 returns dates as "YYYYMMDD" — convert to ISO
     const dateStr = `${row.date.slice(0, 4)}-${row.date.slice(4, 6)}-${row.date.slice(6, 8)}`;
-    const date    = new Date(dateStr + "T00:00:00");
+    const date    = new Date(dateStr + "T00:00:00Z");
 
     await prisma.gaOrganicSnapshot.upsert({
       where:  { date_pagePath: { date, pagePath: row.pagePath } },

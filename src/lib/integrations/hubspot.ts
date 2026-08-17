@@ -717,7 +717,7 @@ export async function getRevenueBySource(from: string, to: string): Promise<Reve
   if (!row?.accessToken) throw new Error("HubSpot not connected");
   const token = decrypt(row.accessToken);
 
-  const fromMs = new Date(from + "T00:00:00").getTime();
+  const fromMs = new Date(from + "T00:00:00Z").getTime();
   const toMs   = new Date(to   + "T23:59:59").getTime();
 
   const result: RevenueBySourceResult = { paid_search: 0, paid_social: 0, total: 0 };
@@ -801,7 +801,7 @@ export async function getRevenueCampaignBreakdown(
   if (!row?.accessToken) throw new Error("HubSpot not connected");
   const token = decrypt(row.accessToken);
 
-  const fromMs = new Date(from + "T00:00:00").getTime();
+  const fromMs = new Date(from + "T00:00:00Z").getTime();
   const toMs   = new Date(to   + "T23:59:59").getTime();
 
   // ── Step 1: Fetch closed-won Inbound paid deals in range ──────────────────
@@ -1162,7 +1162,7 @@ async function getDealMetricBySource(
   if (!row?.accessToken) throw new Error("HubSpot not connected");
   const token = decrypt(row.accessToken);
 
-  const fromMs = new Date(from + "T00:00:00").getTime();
+  const fromMs = new Date(from + "T00:00:00Z").getTime();
   const toMs   = new Date(to   + "T23:59:59").getTime();
 
   // Build filters based on metric
@@ -1236,7 +1236,7 @@ async function getContactMetricBySource(
   if (!row?.accessToken) throw new Error("HubSpot not connected");
   const token = decrypt(row.accessToken);
 
-  const fromMs = new Date(from + "T00:00:00").getTime();
+  const fromMs = new Date(from + "T00:00:00Z").getTime();
   const toMs   = new Date(to   + "T23:59:59").getTime();
 
   const lifecycleStage = metric === "leads" ? LIFECYCLE.lead : LIFECYCLE.mql;
@@ -1297,7 +1297,7 @@ async function getDealCampaignBreakdown(
   if (!row?.accessToken) throw new Error("HubSpot not connected");
   const token = decrypt(row.accessToken);
 
-  const fromMs = new Date(from + "T00:00:00").getTime();
+  const fromMs = new Date(from + "T00:00:00Z").getTime();
   const toMs   = new Date(to   + "T23:59:59").getTime();
 
   // ── Step 1: Fetch deals in range ──────────────────────────────────────────
@@ -1448,7 +1448,7 @@ async function getContactCampaignBreakdown(
   if (!row?.accessToken) throw new Error("HubSpot not connected");
   const token = decrypt(row.accessToken);
 
-  const fromMs = new Date(from + "T00:00:00").getTime();
+  const fromMs = new Date(from + "T00:00:00Z").getTime();
   const toMs   = new Date(to   + "T23:59:59").getTime();
 
   const lifecycleStage = metric === "leads" ? LIFECYCLE.lead : LIFECYCLE.mql;
@@ -2187,7 +2187,7 @@ export async function backfillHubspot(
   let snapshotCount = 0;
 
   for (const [dateStr, channelBuckets] of dayBuckets) {
-    const dateKey = new Date(dateStr + "T00:00:00");
+    const dateKey = new Date(dateStr + "T00:00:00Z");
 
     const all = zero();
     for (const ch of CHANNELS) {

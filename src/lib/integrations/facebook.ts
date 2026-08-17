@@ -133,7 +133,7 @@ async function fetchDailyInsights(
     for (const el of json.data ?? []) {
       const dateStr = el.date_start as string | undefined;
       if (!dateStr) continue;
-      const date = new Date(dateStr + "T00:00:00");
+      const date = new Date(dateStr + "T00:00:00Z");
       rows.push({
         date,
         impressions: Number(el.impressions ?? 0),
