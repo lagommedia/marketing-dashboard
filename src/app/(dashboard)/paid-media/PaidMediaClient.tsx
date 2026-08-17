@@ -357,10 +357,11 @@ export default function PaidMediaClient() {
                   }
                 />
                 <Tooltip
-                  formatter={(value: number) =>
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  formatter={(value: any) =>
                     chartView === "spend"
-                      ? [fmt$$(value), "Spend"]
-                      : [fmtN(value), "Clicks"]
+                      ? [fmt$$(value ?? 0), "Spend"]
+                      : [fmtN(value ?? 0), "Clicks"]
                   }
                   labelFormatter={l => {
                     const d = new Date(String(l) + "T00:00:00");

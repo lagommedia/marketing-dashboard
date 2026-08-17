@@ -54,7 +54,7 @@ export function ActivePipelineCard({ channel, sparkData }: Props) {
         );
         // Use the live channel total as the headline — point-in-time, not a DB sum
         if (d.totals) {
-          setLiveTotal(stageAmount({ ...d.totals, stageLabel: "", stageId: "", paid_media: d.totals.paid_media, organic: d.totals.organic, referral: d.totals.referral, total: d.totals.total }, channel));
+          setLiveTotal(stageAmount({ ...d.totals, stageLabel: "", paid_media: d.totals.paid_media, organic: d.totals.organic, referral: d.totals.referral, total: d.totals.total }, channel));
         }
       })
       .catch(() => {/* silently skip on error */});

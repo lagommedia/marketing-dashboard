@@ -121,14 +121,15 @@ async function fetchDailyInsights(
   let url: string | null = `${GRAPH_API}/${acct}/insights?${params}`;
 
   while (url) {
-    const res = await fetch(url);
+    const res: Response = await fetch(url);
     if (res.status === 429) throw new Error("429 Meta rate limit — will retry");
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       throw new Error(`Meta ${res.status} [${platform}]: ${text.slice(0, 200)}`);
     }
 
-    const json = await res.json();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const json: any = await res.json();
     for (const el of json.data ?? []) {
       const dateStr = el.date_start as string | undefined;
       if (!dateStr) continue;
