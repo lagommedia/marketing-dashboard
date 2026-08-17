@@ -18,8 +18,9 @@ async function getIntegrationStatuses(): Promise<IntegrationStatus[]> {
     },
   });
 
+  type IntegrationRow = (typeof rows)[number];
   const platformStatuses = PLATFORMS.map((p) => {
-    const row = rows.find((r) => r.platform === p.id);
+    const row = rows.find((r: IntegrationRow) => r.platform === p.id);
     return {
       id: row?.id ?? "",
       platform: p.id,
