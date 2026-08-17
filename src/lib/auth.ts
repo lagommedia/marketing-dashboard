@@ -41,9 +41,18 @@ export const authOptions: NextAuthOptions = {
 
   pages: {
     signIn: "/login",
+    error:  "/login",
   },
 
   callbacks: {
+    async signIn({ user }) {
+      const email = user.email ?? "";
+      const allowed =
+        email.endsWith("@zeni.ai") ||
+        email === "lagom.media.llc@gmail.com";
+      return allowed;
+    },
+
     async jwt({ token, user }) {
       if (user) token.id = user.id;
       return token;
