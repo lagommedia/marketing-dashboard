@@ -36,6 +36,13 @@ yarn-error.log*
 # vercel
 .vercel
 
+# local database (contains encrypted tokens — never commit)
+*.db
+*.db-shm
+*.db-wal
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+/src/generated/prisma

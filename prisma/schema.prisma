@@ -1,0 +1,342 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Integration {
+  id          String    @id @default(cuid())
+  platform    String    @unique // hubspot | google_ads | google_search_console | facebook | linkedin | reddit
+  connected   Boolean   @default(false)
+  // Token-based auth (HubSpot, Facebook, Reddit)
+  accessToken  String?
+  tokenSecret  String?   // e.g. Reddit client secret, Facebook account ID
+  // OAuth app credentials (Google, LinkedIn) — entered in the UI
+  clientId     String?
+  clientSecret String?
+  // OAuth tokens (populated after user authorises)
+  refreshToken String?
+  tokenExpiry  DateTime?
+  scopes       String?
+  // Account metadata
+  accountId    String?
+  accountName  String?
+  lastSyncedAt DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  syncLogs SyncLog[]
+}
+
+model SyncLog {
+  id            String      @id @default(cuid())
+  integrationId String
+  integration   Integration @relation(fields: [integrationId], references: [id])
+  status        String      // running | success | error
+  message       String?
+  recordsCount  Int?
+  startedAt     DateTime    @default(now())
+  completedAt   DateTime?
+}
+
+// Aggregated daily metrics per platform and channel
+model MetricSnapshot {
+  id       String   @id @default(cuid())
+  date     DateTime
+  platform String   // hubspot | google_ads | google_search_console | facebook | linkedin | reddit | all
+  channel  String   // paid_media | organic | referral | all
+
+  // Top-of-funnel
+  impressions Float?
+  clicks      Float?
+  sessions    Float?
+
+  // Mid-funnel
+  leads Float?
+  mqls  Float?
+  sqos  Float?
+
+  // Bottom-of-funnel
+  opportunities Float?
+  closedWon     Float?
+
+  // Financial
+  spend          Float?
+  revenue        Float?
+  pipeline       Float?
+  activePipeline Float?
+
+  // Cost metrics (computed on ingest)
+  cpc      Float?
+  cpl      Float?
+  cpMql    Float?
+  cpSqo    Float?
+  paidCac  Float?
+  mktgCac  Float?
+
+  // Conversion rates
+  ctr          Float?
+  leadToMql    Float?
+  mqlToSqo     Float?
+  sqoToClose   Float?
+
+  createdAt DateTime @default(now())
+
+  @@unique([date, platform, channel])
+  @@index([date])
+  @@index([channel])
+}
+
+// Internal pacing model — targets per channel per period
+model PacingTarget {
+  id      String @id @default(cuid())
+  period  String // "2024-04" | "2024-Q2"
+  channel String // paid_media | organic | referral | all
+
+  targetMqls        Float?
+  targetSqos        Float?
+  targetPipeline    Float?
+  targetClosedWon   Float?
+  targetRevenue     Float?
+  targetSpend       Float?
+  sharedAllocation  Float?   // Quarterly overhead budget prorated by % elapsed for CAC
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([period, channel])
+}
+
+// Daily spend per Google Ads campaign — seeded from CSV exports, updated by live sync
+// Enables campaign-level ROAS by joining against HubSpot revenue attribution
+model CampaignDailySpend {
+  id              String   @id @default(cuid())
+  campaignId      String
+  campaignName    String?
+  date            DateTime
+  spend           Float    @default(0)
+  clicks          Int      @default(0)
+  impressions     Int      @default(0)
+  conversions     Float    @default(0)
+  conversionValue Float    @default(0)  // revenue Google Ads attributes to this campaign
+  ctr             Float?
+  cpc             Float?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([campaignId, date])
+  @@index([date])
+  @@index([campaignId])
+}
+
+// Daily organic social metrics per platform — followers, reach, engagement
+// Separate from MetricSnapshot (which is for paid/funnel metrics)
+model SocialOrganicSnapshot {
+  id             String   @id @default(cuid())
+  platform       String   // linkedin | facebook | instagram
+  date           DateTime
+  followers      Int      @default(0)  // total follower count as of this date
+  impressions    Int      @default(0)  // organic post impressions
+  reach          Int      @default(0)  // unique accounts reached
+  engagements    Int      @default(0)  // likes + comments + shares + saves
+  clicks         Int      @default(0)  // link clicks / profile visits
+  profileViews   Int      @default(0)  // profile / page visits
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([platform, date])
+  @@index([platform, date])
+}
+
+// Cached monthly values from the Google Sheets Reference Sheet.
+// Populated on demand via the Google Sheets sync button.
+// Queried by GTM Efficiency, CAC, LTV, and sparkline calculations so
+// the Sheets API is never called at page-load time.
+model ReferenceSheetMonth {
+  id               String   @id @default(cuid())
+  month            String   @unique  // normalised: "apr 2026"
+  grossCosts       Float    @default(0)
+  sharedAllocation Float    @default(0)
+  arpu             Float    @default(0)
+  ltv              Float    @default(0)  // pre-computed LTV from sheet row 69
+  grossMargin      Float    @default(0)  // decimal 0–1
+  churnRate        Float    @default(0)  // decimal 0–1 (monthly, row 64)
+  updatedAt        DateTime @updatedAt
+
+  @@index([month])
+}
+
+// HubSpot companies — synced during HubSpot sync; classified as AI/non-AI by Claude
+model HubspotCompany {
+  id           String    @id  // HubSpot company ID
+  name         String?
+  domain       String?
+  website      String?
+  industry     String?
+  segment      String?   // new_segment: Starter, Growth, Enterprise, Discovery, Other
+  isAiCompany  Boolean?
+  aiReason     String?
+  classifiedAt DateTime?
+  syncedAt     DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([isAiCompany])
+  @@index([segment])
+  @@index([domain])
+}
+
+// Manual campaign ID → name mappings (used when Google Ads API access is unavailable)
+model CampaignNameMap {
+  id           String   @id @default(cuid())
+  campaignId   String   @unique  // e.g. "22594522054" (utm_campaign value)
+  campaignName String            // e.g. "Brand - Exact Match"
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// Quarterly pipeline deal cache — avoids re-fetching completed quarters from HubSpot
+// Stores per-segment amounts broken out by channel so any channel filter can be applied on read.
+// Current (in-progress) quarters are never written here — they always hit HubSpot live.
+// Per-query daily data from Google Search Console.
+// Enables keyword pillar analysis, branded vs. non-branded splits,
+// and query-level trend tracking.
+// Daily organic traffic per landing page from Google Analytics 4.
+// Populated by the GA4 sync; queried by the SEO page organic traffic section.
+model GaOrganicSnapshot {
+  id               String   @id @default(cuid())
+  date             DateTime
+  pagePath         String   // e.g. "/blog/ai-bookkeeping"
+  sessions         Int      @default(0)
+  users            Int      @default(0)
+  engagedSessions  Int      @default(0)
+  bounceRate       Float?   // decimal 0–1
+  avgSessionSec    Float?   // average session duration in seconds
+  conversions      Int      @default(0)
+  createdAt        DateTime @default(now())
+
+  @@unique([date, pagePath])
+  @@index([date])
+  @@index([pagePath])
+}
+
+model GscQuerySnapshot {
+  id          String   @id @default(cuid())
+  date        DateTime
+  query       String
+  clicks      Int      @default(0)
+  impressions Int      @default(0)
+  ctr         Float?
+  position    Float?
+  createdAt   DateTime @default(now())
+
+  @@unique([date, query])
+  @@index([date])
+  @@index([query])
+}
+
+// Daily totals for when Zeni appears inside a Google AI Overview
+// GSC API constraint: searchAppearance dimension cannot be combined with query/page dimensions,
+// so we can only get aggregate daily counts, not per-query breakdown.
+model GscAiOverviewDay {
+  id          String   @id @default(cuid())
+  date        DateTime @unique
+  clicks      Int      @default(0)
+  impressions Int      @default(0)
+  ctr         Float?
+  createdAt   DateTime @default(now())
+
+  @@index([date])
+}
+
+// Cached AEO content-readiness scores per pillar (refreshed on demand)
+model AeoPillarScore {
+  id        String   @id @default(cuid())
+  pillarId  String   @unique
+  pageUrl   String?
+  score     Int      // 0-100
+  signals   String   // JSON: { faqSchema, orgSchema, howtoSchema, questionHeadings, directAnswer, lists, metaDesc }
+  fetchedAt DateTime @default(now())
+}
+
+// AI engine mention tracking — fires pillar queries against OpenAI / Gemini,
+// records whether Zeni was mentioned or cited in the response.
+model AiMentionSnapshot {
+  id        String   @id @default(cuid())
+  pillarId  String
+  query     String   // The question fired at the AI engine
+  engine    String   // "openai" | "gemini"
+  mentioned Boolean  @default(false)
+  citedUrls String?  // JSON: string[] — zeni.ai URLs found in grounding citations
+  syncedAt  DateTime @default(now())
+
+  @@unique([pillarId, engine, query])
+  @@index([syncedAt])
+  @@index([pillarId])
+  @@index([engine])
+}
+
+model PipelineQuarterSnapshot {
+  id             String   @id @default(cuid())
+  quarter        String   // "Q1 2025" | "Q2 2025" | …
+  segment        String   // "Starter" | "Growth" | "Enterprise" | "Discovery" | "Other"
+  amountAll      Float    @default(0)  // total regardless of channel
+  amountPaid     Float    @default(0)  // paid_media (incl. 50 % of "direct" splits)
+  amountOrganic  Float    @default(0)  // organic    (incl. 50 % of "direct" splits)
+  amountReferral Float    @default(0)  // referral
+  syncedAt       DateTime @default(now())
+
+  @@unique([quarter, segment])
+  @@index([quarter])
+}
+
+// ---------------------------------------------------------------------------
+// NextAuth.js required models
+// ---------------------------------------------------------------------------
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  password      String?   // hashed — only set for credentials sign-in
+  accounts      Account[]
+  sessions      Session[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
