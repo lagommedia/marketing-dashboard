@@ -44,7 +44,7 @@ model SyncLog {
 // Aggregated daily metrics per platform and channel
 model MetricSnapshot {
   id       String   @id @default(cuid())
-  date     DateTime
+  date     DateTime @db.Timestamptz(3)
   platform String   // hubspot | google_ads | google_search_console | facebook | linkedin | reddit | all
   channel  String   // paid_media | organic | referral | all
 
