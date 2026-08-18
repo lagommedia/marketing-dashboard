@@ -166,7 +166,7 @@ async function getConnectedCount() {
 
 const SHORT_MONTHS_PAGE = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-async function getEstimatedMarketingSpend(from: Date, _to: Date): Promise<number | null> {
+async function getEstimatedMarketingSpend(from: Date, to: Date): Promise<number | null> {
   // Always use the full quarter's months so crossing a month boundary mid-quarter
   // doesn't cause a step-jump in the estimate. pctElapsed handles the "how much
   // have we spent so far" portion — the cost base should always be the full quarter.
@@ -203,7 +203,10 @@ async function getEstimatedMarketingSpend(from: Date, _to: Date): Promise<number
     const mIdx = SHORT_MONTHS_PAGE.indexOf(mon);
     lastDataDate = new Date(Number(yr), mIdx + 1, 1); // first day of NEXT month
   }
-  const asOf = new Date(Math.min(new Date().getTime(), lastDataDate.getTime()));
+  // Also cap at the selected `to` date so historical ranges (e.g. "July only")
+  // show the spend proportional to that period, not the spend through today.
+  const toEndOfDay = new Date(to.getTime() + 86_400_000); // include full last day
+  const asOf = new Date(Math.min(new Date().getTime(), lastDataDate.getTime(), toEndOfDay.getTime()));
 
   const qStart  = new Date(from.getFullYear(), q * 3,     1);
   const qEnd    = new Date(from.getFullYear(), q * 3 + 3, 0);

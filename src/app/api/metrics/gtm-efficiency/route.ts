@@ -88,7 +88,8 @@ async function handler(req: NextRequest) {
     return NextResponse.json({ error: "from, to, and revenue are required" }, { status: 400 });
   }
 
-  const from    = new Date(fromStr + "T00:00:00");
+  const from    = new Date(fromStr + "T00:00:00Z");
+  const to      = new Date(toStr   + "T00:00:00Z");
   const revenue = parseFloat(revenueParam);
 
   if (isNaN(revenue)) {
@@ -148,7 +149,8 @@ async function handler(req: NextRequest) {
   }
 
   const lastData    = cached ? lastCachedDate(months, cached) : new Date();
-  const asOf        = new Date(Math.min(new Date().getTime(), lastData.getTime()));
+  const toEndOfDay  = new Date(to.getTime() + 86_400_000); // include full last day
+  const asOf        = new Date(Math.min(new Date().getTime(), lastData.getTime(), toEndOfDay.getTime()));
   const pct         = pctElapsed(from, asOf);
   const denominator = (grossCosts + sharedAllocation) * pct;
 
