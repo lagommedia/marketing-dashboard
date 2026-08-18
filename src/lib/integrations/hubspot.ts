@@ -1578,8 +1578,8 @@ function normalizeSegment(raw: string): string {
 
 function dealQuarterLabel(isoDate: string): string {
   const d = new Date(isoDate);
-  const q = Math.floor(d.getMonth() / 3) + 1;
-  return `Q${q} ${d.getFullYear()}`;
+  const q = Math.floor(d.getUTCMonth() / 3) + 1;
+  return `Q${q} ${d.getUTCFullYear()}`;
 }
 
 function accumulateBreakdown(deals: RawDeal[], channelFilter?: string): PipelineBreakdownResult {
@@ -2720,15 +2720,14 @@ function parseHubspotDate(raw: string | null | undefined): string {
     ms = Date.parse(raw);
   }
   if (isNaN(ms)) return "";
-  // Use LOCAL date parts so HubSpot's midnight-UTC date fields (e.g. closedate)
-  // are interpreted in the server's local timezone.  A deal closed at 11:59pm
-  // CDT on June 30 has closedate 2026-07-01T00:00:00Z in HubSpot — reading
-  // UTC would give "2026-07-01" (wrong quarter); reading local gives "2026-06-30".
-  // This is consistent with startOfDay(), which also uses local time.
+  // Use UTC date parts — HubSpot closedate/createdate are midnight-UTC date fields,
+  // so the UTC calendar date is the canonical value. Using local parts caused
+  // different date strings on Vercel (UTC) vs local dev (Mountain Time), creating
+  // duplicate MetricSnapshot rows for the same calendar day.
   const d = new Date(ms);
-  const yyyy = d.getFullYear();
-  const mm   = String(d.getMonth() + 1).padStart(2, "0");
-  const dd   = String(d.getDate()).padStart(2, "0");
+  const yyyy = d.getUTCFullYear();
+  const mm   = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd   = String(d.getUTCDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
 }
 
