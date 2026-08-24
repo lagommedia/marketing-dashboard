@@ -248,12 +248,10 @@ export async function syncHubspot(): Promise<{ recordsCount: number }> {
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
   const sinceTs = thirtyDaysAgo.getTime();
 
-  // Closed-won revenue must not cross quarter boundaries in daily snapshots.
-  // The daily snapshot writes ALL fetched closed-won deals to today's date, so
-  // capping the lookback at the current quarter start prevents Q2 deals from
-  // appearing in Q3 on the first sync of a new quarter.
-  const qStart = new Date(today.getFullYear(), Math.floor(today.getMonth() / 3) * 3, 1);
-  const closedSinceTs = Math.max(sinceTs, qStart.getTime());
+  // Daily snapshot: only fetch deals closed TODAY so this row stores a delta,
+  // not a cumulative total. Backfill writes per-day rows; summing them gives
+  // correct QTD without double-counting across days.
+  const closedSinceTs = startOfDay(today).getTime();
 
   // ── Contact counts: 12 parallel queries (3 source groups × 4 stages) ──────
   const [
