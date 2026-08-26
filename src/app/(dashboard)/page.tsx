@@ -114,10 +114,22 @@ async function getMetrics(channel: Channel, fromDate: Date, toDate: Date) {
       date: { gte: fromDate, lte: toEnd },
       ...buildChannelWhere(channel),
     },
+    orderBy: { date: "desc" },
   });
 
   const sum = <K extends keyof (typeof rows)[0]>(key: K) =>
     rows.reduce((acc, r) => acc + ((r[key] as number) ?? 0), 0) || null;
+
+  // activePipeline is a point-in-time snapshot written daily (not a delta).
+  // Summing snapshots across days inflates the number proportionally to the
+  // date range. Instead, use the most-recent non-null value in the window.
+  const latestActivePipeline = (() => {
+    for (const r of rows) {
+      const v = r.activePipeline as number | null;
+      if (v != null && v > 0) return v;
+    }
+    return null;
+  })();
 
   const impressions  = sum("impressions");
   const clicks       = sum("clicks");
@@ -137,7 +149,7 @@ async function getMetrics(channel: Channel, fromDate: Date, toDate: Date) {
     spend,
     revenue:        sum("revenue"),
     pipeline:       sum("pipeline"),
-    activePipeline: sum("activePipeline"),
+    activePipeline: latestActivePipeline,
     // Conversion rates derived from summed counts — accurate across the full date range
     ctr:        clicks    != null && impressions != null && impressions > 0 ? clicks    / impressions : null,
     leadToMql:  mqls      != null && leads       != null && leads       > 0 ? mqls      / leads       : null,

@@ -244,14 +244,13 @@ export async function syncHubspot(): Promise<{ recordsCount: number }> {
   const token = decrypt(row.accessToken);
 
   const today = new Date();
-  const thirtyDaysAgo = new Date(today);
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-  const sinceTs = thirtyDaysAgo.getTime();
 
-  // Daily snapshot: only fetch deals closed TODAY so this row stores a delta,
-  // not a cumulative total. Backfill writes per-day rows; summing them gives
-  // correct QTD without double-counting across days.
-  const closedSinceTs = startOfDay(today).getTime();
+  // All daily-sync queries use startOfDay(today) so each row is a true daily
+  // delta. The dashboard sums rows across date ranges; cumulative lookbacks
+  // would cause every metric to inflate proportionally to the range length.
+  // Backfill writes the same way (per-day deltas) so they sum correctly.
+  const sinceTs      = startOfDay(today).getTime(); // leads/MQLs/new pipeline: today only
+  const closedSinceTs = sinceTs;                    // closed-won revenue: today only
 
   // ── Contact counts: 12 parallel queries (3 source groups × 4 stages) ──────
   const [
