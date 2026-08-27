@@ -7,7 +7,7 @@ export async function POST(req: NextRequest) {
 
     // Accept a `from` date in the request body, defaulting to April 1 of the current year
     const fromStr: string = body.from ?? `${new Date().getFullYear()}-04-01`;
-    const from = new Date(fromStr + "T00:00:00");
+    const from = new Date(fromStr + "T00:00:00Z"); // UTC — prevents Mountain-Time off-by-hours
 
     if (isNaN(from.getTime())) {
       return NextResponse.json({ error: "Invalid `from` date — use YYYY-MM-DD" }, { status: 422 });
