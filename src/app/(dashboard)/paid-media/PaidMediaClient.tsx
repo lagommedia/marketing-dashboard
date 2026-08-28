@@ -369,8 +369,9 @@ export default function PaidMediaClient() {
     setSyncing(true);
     setSyncMsg(null);
     try {
+      // Always sync the last 12 weeks so the rolling average table has full data
       const from = new Date();
-      from.setDate(from.getDate() - days);
+      from.setUTCDate(from.getUTCDate() - 84); // 12 × 7 days
       const res  = await fetch("/api/integrations/google_ads/campaign-sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -380,6 +381,7 @@ export default function PaidMediaClient() {
       if (!res.ok) throw new Error(json.error ?? "Sync failed");
       setSyncMsg(`Synced ${json.rows} rows across campaigns.`);
       await load(days);
+      await loadRolling(rollingView, rollingCampaign);
     } catch (err) {
       setSyncMsg(err instanceof Error ? err.message : "Sync failed");
     } finally {
