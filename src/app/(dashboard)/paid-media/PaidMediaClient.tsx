@@ -2,18 +2,57 @@
 
 import { useState, useEffect, useCallback } from "react";
 import {
-  AreaChart, Area, BarChart, Bar,
-  XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, Legend,
+  AreaChart, Area,
+  XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer,
 } from "recharts";
 import {
   RefreshCw, Megaphone, TrendingUp, MousePointerClick, Eye,
   DollarSign, BarChart2, Zap, ArrowUpDown, ChevronUp, ChevronDown,
+  CalendarDays,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
+interface RollingRow {
+  label:           string;
+  startDate:       string;
+  endDate:         string;
+  impressions:     number;
+  clicks:          number;
+  spend:           number;
+  ctr:             number | null;
+  cpc:             number | null;
+  conversions:     number;
+  conversionValue: number;
+  roas:            number | null;
+}
+
+interface RollingDelta {
+  impressions:     number | null;
+  clicks:          number | null;
+  spend:           number | null;
+  ctr:             number | null;
+  cpc:             number | null;
+  conversions:     number | null;
+  conversionValue: number | null;
+  roas:            number | null;
+}
+
+interface RollingData {
+  view:       "daily" | "weekly";
+  dayName:    string;
+  anchorDate: string;
+  campaigns:  { campaignId: string; campaignName: string }[];
+  rows:       RollingRow[];
+  avg12:      RollingRow;
+  wowDelta:   RollingDelta | null;
+  wowPct:     RollingDelta | null;
+  avg12Delta: RollingDelta | null;
+  avg12Pct:   RollingDelta | null;
+}
 
 interface Campaign {
   campaignId:      string;
@@ -91,6 +130,164 @@ function shortDate(iso: string): string {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
+function fmtDelta(v: number | null, fmt: (n: number) => string): string {
+  if (v == null) return "—";
+  const sign = v > 0 ? "+" : "";
+  return sign + fmt(v);
+}
+
+function fmtPctDelta(v: number | null): string {
+  if (v == null) return "—";
+  const sign = v > 0 ? "+" : "";
+  return sign + (v * 100).toFixed(1) + "%";
+}
+
+function deltaClass(v: number | null, lowerIsBetter = false): string {
+  if (v == null || v === 0) return "text-slate-400";
+  const positive = lowerIsBetter ? v < 0 : v > 0;
+  return positive ? "text-emerald-600 font-semibold" : "text-red-500 font-semibold";
+}
+
+// ---------------------------------------------------------------------------
+// Rolling Average Table
+// ---------------------------------------------------------------------------
+
+const ROLLING_COLS = [
+  { key: "impressions",     label: "Impressions",   fmt: (v: number) => fmtN(v),              isDelta: false },
+  { key: "clicks",          label: "Clicks",        fmt: (v: number) => fmtN(v),              isDelta: false },
+  { key: "ctr",             label: "CTR",           fmt: (v: number) => fmtPct(v),            isDelta: false },
+  { key: "spend",           label: "Cost",          fmt: (v: number) => fmt$$(v),             isDelta: false },
+  { key: "cpc",             label: "Cost Per Click",fmt: (v: number) => fmtCpc(v),            isDelta: false },
+  { key: "conversions",     label: "Conversions",   fmt: (v: number) => fmtN(v, 1),           isDelta: false },
+  { key: "conversionValue", label: "Conv. Value",   fmt: (v: number) => fmt$$(v),             isDelta: false },
+  { key: "roas",            label: "ROAS",          fmt: (v: number) => fmtRoas(v),           isDelta: false },
+] as const;
+
+type RollingColKey = typeof ROLLING_COLS[number]["key"];
+
+function rollingVal(row: RollingRow | RollingDelta, key: RollingColKey): number | null {
+  const v = (row as unknown as Record<string, unknown>)[key];
+  return typeof v === "number" ? v : null;
+}
+
+function RollingTable({ data }: { data: RollingData }) {
+  const { rows, avg12, wowDelta, wowPct, avg12Delta, avg12Pct, view, dayName } = data;
+
+  const subLabel = view === "daily"
+    ? `Last 12 ${dayName}s`
+    : "Last 12 Weeks";
+
+  const wowLabel  = view === "daily" ? "WoW Δ" : "Week-over-Week Δ";
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+      <div className="px-6 py-4 border-b border-slate-100">
+        <h2 className="text-sm font-semibold text-slate-900">12-Period Rolling Average</h2>
+        <p className="text-xs text-slate-400 mt-0.5">{subLabel} · newest first</p>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-slate-50 border-b border-slate-100">
+              <th className="sticky left-0 z-10 bg-slate-50 text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">
+                {view === "daily" ? "Date" : "Week"}
+              </th>
+              {ROLLING_COLS.map(col => (
+                <th key={col.key} className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">
+                  {col.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {rows.map((row, i) => (
+              <tr key={row.startDate} className={cn("hover:bg-slate-50/60 transition-colors", i === 0 ? "bg-indigo-50/30" : i % 2 === 1 ? "bg-slate-50/40" : "")}>
+                <td className={cn("sticky left-0 z-10 px-6 py-3 font-medium whitespace-nowrap", i === 0 ? "bg-indigo-50/30 text-indigo-700" : "bg-white text-slate-900")}>
+                  {row.label}
+                  {i === 0 && <span className="ml-2 text-xs text-indigo-400 font-normal">most recent</span>}
+                </td>
+                {ROLLING_COLS.map(col => (
+                  <td key={col.key} className="px-4 py-3 text-right tabular-nums text-slate-600 whitespace-nowrap">
+                    {(() => {
+                      const v = rollingVal(row, col.key);
+                      return v != null ? col.fmt(v) : <span className="text-slate-300">—</span>;
+                    })()}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+          <tfoot className="border-t-2 border-slate-200">
+            {/* 12-period average */}
+            <tr className="bg-slate-800 text-white">
+              <td className="sticky left-0 z-10 bg-slate-800 px-6 py-3 text-xs font-bold uppercase tracking-wide whitespace-nowrap">
+                12-Period Avg
+              </td>
+              {ROLLING_COLS.map(col => (
+                <td key={col.key} className="px-4 py-3 text-right tabular-nums text-slate-200 font-semibold whitespace-nowrap">
+                  {(() => {
+                    const v = rollingVal(avg12, col.key);
+                    return v != null ? col.fmt(v) : "—";
+                  })()}
+                </td>
+              ))}
+            </tr>
+
+            {/* WoW delta */}
+            {wowDelta && wowPct && (
+              <tr className="bg-slate-100 border-t border-slate-200">
+                <td className="sticky left-0 z-10 bg-slate-100 px-6 py-2.5 text-xs font-semibold text-slate-600 uppercase tracking-wide whitespace-nowrap">
+                  {wowLabel}
+                </td>
+                {ROLLING_COLS.map(col => {
+                  const raw = rollingVal(wowDelta, col.key);
+                  const pct = rollingVal(wowPct, col.key);
+                  const lowerBetter = col.key === "cpc" || col.key === "spend";
+                  return (
+                    <td key={col.key} className={cn("px-4 py-2.5 text-right tabular-nums text-xs whitespace-nowrap", deltaClass(raw, lowerBetter))}>
+                      {raw != null ? (
+                        <>
+                          <div>{fmtDelta(raw, col.fmt)}</div>
+                          <div className="text-[10px] opacity-70">{fmtPctDelta(pct)}</div>
+                        </>
+                      ) : "—"}
+                    </td>
+                  );
+                })}
+              </tr>
+            )}
+
+            {/* 12-period average delta */}
+            {avg12Delta && avg12Pct && (
+              <tr className="bg-slate-50 border-t border-slate-200">
+                <td className="sticky left-0 z-10 bg-slate-50 px-6 py-2.5 text-xs font-semibold text-slate-600 uppercase tracking-wide whitespace-nowrap">
+                  vs 12-Period Avg
+                </td>
+                {ROLLING_COLS.map(col => {
+                  const raw = rollingVal(avg12Delta, col.key);
+                  const pct = rollingVal(avg12Pct, col.key);
+                  const lowerBetter = col.key === "cpc" || col.key === "spend";
+                  return (
+                    <td key={col.key} className={cn("px-4 py-2.5 text-right tabular-nums text-xs whitespace-nowrap", deltaClass(raw, lowerBetter))}>
+                      {raw != null ? (
+                        <>
+                          <div>{fmtDelta(raw, col.fmt)}</div>
+                          <div className="text-[10px] opacity-70">{fmtPctDelta(pct)}</div>
+                        </>
+                      ) : "—"}
+                    </td>
+                  );
+                })}
+              </tr>
+            )}
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
@@ -130,14 +327,20 @@ function SortIcon({ col, active, dir }: { col: string; active: string; dir: Sort
 // ---------------------------------------------------------------------------
 
 export default function PaidMediaClient() {
-  const [days,       setDays]      = useState<30 | 90>(30);
-  const [data,       setData]      = useState<PaidMediaData | null>(null);
-  const [loading,    setLoading]   = useState(true);
-  const [syncing,    setSyncing]   = useState(false);
-  const [syncMsg,    setSyncMsg]   = useState<string | null>(null);
-  const [sortKey,    setSortKey]   = useState<SortKey>("spend");
-  const [sortDir,    setSortDir]   = useState<SortDir>("desc");
-  const [chartView,  setChartView] = useState<"spend" | "clicks">("spend");
+  const [days,         setDays]        = useState<30 | 90>(30);
+  const [data,         setData]        = useState<PaidMediaData | null>(null);
+  const [loading,      setLoading]     = useState(true);
+  const [syncing,      setSyncing]     = useState(false);
+  const [syncMsg,      setSyncMsg]     = useState<string | null>(null);
+  const [sortKey,      setSortKey]     = useState<SortKey>("spend");
+  const [sortDir,      setSortDir]     = useState<SortDir>("desc");
+  const [chartView,    setChartView]   = useState<"spend" | "clicks">("spend");
+
+  // Rolling average state
+  const [rollingView,  setRollingView] = useState<"daily" | "weekly">("daily");
+  const [rollingCampaign, setRollingCampaign] = useState<string>("all");
+  const [rollingData,  setRollingData] = useState<RollingData | null>(null);
+  const [rollingLoading, setRollingLoading] = useState(false);
 
   const load = useCallback(async (d: 30 | 90) => {
     setLoading(true);
@@ -149,7 +352,18 @@ export default function PaidMediaClient() {
     }
   }, []);
 
+  const loadRolling = useCallback(async (view: "daily" | "weekly", campaignId: string) => {
+    setRollingLoading(true);
+    try {
+      const res = await fetch(`/api/paid-media/rolling?view=${view}&campaignId=${encodeURIComponent(campaignId)}`);
+      if (res.ok) setRollingData(await res.json());
+    } finally {
+      setRollingLoading(false);
+    }
+  }, []);
+
   useEffect(() => { load(days); }, [days, load]);
+  useEffect(() => { loadRolling(rollingView, rollingCampaign); }, [rollingView, rollingCampaign, loadRolling]);
 
   async function handleSync() {
     setSyncing(true);
@@ -480,6 +694,79 @@ export default function PaidMediaClient() {
                 </tfoot>
               </table>
             </div>
+          </div>
+
+          {/* -------------------------------------------------------------- */}
+          {/* Rolling Average Section                                          */}
+          {/* -------------------------------------------------------------- */}
+          <div className="space-y-4">
+            {/* Controls */}
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-2">
+                <CalendarDays className="w-4 h-4 text-slate-400" />
+                <span className="text-sm font-semibold text-slate-900">Rolling Averages</span>
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                {/* View toggle */}
+                <div className="flex rounded-lg border border-slate-200 bg-slate-50 overflow-hidden text-sm">
+                  {(["daily", "weekly"] as const).map(v => (
+                    <button
+                      key={v}
+                      onClick={() => setRollingView(v)}
+                      className={cn(
+                        "px-3 py-1.5 font-medium transition-colors capitalize",
+                        rollingView === v
+                          ? "bg-white text-slate-900 shadow-sm"
+                          : "text-slate-500 hover:text-slate-700",
+                      )}
+                    >
+                      {v === "daily" ? "Daily (by weekday)" : "Weekly"}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Campaign selector */}
+                {(rollingData?.campaigns?.length ?? 0) > 0 && (
+                  <select
+                    value={rollingCampaign}
+                    onChange={e => setRollingCampaign(e.target.value)}
+                    className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                  >
+                    <option value="all">All Campaigns</option>
+                    {rollingData!.campaigns.map(c => (
+                      <option key={c.campaignId} value={c.campaignId}>{c.campaignName}</option>
+                    ))}
+                  </select>
+                )}
+
+                <button
+                  onClick={() => loadRolling(rollingView, rollingCampaign)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+                >
+                  <RefreshCw className={cn("w-3.5 h-3.5", rollingLoading && "animate-spin")} />
+                  Refresh
+                </button>
+              </div>
+            </div>
+
+            {rollingLoading && (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-10 text-center">
+                <RefreshCw className="w-6 h-6 mx-auto mb-2 animate-spin text-slate-300" />
+                <p className="text-sm text-slate-400">Building rolling averages…</p>
+              </div>
+            )}
+
+            {!rollingLoading && rollingData && (
+              rollingData.rows.length > 0 ? (
+                <RollingTable data={rollingData} />
+              ) : (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-10 text-center">
+                  <CalendarDays className="w-8 h-8 mx-auto mb-2 text-slate-300" />
+                  <p className="text-sm text-slate-500">No data yet for this period.</p>
+                  <p className="text-xs text-slate-400 mt-1">Run a campaign sync or backfill to populate historical data.</p>
+                </div>
+              )
+            )}
           </div>
 
           {/* -------------------------------------------------------------- */}
