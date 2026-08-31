@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   AreaChart, Area,
   XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer,
@@ -8,7 +8,7 @@ import {
 import {
   RefreshCw, Megaphone, TrendingUp, MousePointerClick, Eye,
   DollarSign, BarChart2, Zap, ArrowUpDown, ChevronUp, ChevronDown,
-  CalendarDays, Target,
+  CalendarDays, Target, Send, Bot, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -22,8 +22,13 @@ interface CampaignBreakdown {
   impressions:       number;
   clicks:            number;
   spend:             number;
+  conversions:       number;
+  conversionValue:   number;
   ctr:               number | null;
   cpc:               number | null;
+  roas:              number | null;
+  costPerConversion: number | null;
+  invalidClicks:     number | null;
   searchImprShare:   number | null;
   searchTopIS:       number | null;
   searchAbsTopIS:    number | null;
@@ -38,8 +43,13 @@ interface RollingRow {
   impressions:       number;
   clicks:            number;
   spend:             number;
+  conversions:       number;
+  conversionValue:   number;
   ctr:               number | null;
   cpc:               number | null;
+  roas:              number | null;
+  costPerConversion: number | null;
+  invalidClicks:     number | null;
   searchImprShare:   number | null;
   searchTopIS:       number | null;
   searchAbsTopIS:    number | null;
@@ -54,6 +64,11 @@ interface RollingDelta {
   spend:             number | null;
   ctr:               number | null;
   cpc:               number | null;
+  conversions:       number | null;
+  conversionValue:   number | null;
+  roas:              number | null;
+  costPerConversion: number | null;
+  invalidClicks:     number | null;
   searchImprShare:   number | null;
   searchTopIS:       number | null;
   searchAbsTopIS:    number | null;
@@ -61,8 +76,26 @@ interface RollingDelta {
   searchLostISBudget: number | null;
 }
 
+interface FunnelMetrics {
+  leads:      number | null;
+  mqls:       number | null;
+  sqos:       number | null;
+  closedWon:  number | null;
+  leadToMql:  number | null;
+  mqlToSqo:   number | null;
+  sqoToClose: number | null;
+}
+
+interface FunnelData {
+  qtdStart:  string;
+  qtdLabel:  string;
+  prevLabel: string;
+  current:   FunnelMetrics;
+  prior:     FunnelMetrics;
+}
+
 interface RollingData {
-  view:       "daily" | "weekly";
+  view:       "daily" | "weekly" | "monthly";
   dayName:    string;
   anchorDate: string;
   campaigns:  { campaignId: string; campaignName: string }[];
@@ -115,6 +148,9 @@ interface PaidMediaData {
 
 type SortKey = "spend" | "clicks" | "impressions" | "ctr" | "cpc" | "roas" | "conversions";
 type SortDir = "asc" | "desc";
+
+// Only these campaigns are shown — everything else is hidden
+const ACTIVE_CAMPAIGNS = ["Performance Max", "S_Non-Brand", "S_Brand"];
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -172,22 +208,38 @@ function deltaClass(v: number | null, lowerIsBetter = false): string {
 // Rolling Average Table
 // ---------------------------------------------------------------------------
 
-const ROLLING_COLS = [
-  { key: "impressions",       label: "Impressions",          fmt: (v: number) => fmtN(v) },
-  { key: "clicks",            label: "Clicks",               fmt: (v: number) => fmtN(v) },
-  { key: "ctr",               label: "CTR",                  fmt: (v: number) => fmtPct(v) },
-  { key: "spend",             label: "Cost",                 fmt: (v: number) => fmt$$(v) },
-  { key: "cpc",               label: "Cost Per Click",       fmt: (v: number) => fmtCpc(v) },
-  { key: "searchImprShare",   label: "Search Impr. Share",   fmt: (v: number) => fmtPct(v) },
-  { key: "searchTopIS",       label: "Search Top IS",        fmt: (v: number) => fmtPct(v) },
-  { key: "searchAbsTopIS",    label: "Search Abs. Top IS",   fmt: (v: number) => fmtPct(v) },
-  { key: "searchLostISRank",  label: "Lost IS (Rank)",       fmt: (v: number) => fmtPct(v) },
-  { key: "searchLostISBudget",label: "Lost IS (Budget)",     fmt: (v: number) => fmtPct(v) },
-] as const;
+type RollingColDef = {
+  key:          string;
+  label:        string;
+  fmt:          (v: number) => string;
+  searchOnly?:  boolean;
+  lowerBetter?: boolean;
+  funnelOnly?:  boolean;
+};
 
-type RollingColKey = typeof ROLLING_COLS[number]["key"];
+const ROLLING_COLS: RollingColDef[] = [
+  { key: "impressions",       label: "Impressions",        fmt: (v) => fmtN(v) },
+  { key: "clicks",            label: "Clicks",             fmt: (v) => fmtN(v) },
+  { key: "ctr",               label: "CTR",                fmt: (v) => fmtPct(v) },
+  { key: "spend",             label: "Cost",               fmt: (v) => fmt$$(v),  lowerBetter: true },
+  { key: "cpc",               label: "CPC",                fmt: (v) => fmtCpc(v), lowerBetter: true },
+  { key: "conversions",       label: "Conversions",        fmt: (v) => fmtN(v, 1) },
+  { key: "conversionValue",   label: "Conv. Value",        fmt: (v) => fmt$$(v) },
+  { key: "roas",              label: "ROAS",               fmt: (v) => fmtRoas(v) },
+  { key: "costPerConversion", label: "Cost/Conv.",         fmt: (v) => fmtCpc(v), lowerBetter: true },
+  { key: "invalidClicks",     label: "Invalid Clicks",     fmt: (v) => fmtN(v),   lowerBetter: true },
+  { key: "searchImprShare",   label: "Search Impr. Share", fmt: (v) => fmtPct(v), searchOnly: true },
+  { key: "searchTopIS",       label: "Search Top IS",      fmt: (v) => fmtPct(v), searchOnly: true },
+  { key: "searchAbsTopIS",    label: "Abs. Top IS",        fmt: (v) => fmtPct(v), searchOnly: true },
+  { key: "searchLostISRank",  label: "Lost IS (Rank)",     fmt: (v) => fmtPct(v), searchOnly: true, lowerBetter: true },
+  { key: "searchLostISBudget",label: "Lost IS (Budget)",   fmt: (v) => fmtPct(v), searchOnly: true, lowerBetter: true },
+  { key: "leads",             label: "Leads",              fmt: (v) => fmtN(v, 0), funnelOnly: true },
+  { key: "mqls",              label: "MQLs",               fmt: (v) => fmtN(v, 0), funnelOnly: true },
+  { key: "sqos",              label: "SQOs",               fmt: (v) => fmtN(v, 0), funnelOnly: true },
+  { key: "closedWon",         label: "Closed Won",         fmt: (v) => fmtN(v, 0), funnelOnly: true },
+];
 
-function rollingVal(row: RollingRow | RollingDelta, key: RollingColKey): number | null {
+function rollingVal(row: RollingRow | RollingDelta, key: string): number | null {
   const v = (row as unknown as Record<string, unknown>)[key];
   return typeof v === "number" ? v : null;
 }
@@ -201,17 +253,28 @@ function nullableAvg(vals: (number | null)[]): number | null {
   return valid.length > 0 ? valid.reduce((s, v) => s + v, 0) / valid.length : null;
 }
 
+function nullableSum(vals: (number | null)[]): number | null {
+  const valid = vals.filter((v): v is number => v != null);
+  return valid.length > 0 ? valid.reduce((s, v) => s + v, 0) : null;
+}
+
 function clientAvgRow(rows: RollingRow[]): RollingRow {
   const n = rows.length;
-  if (n === 0) return { label: "12-period avg", startDate: "", endDate: "", impressions: 0, clicks: 0, spend: 0, ctr: null, cpc: null, searchImprShare: null, searchTopIS: null, searchAbsTopIS: null, searchLostISRank: null, searchLostISBudget: null };
-  const impressions = rows.reduce((s, r) => s + r.impressions, 0) / n;
-  const clicks      = rows.reduce((s, r) => s + r.clicks, 0) / n;
-  const spend       = rows.reduce((s, r) => s + r.spend, 0) / n;
+  if (n === 0) return { label: "12-period avg", startDate: "", endDate: "", impressions: 0, clicks: 0, spend: 0, conversions: 0, conversionValue: 0, ctr: null, cpc: null, roas: null, costPerConversion: null, invalidClicks: null, searchImprShare: null, searchTopIS: null, searchAbsTopIS: null, searchLostISRank: null, searchLostISBudget: null };
+  const impressions     = rows.reduce((s, r) => s + r.impressions, 0) / n;
+  const clicks          = rows.reduce((s, r) => s + r.clicks, 0) / n;
+  const spend           = rows.reduce((s, r) => s + r.spend, 0) / n;
+  const conversions     = rows.reduce((s, r) => s + r.conversions, 0) / n;
+  const conversionValue = rows.reduce((s, r) => s + r.conversionValue, 0) / n;
+  const invSum          = nullableSum(rows.map(r => r.invalidClicks));
   return {
     label: "12-period avg", startDate: "", endDate: "",
-    impressions, clicks, spend,
-    ctr: impressions > 0 ? clicks / impressions : null,
-    cpc: clicks      > 0 ? spend  / clicks      : null,
+    impressions, clicks, spend, conversions, conversionValue,
+    ctr:               impressions > 0 ? clicks / impressions   : null,
+    cpc:               clicks      > 0 ? spend  / clicks        : null,
+    roas:              spend       > 0 ? conversionValue / spend : null,
+    costPerConversion: conversions > 0 ? spend / conversions    : null,
+    invalidClicks:      invSum != null ? invSum / n : null,
     searchImprShare:    nullableAvg(rows.map(r => r.searchImprShare)),
     searchTopIS:        nullableAvg(rows.map(r => r.searchTopIS)),
     searchAbsTopIS:     nullableAvg(rows.map(r => r.searchAbsTopIS)),
@@ -225,6 +288,9 @@ function clientDeltaRow(a: RollingRow, b: RollingRow): RollingDelta {
   return {
     impressions: d(a.impressions, b.impressions), clicks: d(a.clicks, b.clicks),
     spend: d(a.spend, b.spend), ctr: d(a.ctr, b.ctr), cpc: d(a.cpc, b.cpc),
+    conversions: d(a.conversions, b.conversions), conversionValue: d(a.conversionValue, b.conversionValue),
+    roas: d(a.roas, b.roas), costPerConversion: d(a.costPerConversion, b.costPerConversion),
+    invalidClicks: d(a.invalidClicks, b.invalidClicks),
     searchImprShare: d(a.searchImprShare, b.searchImprShare),
     searchTopIS: d(a.searchTopIS, b.searchTopIS),
     searchAbsTopIS: d(a.searchAbsTopIS, b.searchAbsTopIS),
@@ -240,6 +306,9 @@ function clientPctDeltaRow(a: RollingRow, b: RollingRow): RollingDelta {
   return {
     impressions: pd(a.impressions, b.impressions), clicks: pd(a.clicks, b.clicks),
     spend: pd(a.spend, b.spend), ctr: pd(a.ctr, b.ctr), cpc: pd(a.cpc, b.cpc),
+    conversions: pd(a.conversions, b.conversions), conversionValue: pd(a.conversionValue, b.conversionValue),
+    roas: pd(a.roas, b.roas), costPerConversion: pd(a.costPerConversion, b.costPerConversion),
+    invalidClicks: pd(a.invalidClicks, b.invalidClicks),
     searchImprShare: pd(a.searchImprShare, b.searchImprShare),
     searchTopIS: pd(a.searchTopIS, b.searchTopIS),
     searchAbsTopIS: pd(a.searchAbsTopIS, b.searchAbsTopIS),
@@ -251,14 +320,19 @@ function clientPctDeltaRow(a: RollingRow, b: RollingRow): RollingDelta {
 function buildCampaignRollingData(sourceData: RollingData, campaignId: string): RollingData {
   const rows: RollingRow[] = sourceData.rows.map(row => {
     const c = row.campaigns?.find(c => c.campaignId === campaignId);
-    const impressions = c?.impressions ?? 0;
-    const clicks      = c?.clicks      ?? 0;
-    const spend       = c?.spend       ?? 0;
+    const impressions     = c?.impressions     ?? 0;
+    const clicks          = c?.clicks          ?? 0;
+    const spend           = c?.spend           ?? 0;
+    const conversions     = c?.conversions     ?? 0;
+    const conversionValue = c?.conversionValue ?? 0;
     return {
       label: row.label, startDate: row.startDate, endDate: row.endDate,
-      impressions, clicks, spend,
-      ctr: impressions > 0 ? clicks / impressions : null,
-      cpc: clicks      > 0 ? spend  / clicks      : null,
+      impressions, clicks, spend, conversions, conversionValue,
+      ctr:               impressions > 0 ? clicks / impressions   : null,
+      cpc:               clicks      > 0 ? spend  / clicks        : null,
+      roas:              spend       > 0 ? conversionValue / spend : null,
+      costPerConversion: conversions > 0 ? spend / conversions    : null,
+      invalidClicks:      c?.invalidClicks      ?? null,
       searchImprShare:    c?.searchImprShare    ?? null,
       searchTopIS:        c?.searchTopIS        ?? null,
       searchAbsTopIS:     c?.searchAbsTopIS     ?? null,
@@ -276,18 +350,245 @@ function buildCampaignRollingData(sourceData: RollingData, campaignId: string): 
   return { ...sourceData, rows, avg12, wowDelta, wowPct, avg12Delta, avg12Pct };
 }
 
-function RollingTable({ data, title, subtitle }: { data: RollingData; title?: string; subtitle?: string }) {
+
+// ---------------------------------------------------------------------------
+// Floating AI Chatbot (global, page-level)
+// ---------------------------------------------------------------------------
+
+interface ChatContext {
+  data:        PaidMediaData | null;
+  rollingData: RollingData   | null;
+  funnelData:  FunnelData    | null;
+  rollingView: string;
+}
+
+function PaidMediaChatDrawer({ open, onClose, ctx }: { open: boolean; onClose: () => void; ctx: ChatContext }) {
+  const [input,    setInput]    = useState("");
+  const [messages, setMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
+  const [loading,  setLoading]  = useState(false);
+  const bottomRef = React.useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
+
+  async function send() {
+    const q = input.trim();
+    if (!q || loading) return;
+    setInput("");
+    const newMsgs = [...messages, { role: "user" as const, content: q }];
+    setMessages(newMsgs);
+    setLoading(true);
+    try {
+      const tableData = ctx.rollingData ?? {};
+      const res = await fetch("/api/paid-media/chat", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({
+          question:   q,
+          tableTitle: "Paid Media Overview",
+          tableData,
+          funnelData: ctx.funnelData,
+          summaryData: ctx.data?.summary,
+          campaigns:   ctx.data?.campaigns,
+          rollingView: ctx.rollingView,
+          messages,
+        }),
+      });
+      const json = await res.json();
+      setMessages([...newMsgs, { role: "assistant", content: json.answer ?? json.error ?? "No response." }]);
+    } catch {
+      setMessages([...newMsgs, { role: "assistant", content: "Error reaching AI. Please try again." }]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const SUGGESTIONS = [
+    "How is Performance Max performing vs Search?",
+    "Where are we losing impression share?",
+    "What's driving our CPC trends?",
+    "How does spend compare to 12-period average?",
+  ];
+
+  return (
+    <>
+      {/* Backdrop */}
+      {open && (
+        <div
+          className="fixed inset-0 z-40 bg-black/20 backdrop-blur-sm"
+          onClick={onClose}
+        />
+      )}
+
+      {/* Drawer */}
+      <div className={cn(
+        "fixed top-0 right-0 z-50 h-full w-full max-w-md bg-white shadow-2xl flex flex-col transition-transform duration-300 ease-in-out",
+        open ? "translate-x-0" : "translate-x-full",
+      )}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-indigo-600">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
+              <Bot className="w-4 h-4 text-white" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-white">Paid Media AI</p>
+              <p className="text-xs text-indigo-200">Powered by google-ads-analyzer</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/20 transition-colors">
+            <X className="w-4 h-4 text-white" />
+          </button>
+        </div>
+
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+          {messages.length === 0 && (
+            <div className="space-y-4">
+              <div className="flex gap-2.5">
+                <div className="w-7 h-7 rounded-full bg-indigo-100 flex items-center justify-center shrink-0 mt-0.5">
+                  <Bot className="w-4 h-4 text-indigo-600" />
+                </div>
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl rounded-tl-sm px-4 py-3 text-sm text-slate-700 leading-relaxed max-w-[85%]">
+                  Hi! I can help you analyze your paid media performance — trends, IS diagnostics, campaign comparisons, budget pacing, and more. What would you like to know?
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-2 pl-9">
+                {SUGGESTIONS.map(s => (
+                  <button
+                    key={s}
+                    onClick={() => { setInput(s); }}
+                    className="text-left text-xs px-3 py-2 rounded-lg border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {messages.map((m, i) => (
+            <div key={i} className={cn("flex gap-2.5", m.role === "user" ? "justify-end" : "justify-start")}>
+              {m.role === "assistant" && (
+                <div className="w-7 h-7 rounded-full bg-indigo-100 flex items-center justify-center shrink-0 mt-0.5">
+                  <Bot className="w-4 h-4 text-indigo-600" />
+                </div>
+              )}
+              <div className={cn(
+                "rounded-2xl px-4 py-3 text-sm max-w-[85%] whitespace-pre-wrap leading-relaxed",
+                m.role === "user"
+                  ? "bg-indigo-600 text-white rounded-tr-sm"
+                  : "bg-slate-50 border border-slate-200 text-slate-700 rounded-tl-sm shadow-sm",
+              )}>
+                {m.content}
+              </div>
+            </div>
+          ))}
+
+          {loading && (
+            <div className="flex gap-2.5 justify-start">
+              <div className="w-7 h-7 rounded-full bg-indigo-100 flex items-center justify-center shrink-0">
+                <Bot className="w-4 h-4 text-indigo-600 animate-pulse" />
+              </div>
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl rounded-tl-sm px-4 py-3 text-sm text-slate-400 shadow-sm">
+                Analyzing…
+              </div>
+            </div>
+          )}
+          <div ref={bottomRef} />
+        </div>
+
+        {/* Input */}
+        <div className="px-4 py-4 border-t border-slate-100 bg-white">
+          <div className="flex gap-2">
+            <input
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && !e.shiftKey && send()}
+              placeholder="Ask about your campaigns…"
+              className="flex-1 text-sm rounded-xl border border-slate-200 px-4 py-2.5 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50"
+            />
+            <button
+              onClick={send}
+              disabled={!input.trim() || loading}
+              className={cn(
+                "px-3.5 py-2.5 rounded-xl text-sm font-medium transition-colors flex items-center",
+                input.trim() && !loading
+                  ? "bg-indigo-600 text-white hover:bg-indigo-700"
+                  : "bg-slate-100 text-slate-400 cursor-not-allowed",
+              )}
+            >
+              <Send className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+type FunnelBucket = { leads: number; mqls: number; sqos: number; closedWon: number };
+
+function RollingTable({ data, title, subtitle, hideIS, campaignId, campaignName }: { data: RollingData; title?: string; subtitle?: string; hideIS?: boolean; campaignId?: string; campaignName?: string }) {
   const { rows, avg12, wowDelta, wowPct, avg12Delta, avg12Pct, view, dayName } = data;
 
-  const defaultSubtitle = view === "daily" ? `Last 12 ${dayName}s` : "Last 12 Weeks";
-  const wowLabel = view === "daily" ? "WoW Δ" : "Week-over-Week Δ";
+  // Per-period funnel data (campaign tables only)
+  const [funnelRolling, setFunnelRolling] = useState<Record<string, FunnelBucket> | null>(null);
+  const [funnelLoading, setFunnelLoading] = useState(false);
 
-  function DataCells({ row }: { row: RollingRow | RollingDelta }) {
+  useEffect(() => {
+    if (!campaignId || rows.length === 0) return;
+    const ranges = rows.map(r => `${r.startDate}~${r.endDate}`).join(",");
+    setFunnelLoading(true);
+    fetch(
+      `/api/paid-media/funnel/campaign/rolling?campaignId=${encodeURIComponent(campaignId)}&campaignName=${encodeURIComponent(campaignName ?? "")}&ranges=${encodeURIComponent(ranges)}`
+    )
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.connected) setFunnelRolling(d.data ?? null); })
+      .finally(() => setFunnelLoading(false));
+  }, [campaignId, campaignName, rows]);
+
+  const funnelAvg = useMemo<FunnelBucket | null>(() => {
+    if (!funnelRolling) return null;
+    const vals = rows.map(r => funnelRolling[r.startDate]).filter((v): v is FunnelBucket => v != null);
+    if (vals.length === 0) return null;
+    const n = vals.length;
+    return {
+      leads:     vals.reduce((s, v) => s + v.leads, 0) / n,
+      mqls:      vals.reduce((s, v) => s + v.mqls, 0) / n,
+      sqos:      vals.reduce((s, v) => s + v.sqos, 0) / n,
+      closedWon: vals.reduce((s, v) => s + v.closedWon, 0) / n,
+    };
+  }, [funnelRolling, rows]);
+
+  const cols = (() => {
+    let c = ROLLING_COLS;
+    if (hideIS) c = c.filter(col => !col.searchOnly);
+    if (!campaignId) c = c.filter(col => !col.funnelOnly);
+    return c;
+  })();
+
+  const defaultSubtitle =
+    view === "daily"   ? `Last 12 ${dayName}s` :
+    view === "weekly"  ? "Last 12 Weeks" :
+                         "Last 12 Months";
+  const wowLabel =
+    view === "daily"   ? "WoW Δ" :
+    view === "weekly"  ? "Week-over-Week Δ" :
+                         "MoM Δ";
+
+  function DataCells({ row, funnelData }: { row: RollingRow | RollingDelta; funnelData?: FunnelBucket | null }) {
     return (
       <>
-        {ROLLING_COLS.map(col => (
+        {cols.map(col => (
           <td key={col.key} className="px-4 py-3 text-right tabular-nums text-slate-600 whitespace-nowrap">
             {(() => {
+              if (col.funnelOnly) {
+                if (funnelLoading && !funnelRolling) return <span className="text-slate-300 text-[10px]">…</span>;
+                const v = funnelData != null ? (funnelData as unknown as Record<string, number>)[col.key] ?? null : null;
+                return v != null ? col.fmt(v) : <span className="text-slate-300">—</span>;
+              }
               const v = rollingVal(row, col.key);
               return v != null ? col.fmt(v) : <span className="text-slate-300">—</span>;
             })()}
@@ -300,8 +601,17 @@ function RollingTable({ data, title, subtitle }: { data: RollingData; title?: st
   return (
     <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
       <div className="px-6 py-4 border-b border-slate-100">
-        <h2 className="text-sm font-semibold text-slate-900">{title ?? "12-Period Rolling Average"}</h2>
-        <p className="text-xs text-slate-400 mt-0.5">{subtitle ?? defaultSubtitle} · newest first</p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900">{title ?? "12-Period Rolling Average"}</h2>
+            <p className="text-xs text-slate-400 mt-0.5">{subtitle ?? defaultSubtitle} · newest first</p>
+          </div>
+          {hideIS && (
+            <span className="text-[10px] font-medium text-slate-400 bg-slate-100 rounded-md px-2 py-1 whitespace-nowrap">
+              IS metrics N/A (Performance Max)
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="overflow-x-auto">
@@ -309,9 +619,9 @@ function RollingTable({ data, title, subtitle }: { data: RollingData; title?: st
           <thead>
             <tr className="bg-slate-50 border-b border-slate-100">
               <th className="sticky left-0 z-10 bg-slate-50 text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">
-                {view === "daily" ? "Date" : "Week"}
+                {view === "daily" ? "Date" : view === "weekly" ? "Week" : "Month"}
               </th>
-              {ROLLING_COLS.map(col => (
+              {cols.map(col => (
                 <th key={col.key} className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">
                   {col.label}
                 </th>
@@ -333,7 +643,7 @@ function RollingTable({ data, title, subtitle }: { data: RollingData; title?: st
                     {i === 0 && <span className="text-xs text-indigo-400 font-normal">most recent</span>}
                   </span>
                 </td>
-                <DataCells row={row} />
+                <DataCells row={row} funnelData={funnelRolling?.[row.startDate] ?? null} />
               </tr>
             ))}
           </tbody>
@@ -342,9 +652,16 @@ function RollingTable({ data, title, subtitle }: { data: RollingData; title?: st
               <td className="sticky left-0 z-10 bg-slate-800 px-6 py-3 text-xs font-bold uppercase tracking-wide whitespace-nowrap">
                 12-Period Avg
               </td>
-              {ROLLING_COLS.map(col => (
+              {cols.map(col => (
                 <td key={col.key} className="px-4 py-3 text-right tabular-nums text-slate-200 font-semibold whitespace-nowrap">
-                  {(() => { const v = rollingVal(avg12, col.key); return v != null ? col.fmt(v) : "—"; })()}
+                  {(() => {
+                    if (col.funnelOnly) {
+                      const v = funnelAvg != null ? (funnelAvg as unknown as Record<string, number>)[col.key] ?? null : null;
+                      return v != null ? col.fmt(v) : "—";
+                    }
+                    const v = rollingVal(avg12, col.key);
+                    return v != null ? col.fmt(v) : "—";
+                  })()}
                 </td>
               ))}
             </tr>
@@ -354,12 +671,22 @@ function RollingTable({ data, title, subtitle }: { data: RollingData; title?: st
                 <td className="sticky left-0 z-10 bg-slate-100 px-6 py-2.5 text-xs font-semibold text-slate-600 uppercase tracking-wide whitespace-nowrap">
                   {wowLabel}
                 </td>
-                {ROLLING_COLS.map(col => {
+                {cols.map(col => {
+                  if (col.funnelOnly) {
+                    // Compute funnel WoW delta: most recent period vs previous
+                    const cur  = rows[0] ? funnelRolling?.[rows[0].startDate] : null;
+                    const prev = rows[1] ? funnelRolling?.[rows[1].startDate] : null;
+                    const raw  = cur && prev ? ((cur as unknown as Record<string,number>)[col.key] ?? 0) - ((prev as unknown as Record<string,number>)[col.key] ?? 0) : null;
+                    return (
+                      <td key={col.key} className={cn("px-4 py-2.5 text-right tabular-nums text-xs whitespace-nowrap", deltaClass(raw))}>
+                        {raw != null ? fmtDelta(raw, col.fmt) : "—"}
+                      </td>
+                    );
+                  }
                   const raw = rollingVal(wowDelta, col.key);
                   const pct = rollingVal(wowPct, col.key);
-                  const lowerBetter = col.key === "cpc" || col.key === "spend" || col.key === "searchLostISRank" || col.key === "searchLostISBudget";
                   return (
-                    <td key={col.key} className={cn("px-4 py-2.5 text-right tabular-nums text-xs whitespace-nowrap", deltaClass(raw, lowerBetter))}>
+                    <td key={col.key} className={cn("px-4 py-2.5 text-right tabular-nums text-xs whitespace-nowrap", deltaClass(raw, col.lowerBetter))}>
                       {raw != null ? (<><div>{fmtDelta(raw, col.fmt)}</div><div className="text-[10px] opacity-70">{fmtPctDelta(pct)}</div></>) : "—"}
                     </td>
                   );
@@ -372,12 +699,20 @@ function RollingTable({ data, title, subtitle }: { data: RollingData; title?: st
                 <td className="sticky left-0 z-10 bg-slate-50 px-6 py-2.5 text-xs font-semibold text-slate-600 uppercase tracking-wide whitespace-nowrap">
                   vs 12-Period Avg
                 </td>
-                {ROLLING_COLS.map(col => {
+                {cols.map(col => {
+                  if (col.funnelOnly) {
+                    const cur = rows[0] ? funnelRolling?.[rows[0].startDate] : null;
+                    const raw = cur && funnelAvg ? ((cur as unknown as Record<string,number>)[col.key] ?? 0) - ((funnelAvg as unknown as Record<string,number>)[col.key] ?? 0) : null;
+                    return (
+                      <td key={col.key} className={cn("px-4 py-2.5 text-right tabular-nums text-xs whitespace-nowrap", deltaClass(raw))}>
+                        {raw != null ? fmtDelta(raw, col.fmt) : "—"}
+                      </td>
+                    );
+                  }
                   const raw = rollingVal(avg12Delta, col.key);
                   const pct = rollingVal(avg12Pct, col.key);
-                  const lowerBetter = col.key === "cpc" || col.key === "spend" || col.key === "searchLostISRank" || col.key === "searchLostISBudget";
                   return (
-                    <td key={col.key} className={cn("px-4 py-2.5 text-right tabular-nums text-xs whitespace-nowrap", deltaClass(raw, lowerBetter))}>
+                    <td key={col.key} className={cn("px-4 py-2.5 text-right tabular-nums text-xs whitespace-nowrap", deltaClass(raw, col.lowerBetter))}>
                       {raw != null ? (<><div>{fmtDelta(raw, col.fmt)}</div><div className="text-[10px] opacity-70">{fmtPctDelta(pct)}</div></>) : "—"}
                     </td>
                   );
@@ -387,6 +722,120 @@ function RollingTable({ data, title, subtitle }: { data: RollingData; title?: st
           </tfoot>
         </table>
       </div>
+
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// HubSpot Funnel section
+// ---------------------------------------------------------------------------
+
+function FunnelKpiCard({
+  label, value, sub, delta, deltaLabel,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  delta?: number | null;
+  deltaLabel?: string;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-5">
+      <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">{label}</p>
+      <p className="mt-2 text-2xl font-semibold text-slate-900">{value}</p>
+      {sub && <p className="mt-0.5 text-xs text-slate-400">{sub}</p>}
+      {delta != null && (
+        <p className={cn("mt-1.5 text-xs font-medium", delta >= 0 ? "text-emerald-600" : "text-red-500")}>
+          {delta >= 0 ? "+" : ""}{fmtN(delta, 0)} {deltaLabel ?? "vs prior quarter"}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function HubSpotFunnelSection({ data }: { data: FunnelData }) {
+  const { current: c, prior: p, qtdLabel, prevLabel } = data;
+
+  function delta(cur: number | null, prev: number | null) {
+    return cur != null && prev != null ? cur - prev : null;
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Target className="w-4 h-4 text-slate-400" />
+          <span className="text-sm font-semibold text-slate-900">Bottom-of-Funnel · HubSpot Attribution</span>
+        </div>
+        <span className="text-xs text-slate-400 bg-slate-100 rounded-md px-2.5 py-1 font-medium">
+          {qtdLabel} QTD · vs {prevLabel}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <FunnelKpiCard
+          label="Leads"
+          value={c.leads != null ? fmtN(c.leads, 0) : "—"}
+          sub="Paid media attributed"
+          delta={delta(c.leads, p.leads)}
+        />
+        <FunnelKpiCard
+          label="MQLs"
+          value={c.mqls != null ? fmtN(c.mqls, 0) : "—"}
+          sub={c.leadToMql != null ? `${(c.leadToMql * 100).toFixed(1)}% lead→MQL` : "Paid attributed"}
+          delta={delta(c.mqls, p.mqls)}
+        />
+        <FunnelKpiCard
+          label="SQOs"
+          value={c.sqos != null ? fmtN(c.sqos, 0) : "—"}
+          sub={c.mqlToSqo != null ? `${(c.mqlToSqo * 100).toFixed(1)}% MQL→SQO` : "Paid attributed"}
+          delta={delta(c.sqos, p.sqos)}
+        />
+        <FunnelKpiCard
+          label="Closed Won"
+          value={c.closedWon != null ? fmtN(c.closedWon, 0) : "—"}
+          sub={c.sqoToClose != null ? `${(c.sqoToClose * 100).toFixed(1)}% SQO→close` : "Paid attributed"}
+          delta={delta(c.closedWon, p.closedWon)}
+        />
+      </div>
+
+      {/* Funnel conversion rate bar */}
+      {(c.leads != null && c.leads > 0) && (
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-4">
+            Paid Media Funnel Conversion — {qtdLabel}
+          </p>
+          <div className="flex items-end gap-2">
+            {[
+              { label: "Leads",      value: c.leads,     color: "bg-indigo-200" },
+              { label: "MQLs",       value: c.mqls,      color: "bg-indigo-400" },
+              { label: "SQOs",       value: c.sqos,      color: "bg-indigo-600" },
+              { label: "Closed Won", value: c.closedWon, color: "bg-indigo-800" },
+            ].map(({ label, value, color }) => {
+              const pct = value != null && c.leads != null && c.leads > 0 ? (value / c.leads) : 0;
+              return (
+                <div key={label} className="flex-1 flex flex-col items-center gap-1.5">
+                  <span className="text-xs font-semibold text-slate-700">{value != null ? fmtN(value, 0) : "—"}</span>
+                  <div className="w-full rounded-t-md" style={{ height: `${Math.max(pct * 120, 4)}px`, minHeight: "4px" }}>
+                    <div className={cn("w-full h-full rounded-t-md", color)} />
+                  </div>
+                  <span className="text-[10px] text-slate-500 text-center">{label}</span>
+                  {pct < 1 && <span className="text-[10px] text-slate-400">{(pct * 100).toFixed(1)}%</span>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {c.leads == null && c.mqls == null && (
+        <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
+          <Target className="w-6 h-6 mx-auto mb-2 text-slate-300" />
+          <p className="text-sm text-slate-500">No HubSpot paid-media funnel data for {qtdLabel} yet.</p>
+          <p className="text-xs text-slate-400 mt-1">Run a HubSpot sync to populate leads, MQLs, SQOs, and Closed Won for paid channels.</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -440,9 +889,16 @@ export default function PaidMediaClient() {
   const [chartView,    setChartView]   = useState<"spend" | "clicks">("spend");
 
   // Rolling average state
-  const [rollingView,  setRollingView] = useState<"daily" | "weekly">("daily");
+  const [rollingView,  setRollingView] = useState<"daily" | "weekly" | "monthly">("daily");
   const [rollingData,  setRollingData] = useState<RollingData | null>(null);
   const [rollingLoading, setRollingLoading] = useState(false);
+
+  // HubSpot funnel state
+  const [funnelData,    setFunnelData]    = useState<FunnelData | null>(null);
+  const [backfilling,   setBackfilling]   = useState(false);
+
+  // Global AI chat drawer
+  const [chatOpen, setChatOpen] = useState(false);
 
   const load = useCallback(async (d: 30 | 90) => {
     setLoading(true);
@@ -454,7 +910,7 @@ export default function PaidMediaClient() {
     }
   }, []);
 
-  const loadRolling = useCallback(async (view: "daily" | "weekly") => {
+  const loadRolling = useCallback(async (view: "daily" | "weekly" | "monthly") => {
     setRollingLoading(true);
     try {
       const res = await fetch(`/api/paid-media/rolling?view=${view}&campaignId=all`);
@@ -466,28 +922,45 @@ export default function PaidMediaClient() {
 
   useEffect(() => { load(days); }, [days, load]);
   useEffect(() => { loadRolling(rollingView); }, [rollingView, loadRolling]);
+  useEffect(() => {
+    fetch("/api/paid-media/funnel").then(r => r.ok ? r.json() : null).then(d => { if (d) setFunnelData(d); });
+  }, []);
+
+  async function runSync(daysBack: number, label: string) {
+    setSyncMsg(null);
+    const from = new Date();
+    from.setUTCDate(from.getUTCDate() - daysBack);
+    const res  = await fetch("/api/integrations/google_ads/campaign-sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ from: from.toISOString().slice(0, 10) }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error ?? `${label} failed`);
+    setSyncMsg(`${label}: synced ${json.rows} rows across campaigns.`);
+    await load(days);
+    await loadRolling(rollingView);
+  }
 
   async function handleSync() {
     setSyncing(true);
-    setSyncMsg(null);
     try {
-      // Always sync the last 12 weeks so the rolling average table has full data
-      const from = new Date();
-      from.setUTCDate(from.getUTCDate() - 84); // 12 × 7 days
-      const res  = await fetch("/api/integrations/google_ads/campaign-sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ from: from.toISOString().slice(0, 10) }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "Sync failed");
-      setSyncMsg(`Synced ${json.rows} rows across campaigns.`);
-      await load(days);
-      await loadRolling(rollingView);
+      await runSync(84, "Synced"); // 12 weeks
     } catch (err) {
       setSyncMsg(err instanceof Error ? err.message : "Sync failed");
     } finally {
       setSyncing(false);
+    }
+  }
+
+  async function handleBackfill() {
+    setBackfilling(true);
+    try {
+      await runSync(365, "Backfill complete"); // 12 months
+    } catch (err) {
+      setSyncMsg(err instanceof Error ? err.message : "Backfill failed");
+    } finally {
+      setBackfilling(false);
     }
   }
 
@@ -501,11 +974,13 @@ export default function PaidMediaClient() {
   }
 
   const sortedCampaigns = data?.campaigns
-    ? [...data.campaigns].sort((a, b) => {
-        const av = a[sortKey] ?? -Infinity;
-        const bv = b[sortKey] ?? -Infinity;
-        return sortDir === "desc" ? (bv as number) - (av as number) : (av as number) - (bv as number);
-      })
+    ? [...data.campaigns]
+        .filter(c => ACTIVE_CAMPAIGNS.includes(c.campaignName))
+        .sort((a, b) => {
+          const av = a[sortKey] ?? -Infinity;
+          const bv = b[sortKey] ?? -Infinity;
+          return sortDir === "desc" ? (bv as number) - (av as number) : (av as number) - (bv as number);
+        })
     : [];
 
   const summary = data?.summary;
@@ -547,16 +1022,31 @@ export default function PaidMediaClient() {
           {/* Sync button */}
           <button
             onClick={handleSync}
-            disabled={syncing}
+            disabled={syncing || backfilling}
             className={cn(
               "flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors",
-              syncing
+              syncing || backfilling
                 ? "border-slate-200 text-slate-400 cursor-not-allowed"
                 : "border-indigo-200 text-indigo-600 hover:bg-indigo-50",
             )}
           >
             <RefreshCw className={cn("w-3.5 h-3.5", syncing && "animate-spin")} />
             {syncing ? "Syncing…" : "Sync Campaigns"}
+          </button>
+
+          {/* Backfill 12 months */}
+          <button
+            onClick={handleBackfill}
+            disabled={syncing || backfilling}
+            className={cn(
+              "flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors",
+              syncing || backfilling
+                ? "border-slate-200 text-slate-400 cursor-not-allowed"
+                : "border-slate-200 text-slate-600 hover:bg-slate-50",
+            )}
+          >
+            <RefreshCw className={cn("w-3.5 h-3.5", backfilling && "animate-spin")} />
+            {backfilling ? "Backfilling…" : "Backfill 12 Months"}
           </button>
         </div>
       </div>
@@ -719,7 +1209,7 @@ export default function PaidMediaClient() {
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
               <div>
                 <h2 className="text-sm font-semibold text-slate-900">Campaign Breakdown</h2>
-                <p className="text-xs text-slate-400 mt-0.5">{sortedCampaigns.length} campaigns · last {days} days</p>
+                <p className="text-xs text-slate-400 mt-0.5">{ACTIVE_CAMPAIGNS.length} campaigns · last {days} days</p>
               </div>
             </div>
 
@@ -813,18 +1303,18 @@ export default function PaidMediaClient() {
               <div className="flex items-center gap-3 flex-wrap">
                 {/* View toggle */}
                 <div className="flex rounded-lg border border-slate-200 bg-slate-50 overflow-hidden text-sm">
-                  {(["daily", "weekly"] as const).map(v => (
+                  {(["daily", "weekly", "monthly"] as const).map(v => (
                     <button
                       key={v}
                       onClick={() => setRollingView(v)}
                       className={cn(
-                        "px-3 py-1.5 font-medium transition-colors capitalize",
+                        "px-3 py-1.5 font-medium transition-colors",
                         rollingView === v
                           ? "bg-white text-slate-900 shadow-sm"
                           : "text-slate-500 hover:text-slate-700",
                       )}
                     >
-                      {v === "daily" ? "Daily (by weekday)" : "Weekly"}
+                      {v === "daily" ? "Daily" : v === "weekly" ? "Weekly" : "Monthly"}
                     </button>
                   ))}
                 </div>
@@ -852,15 +1342,25 @@ export default function PaidMediaClient() {
                   {/* All-campaigns aggregate table */}
                   <RollingTable data={rollingData} />
 
-                  {/* Per-campaign tables */}
-                  {(rollingData.campaigns ?? []).map(c => (
-                    <RollingTable
-                      key={c.campaignId}
-                      data={buildCampaignRollingData(rollingData, c.campaignId)}
-                      title={c.campaignName}
-                      subtitle={`12-period rolling · ${rollingView === "daily" ? `${rollingData.dayName}s` : "weekly"}`}
-                    />
-                  ))}
+                  {/* Per-campaign tables — active campaigns only */}
+                  {(rollingData.campaigns ?? []).map(c => {
+                    if (!ACTIVE_CAMPAIGNS.includes(c.campaignName)) return null;
+                    const campaignData = buildCampaignRollingData(rollingData, c.campaignId);
+                    const hasData = campaignData.rows.some(r => r.spend > 0 || r.impressions > 0 || r.clicks > 0);
+                    if (!hasData) return null;
+                    const isPMax = /performance.?max|pmax/i.test(c.campaignName);
+                    return (
+                      <RollingTable
+                        key={c.campaignId}
+                        data={campaignData}
+                        title={c.campaignName}
+                        subtitle={`12-period rolling · ${rollingView === "daily" ? `${rollingData.dayName}s` : rollingView === "weekly" ? "weekly" : "monthly"}`}
+                        hideIS={isPMax}
+                        campaignId={c.campaignId}
+                        campaignName={c.campaignName}
+                      />
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-10 text-center">
@@ -873,7 +1373,12 @@ export default function PaidMediaClient() {
           </div>
 
           {/* -------------------------------------------------------------- */}
-          {/* Bottom-of-Funnel note                                           */}
+          {/* HubSpot Bottom-of-Funnel                                        */}
+          {/* -------------------------------------------------------------- */}
+          {funnelData && <HubSpotFunnelSection data={funnelData} />}
+
+          {/* -------------------------------------------------------------- */}
+          {/* ROAS setup note (only when no ROAS data)                        */}
           {/* -------------------------------------------------------------- */}
           {!hasRoas && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 px-6 py-4">
@@ -892,6 +1397,28 @@ export default function PaidMediaClient() {
           )}
         </>
       )}
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Floating AI Chat Button + Drawer                                    */}
+      {/* ------------------------------------------------------------------ */}
+      <button
+        onClick={() => setChatOpen(true)}
+        className={cn(
+          "fixed bottom-6 right-6 z-40 flex items-center gap-2.5 px-4 py-3 rounded-2xl shadow-lg font-medium text-sm transition-all duration-200",
+          chatOpen
+            ? "opacity-0 pointer-events-none scale-90"
+            : "bg-indigo-600 text-white hover:bg-indigo-700 hover:shadow-xl hover:scale-105",
+        )}
+      >
+        <Bot className="w-5 h-5" />
+        Ask AI
+      </button>
+
+      <PaidMediaChatDrawer
+        open={chatOpen}
+        onClose={() => setChatOpen(false)}
+        ctx={{ data, rollingData, funnelData, rollingView }}
+      />
     </div>
   );
 }

@@ -187,7 +187,8 @@ export async function syncCampaignData(fromDate?: Date): Promise<{ rows: number 
       metrics.search_top_impression_share,
       metrics.search_absolute_top_impression_share,
       metrics.search_rank_lost_impression_share,
-      metrics.search_budget_lost_impression_share
+      metrics.search_budget_lost_impression_share,
+      metrics.invalid_clicks
     FROM campaign
     WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
       AND campaign.status IN ('ENABLED', 'PAUSED')
@@ -230,7 +231,8 @@ export async function syncCampaignData(fromDate?: Date): Promise<{ rows: number 
 
     const date = new Date(dateStr + "T00:00:00Z");
 
-    const isFields = { searchImprShare, searchTopIS, searchAbsTopIS, searchLostISRank, searchLostISBudget };
+    const invalidClicks = Number(row.metrics?.invalidClicks ?? 0) || 0;
+    const isFields = { searchImprShare, searchTopIS, searchAbsTopIS, searchLostISRank, searchLostISBudget, invalidClicks };
 
     await prisma.campaignDailySpend.upsert({
       where:  { campaignId_date: { campaignId, date } },

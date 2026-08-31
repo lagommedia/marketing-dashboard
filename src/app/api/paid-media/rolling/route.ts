@@ -1,11 +1,11 @@
 /**
- * GET /api/paid-media/rolling?view=daily|weekly&campaignId=all|{id}
+ * GET /api/paid-media/rolling?view=daily|weekly|monthly&campaignId=all|{id}
  *
- * Returns 12 rolling periods of Google Ads campaign data with per-period
- * campaign breakdowns for accordion expansion.
+ * Returns 12 rolling periods of Google Ads campaign data.
  *
  * daily   — last 12 occurrences of the anchor day-of-week (defaults to yesterday)
  * weekly  — last 12 ISO weeks ending on or before the anchor date
+ * monthly — last 12 calendar months
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -21,6 +21,9 @@ interface MetricBucket {
   impressions:       number;
   clicks:            number;
   spend:             number;
+  conversions:       number;
+  conversionValue:   number;
+  invalidClicks:     number | null;
   searchImprShare:   number | null;
   searchTopIS:       number | null;
   searchAbsTopIS:    number | null;
@@ -29,20 +32,23 @@ interface MetricBucket {
 }
 
 interface RollingRow extends MetricBucket {
-  label:      string;
-  startDate:  string;
-  endDate:    string;
-  ctr:        number | null;
-  cpc:        number | null;
-  // Per-period campaign breakdown for accordion
-  campaigns?: CampaignBreakdown[];
+  label:             string;
+  startDate:         string;
+  endDate:           string;
+  ctr:               number | null;
+  cpc:               number | null;
+  roas:              number | null;
+  costPerConversion: number | null;
+  campaigns?:        CampaignBreakdown[];
 }
 
 interface CampaignBreakdown extends MetricBucket {
-  campaignId:   string;
-  campaignName: string;
-  ctr:          number | null;
-  cpc:          number | null;
+  campaignId:        string;
+  campaignName:      string;
+  ctr:               number | null;
+  cpc:               number | null;
+  roas:              number | null;
+  costPerConversion: number | null;
 }
 
 interface Delta {
@@ -51,6 +57,11 @@ interface Delta {
   spend:             number | null;
   ctr:               number | null;
   cpc:               number | null;
+  conversions:       number | null;
+  conversionValue:   number | null;
+  roas:              number | null;
+  costPerConversion: number | null;
+  invalidClicks:     number | null;
   searchImprShare:   number | null;
   searchTopIS:       number | null;
   searchAbsTopIS:    number | null;
@@ -89,6 +100,11 @@ function nullableAvg(vals: (number | null)[]): number | null {
   return valid.length > 0 ? valid.reduce((s, v) => s + v, 0) / valid.length : null;
 }
 
+function nullableSum(vals: (number | null)[]): number | null {
+  const valid = vals.filter((v): v is number => v != null);
+  return valid.length > 0 ? valid.reduce((s, v) => s + v, 0) : null;
+}
+
 function derivedCtrCpc(impressions: number, clicks: number, spend: number) {
   return {
     ctr: impressions > 0 ? clicks / impressions : null,
@@ -103,12 +119,22 @@ type DbRow = {
   impressions: number;
   clicks: number;
   spend: number;
+  conversions: number;
+  conversionValue: number;
+  invalidClicks: number | null;
   searchImprShare: number | null;
   searchTopIS: number | null;
   searchAbsTopIS: number | null;
   searchLostISRank: number | null;
   searchLostISBudget: number | null;
 };
+
+function derivedRoasCpc(spend: number, clicks: number, conversions: number, conversionValue: number) {
+  return {
+    roas:              spend > 0 ? conversionValue / spend : null,
+    costPerConversion: conversions > 0 ? spend / conversions : null,
+  };
+}
 
 function aggregateDbRows(
   dbRows: DbRow[],
@@ -117,11 +143,13 @@ function aggregateDbRows(
   endDate: string,
   includeCampaigns = false,
 ): RollingRow {
-  const impressions = dbRows.reduce((s, r) => s + r.impressions, 0);
-  const clicks      = dbRows.reduce((s, r) => s + r.clicks, 0);
-  const spend       = dbRows.reduce((s, r) => s + r.spend, 0);
+  const impressions     = dbRows.reduce((s, r) => s + r.impressions, 0);
+  const clicks          = dbRows.reduce((s, r) => s + r.clicks, 0);
+  const spend           = dbRows.reduce((s, r) => s + r.spend, 0);
+  const conversions     = dbRows.reduce((s, r) => s + r.conversions, 0);
+  const conversionValue = dbRows.reduce((s, r) => s + r.conversionValue, 0);
+  const invalidClicks   = nullableSum(dbRows.map(r => r.invalidClicks));
 
-  // IS metrics: weighted by impressions where available, else simple avg
   const searchImprShare    = nullableAvg(dbRows.map(r => r.searchImprShare));
   const searchTopIS        = nullableAvg(dbRows.map(r => r.searchTopIS));
   const searchAbsTopIS     = nullableAvg(dbRows.map(r => r.searchAbsTopIS));
@@ -130,13 +158,13 @@ function aggregateDbRows(
 
   const row: RollingRow = {
     label, startDate, endDate,
-    impressions, clicks, spend,
+    impressions, clicks, spend, conversions, conversionValue, invalidClicks,
     searchImprShare, searchTopIS, searchAbsTopIS, searchLostISRank, searchLostISBudget,
     ...derivedCtrCpc(impressions, clicks, spend),
+    ...derivedRoasCpc(spend, clicks, conversions, conversionValue),
   };
 
   if (includeCampaigns) {
-    // Group by campaign
     const byCampaign = new Map<string, { name: string; rows: DbRow[] }>();
     for (const r of dbRows) {
       const entry = byCampaign.get(r.campaignId) ?? { name: r.campaignName ?? r.campaignId, rows: [] };
@@ -148,18 +176,24 @@ function aggregateDbRows(
       const ci = rows.reduce((s, r) => s + r.impressions, 0);
       const cc = rows.reduce((s, r) => s + r.clicks, 0);
       const cs = rows.reduce((s, r) => s + r.spend, 0);
+      const cv = rows.reduce((s, r) => s + r.conversions, 0);
+      const cval = rows.reduce((s, r) => s + r.conversionValue, 0);
       return {
         campaignId:   id,
         campaignName: name,
         impressions:  ci,
         clicks:       cc,
         spend:        cs,
+        conversions:  cv,
+        conversionValue: cval,
+        invalidClicks:      nullableSum(rows.map(r => r.invalidClicks)),
         searchImprShare:    nullableAvg(rows.map(r => r.searchImprShare)),
         searchTopIS:        nullableAvg(rows.map(r => r.searchTopIS)),
         searchAbsTopIS:     nullableAvg(rows.map(r => r.searchAbsTopIS)),
         searchLostISRank:   nullableAvg(rows.map(r => r.searchLostISRank)),
         searchLostISBudget: nullableAvg(rows.map(r => r.searchLostISBudget)),
         ...derivedCtrCpc(ci, cc, cs),
+        ...derivedRoasCpc(cs, cc, cv, cval),
       };
     }).sort((a, b) => b.spend - a.spend);
   }
@@ -169,21 +203,25 @@ function aggregateDbRows(
 
 function avgRow(rows: RollingRow[]): RollingRow {
   const n = rows.length;
-  if (n === 0) {
-    return { label: "12-period avg", startDate: "", endDate: "", impressions: 0, clicks: 0, spend: 0, ctr: null, cpc: null, searchImprShare: null, searchTopIS: null, searchAbsTopIS: null, searchLostISRank: null, searchLostISBudget: null };
-  }
-  const impressions = rows.reduce((s, r) => s + r.impressions, 0) / n;
-  const clicks      = rows.reduce((s, r) => s + r.clicks, 0) / n;
-  const spend       = rows.reduce((s, r) => s + r.spend, 0) / n;
+  const empty: RollingRow = { label: "12-period avg", startDate: "", endDate: "", impressions: 0, clicks: 0, spend: 0, conversions: 0, conversionValue: 0, ctr: null, cpc: null, roas: null, costPerConversion: null, invalidClicks: null, searchImprShare: null, searchTopIS: null, searchAbsTopIS: null, searchLostISRank: null, searchLostISBudget: null };
+  if (n === 0) return empty;
+  const impressions     = rows.reduce((s, r) => s + r.impressions, 0) / n;
+  const clicks          = rows.reduce((s, r) => s + r.clicks, 0) / n;
+  const spend           = rows.reduce((s, r) => s + r.spend, 0) / n;
+  const conversions     = rows.reduce((s, r) => s + r.conversions, 0) / n;
+  const conversionValue = rows.reduce((s, r) => s + r.conversionValue, 0) / n;
+  const invalidSum      = nullableSum(rows.map(r => r.invalidClicks));
   return {
     label: "12-period avg", startDate: "", endDate: "",
-    impressions, clicks, spend,
+    impressions, clicks, spend, conversions, conversionValue,
+    invalidClicks:      invalidSum != null ? invalidSum / n : null,
     searchImprShare:    nullableAvg(rows.map(r => r.searchImprShare)),
     searchTopIS:        nullableAvg(rows.map(r => r.searchTopIS)),
     searchAbsTopIS:     nullableAvg(rows.map(r => r.searchAbsTopIS)),
     searchLostISRank:   nullableAvg(rows.map(r => r.searchLostISRank)),
     searchLostISBudget: nullableAvg(rows.map(r => r.searchLostISBudget)),
     ...derivedCtrCpc(impressions, clicks, spend),
+    ...derivedRoasCpc(spend, clicks, conversions, conversionValue),
   };
 }
 
@@ -195,6 +233,11 @@ function deltaRow(a: RollingRow, b: RollingRow): Delta {
     spend:             d(a.spend, b.spend),
     ctr:               d(a.ctr, b.ctr),
     cpc:               d(a.cpc, b.cpc),
+    conversions:       d(a.conversions, b.conversions),
+    conversionValue:   d(a.conversionValue, b.conversionValue),
+    roas:              d(a.roas, b.roas),
+    costPerConversion: d(a.costPerConversion, b.costPerConversion),
+    invalidClicks:     d(a.invalidClicks, b.invalidClicks),
     searchImprShare:   d(a.searchImprShare, b.searchImprShare),
     searchTopIS:       d(a.searchTopIS, b.searchTopIS),
     searchAbsTopIS:    d(a.searchAbsTopIS, b.searchAbsTopIS),
@@ -213,6 +256,11 @@ function pctDeltaRow(a: RollingRow, b: RollingRow): Delta {
     spend:             pd(a.spend, b.spend),
     ctr:               pd(a.ctr, b.ctr),
     cpc:               pd(a.cpc, b.cpc),
+    conversions:       pd(a.conversions, b.conversions),
+    conversionValue:   pd(a.conversionValue, b.conversionValue),
+    roas:              pd(a.roas, b.roas),
+    costPerConversion: pd(a.costPerConversion, b.costPerConversion),
+    invalidClicks:     pd(a.invalidClicks, b.invalidClicks),
     searchImprShare:   pd(a.searchImprShare, b.searchImprShare),
     searchTopIS:       pd(a.searchTopIS, b.searchTopIS),
     searchAbsTopIS:    pd(a.searchAbsTopIS, b.searchAbsTopIS),
@@ -227,15 +275,16 @@ function pctDeltaRow(a: RollingRow, b: RollingRow): Delta {
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const view       = (searchParams.get("view") ?? "daily") as "daily" | "weekly";
+  const view       = (searchParams.get("view") ?? "daily") as "daily" | "weekly" | "monthly";
   const campaignId = searchParams.get("campaignId") ?? "all";
 
   const anchorStr = searchParams.get("date");
   const anchor    = anchorStr ? parseDate(anchorStr) : addDays(new Date(), -1);
   anchor.setUTCHours(0, 0, 0, 0);
 
-  const lookback = new Date(anchor);
-  lookback.setUTCDate(lookback.getUTCDate() - (view === "daily" ? 12 * 7 + 7 : 12 * 7 + 14));
+  // Lookback window: daily=~12 weeks, weekly=~14 weeks, monthly=13 months
+  const lookbackDays = view === "daily" ? 12 * 7 + 7 : view === "weekly" ? 12 * 7 + 14 : 400;
+  const lookback = addDays(anchor, -lookbackDays);
 
   const where: Record<string, unknown> = { date: { gte: lookback, lte: anchor } };
   if (campaignId !== "all") where.campaignId = campaignId;
@@ -250,6 +299,9 @@ export async function GET(req: NextRequest) {
       impressions: true,
       clicks: true,
       spend: true,
+      conversions: true,
+      conversionValue: true,
+      invalidClicks: true,
       searchImprShare: true,
       searchTopIS: true,
       searchAbsTopIS: true,
@@ -263,7 +315,7 @@ export async function GET(req: NextRequest) {
   for (const row of dbRows) {
     const key = isoDate(row.date);
     const arr = byDate.get(key) ?? [];
-    arr.push(row);
+    arr.push(row as DbRow);
     byDate.set(key, arr);
   }
 
@@ -292,7 +344,7 @@ export async function GET(req: NextRequest) {
       }
       cur = addDays(cur, -1);
     }
-  } else {
+  } else if (view === "weekly") {
     let weekEnd = new Date(anchor);
     const dow = anchor.getUTCDay();
     weekEnd = addDays(anchor, dow === 0 ? 0 : 7 - dow);
@@ -318,6 +370,27 @@ export async function GET(req: NextRequest) {
       rows.push(aggregateDbRows(bucket, label, startStr, endStr, true));
 
       weekEnd = addDays(weekStart, -1);
+    }
+  } else {
+    // Monthly: last 12 calendar months
+    for (let i = 0; i < 12; i++) {
+      const monthStart = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth() - i, 1));
+      const nextMonth  = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth() - i + 1, 1));
+      const monthEnd   = addDays(nextMonth, -1);
+      const clampedEnd = monthEnd > anchor ? anchor : monthEnd;
+
+      if (monthStart < lookback) break;
+
+      const bucket: DbRow[] = [];
+      let d = new Date(monthStart);
+      while (d <= clampedEnd) {
+        const data = byDate.get(isoDate(d));
+        if (data) bucket.push(...data);
+        d = addDays(d, 1);
+      }
+
+      const label = monthStart.toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
+      rows.push(aggregateDbRows(bucket, label, isoDate(monthStart), isoDate(clampedEnd), true));
     }
   }
 
