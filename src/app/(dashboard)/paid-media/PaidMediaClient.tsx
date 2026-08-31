@@ -507,9 +507,9 @@ function PaidMediaChatDrawer({ open, onClose, ctx }: { open: boolean; onClose: (
       const json = await res.json();
       setMessages([...newMsgs, {
         role:        "assistant",
-        content:     json.answer ?? json.error ?? "No response.",
-        charts:      json.charts ?? [],
-        suggestions: json.suggestions ?? [],
+        content:     json.answer || json.error || "No response.",
+        charts:      Array.isArray(json.charts) ? json.charts : [],
+        suggestions: Array.isArray(json.suggestions) ? json.suggestions : [],
       }]);
     } catch {
       setMessages([...newMsgs, { role: "assistant", content: "Error reaching AI. Please try again." }]);

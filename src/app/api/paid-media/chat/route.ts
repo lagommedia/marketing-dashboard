@@ -160,29 +160,36 @@ Chart rules:
     content: m.content,
   }));
 
-  const client = new Anthropic({ apiKey });
-  const response = await client.messages.create({
-    model:      "claude-sonnet-5",
-    max_tokens: 2048,
-    system:     systemPrompt,
-    messages:   [...chatHistory, { role: "user", content: question }],
-  });
-
-  const textBlock = response.content.find(c => c.type === "text");
-  const raw = textBlock?.type === "text" ? textBlock.text.trim() : "";
-
-  // Parse the JSON response
+  let raw = "";
   try {
-    // Strip any markdown code fences if present
+    const client = new Anthropic({ apiKey });
+    const response = await client.messages.create({
+      model:      "claude-sonnet-4-6",
+      max_tokens: 2048,
+      system:     systemPrompt,
+      messages:   [...chatHistory, { role: "user", content: question }],
+    });
+    const textBlock = response.content.find(c => c.type === "text");
+    raw = textBlock?.type === "text" ? textBlock.text.trim() : "";
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "AI request failed";
+    return NextResponse.json({ answer: `Error from AI: ${msg}`, charts: [], suggestions: [] }, { status: 500 });
+  }
+
+  if (!raw) {
+    return NextResponse.json({ answer: "The AI returned an empty response. Please try again.", charts: [], suggestions: [] });
+  }
+
+  // Parse the structured JSON response
+  try {
     const cleaned = raw.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```\s*$/i, "").trim();
     const parsed = JSON.parse(cleaned);
     return NextResponse.json({
-      answer:      parsed.answer      ?? raw,
-      charts:      parsed.charts      ?? [],
-      suggestions: parsed.suggestions ?? [],
+      answer:      parsed.answer      || raw,
+      charts:      Array.isArray(parsed.charts)      ? parsed.charts      : [],
+      suggestions: Array.isArray(parsed.suggestions) ? parsed.suggestions : [],
     });
   } catch {
-    // Fallback: return as plain text answer
     return NextResponse.json({ answer: raw, charts: [], suggestions: [] });
   }
 }
