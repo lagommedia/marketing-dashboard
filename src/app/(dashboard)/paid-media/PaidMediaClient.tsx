@@ -16,29 +16,49 @@ import { cn } from "@/lib/utils";
 // Types
 // ---------------------------------------------------------------------------
 
+interface CampaignBreakdown {
+  campaignId:        string;
+  campaignName:      string;
+  impressions:       number;
+  clicks:            number;
+  spend:             number;
+  ctr:               number | null;
+  cpc:               number | null;
+  searchImprShare:   number | null;
+  searchTopIS:       number | null;
+  searchAbsTopIS:    number | null;
+  searchLostISRank:  number | null;
+  searchLostISBudget: number | null;
+}
+
 interface RollingRow {
-  label:           string;
-  startDate:       string;
-  endDate:         string;
-  impressions:     number;
-  clicks:          number;
-  spend:           number;
-  ctr:             number | null;
-  cpc:             number | null;
-  conversions:     number;
-  conversionValue: number;
-  roas:            number | null;
+  label:             string;
+  startDate:         string;
+  endDate:           string;
+  impressions:       number;
+  clicks:            number;
+  spend:             number;
+  ctr:               number | null;
+  cpc:               number | null;
+  searchImprShare:   number | null;
+  searchTopIS:       number | null;
+  searchAbsTopIS:    number | null;
+  searchLostISRank:  number | null;
+  searchLostISBudget: number | null;
+  campaigns?:        CampaignBreakdown[];
 }
 
 interface RollingDelta {
-  impressions:     number | null;
-  clicks:          number | null;
-  spend:           number | null;
-  ctr:             number | null;
-  cpc:             number | null;
-  conversions:     number | null;
-  conversionValue: number | null;
-  roas:            number | null;
+  impressions:       number | null;
+  clicks:            number | null;
+  spend:             number | null;
+  ctr:               number | null;
+  cpc:               number | null;
+  searchImprShare:   number | null;
+  searchTopIS:       number | null;
+  searchAbsTopIS:    number | null;
+  searchLostISRank:  number | null;
+  searchLostISBudget: number | null;
 }
 
 interface RollingData {
@@ -153,14 +173,16 @@ function deltaClass(v: number | null, lowerIsBetter = false): string {
 // ---------------------------------------------------------------------------
 
 const ROLLING_COLS = [
-  { key: "impressions",     label: "Impressions",   fmt: (v: number) => fmtN(v),              isDelta: false },
-  { key: "clicks",          label: "Clicks",        fmt: (v: number) => fmtN(v),              isDelta: false },
-  { key: "ctr",             label: "CTR",           fmt: (v: number) => fmtPct(v),            isDelta: false },
-  { key: "spend",           label: "Cost",          fmt: (v: number) => fmt$$(v),             isDelta: false },
-  { key: "cpc",             label: "Cost Per Click",fmt: (v: number) => fmtCpc(v),            isDelta: false },
-  { key: "conversions",     label: "Conversions",   fmt: (v: number) => fmtN(v, 1),           isDelta: false },
-  { key: "conversionValue", label: "Conv. Value",   fmt: (v: number) => fmt$$(v),             isDelta: false },
-  { key: "roas",            label: "ROAS",          fmt: (v: number) => fmtRoas(v),           isDelta: false },
+  { key: "impressions",       label: "Impressions",          fmt: (v: number) => fmtN(v) },
+  { key: "clicks",            label: "Clicks",               fmt: (v: number) => fmtN(v) },
+  { key: "ctr",               label: "CTR",                  fmt: (v: number) => fmtPct(v) },
+  { key: "spend",             label: "Cost",                 fmt: (v: number) => fmt$$(v) },
+  { key: "cpc",               label: "Cost Per Click",       fmt: (v: number) => fmtCpc(v) },
+  { key: "searchImprShare",   label: "Search Impr. Share",   fmt: (v: number) => fmtPct(v) },
+  { key: "searchTopIS",       label: "Search Top IS",        fmt: (v: number) => fmtPct(v) },
+  { key: "searchAbsTopIS",    label: "Search Abs. Top IS",   fmt: (v: number) => fmtPct(v) },
+  { key: "searchLostISRank",  label: "Lost IS (Rank)",       fmt: (v: number) => fmtPct(v) },
+  { key: "searchLostISBudget",label: "Lost IS (Budget)",     fmt: (v: number) => fmtPct(v) },
 ] as const;
 
 type RollingColKey = typeof ROLLING_COLS[number]["key"];
@@ -172,18 +194,39 @@ function rollingVal(row: RollingRow | RollingDelta, key: RollingColKey): number 
 
 function RollingTable({ data }: { data: RollingData }) {
   const { rows, avg12, wowDelta, wowPct, avg12Delta, avg12Pct, view, dayName } = data;
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  const subLabel = view === "daily"
-    ? `Last 12 ${dayName}s`
-    : "Last 12 Weeks";
+  const subLabel = view === "daily" ? `Last 12 ${dayName}s` : "Last 12 Weeks";
+  const wowLabel = view === "daily" ? "WoW Δ" : "Week-over-Week Δ";
 
-  const wowLabel  = view === "daily" ? "WoW Δ" : "Week-over-Week Δ";
+  function toggleRow(key: string) {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  }
+
+  function DataCells({ row }: { row: RollingRow | RollingDelta }) {
+    return (
+      <>
+        {ROLLING_COLS.map(col => (
+          <td key={col.key} className="px-4 py-3 text-right tabular-nums text-slate-600 whitespace-nowrap">
+            {(() => {
+              const v = rollingVal(row, col.key);
+              return v != null ? col.fmt(v) : <span className="text-slate-300">—</span>;
+            })()}
+          </td>
+        ))}
+      </>
+    );
+  }
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
       <div className="px-6 py-4 border-b border-slate-100">
         <h2 className="text-sm font-semibold text-slate-900">12-Period Rolling Average</h2>
-        <p className="text-xs text-slate-400 mt-0.5">{subLabel} · newest first</p>
+        <p className="text-xs text-slate-400 mt-0.5">{subLabel} · newest first · click a row to expand campaigns</p>
       </div>
 
       <div className="overflow-x-auto">
@@ -201,40 +244,64 @@ function RollingTable({ data }: { data: RollingData }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {rows.map((row, i) => (
-              <tr key={row.startDate} className={cn("hover:bg-slate-50/60 transition-colors", i === 0 ? "bg-indigo-50/30" : i % 2 === 1 ? "bg-slate-50/40" : "")}>
-                <td className={cn("sticky left-0 z-10 px-6 py-3 font-medium whitespace-nowrap", i === 0 ? "bg-indigo-50/30 text-indigo-700" : "bg-white text-slate-900")}>
-                  {row.label}
-                  {i === 0 && <span className="ml-2 text-xs text-indigo-400 font-normal">most recent</span>}
-                </td>
-                {ROLLING_COLS.map(col => (
-                  <td key={col.key} className="px-4 py-3 text-right tabular-nums text-slate-600 whitespace-nowrap">
-                    {(() => {
-                      const v = rollingVal(row, col.key);
-                      return v != null ? col.fmt(v) : <span className="text-slate-300">—</span>;
-                    })()}
-                  </td>
-                ))}
-              </tr>
-            ))}
+            {rows.map((row, i) => {
+              const isOpen = expanded.has(row.startDate);
+              const hasCampaigns = (row.campaigns?.length ?? 0) > 0;
+              return (
+                <>
+                  <tr
+                    key={row.startDate}
+                    onClick={() => hasCampaigns && toggleRow(row.startDate)}
+                    className={cn(
+                      "transition-colors",
+                      hasCampaigns && "cursor-pointer",
+                      i === 0 ? "bg-indigo-50/30 hover:bg-indigo-50/50" : i % 2 === 1 ? "bg-slate-50/40 hover:bg-slate-100/60" : "hover:bg-slate-50/60",
+                    )}
+                  >
+                    <td className={cn("sticky left-0 z-10 px-4 py-3 font-medium whitespace-nowrap", i === 0 ? "bg-indigo-50/30 text-indigo-700" : "bg-white text-slate-900")}>
+                      <span className="inline-flex items-center gap-2">
+                        {hasCampaigns && (
+                          <ChevronDown className={cn("w-3.5 h-3.5 text-slate-400 transition-transform flex-shrink-0", isOpen && "rotate-180")} />
+                        )}
+                        {row.label}
+                        {i === 0 && <span className="text-xs text-indigo-400 font-normal">most recent</span>}
+                      </span>
+                    </td>
+                    <DataCells row={row} />
+                  </tr>
+
+                  {/* Accordion: per-campaign rows */}
+                  {isOpen && row.campaigns?.map(c => (
+                    <tr key={`${row.startDate}-${c.campaignId}`} className="bg-slate-50 border-l-4 border-indigo-200">
+                      <td className="sticky left-0 z-10 bg-slate-50 pl-10 pr-4 py-2.5 text-xs text-slate-600 whitespace-nowrap max-w-[220px]">
+                        <span className="block truncate" title={c.campaignName}>{c.campaignName}</span>
+                      </td>
+                      {ROLLING_COLS.map(col => (
+                        <td key={col.key} className="px-4 py-2.5 text-right tabular-nums text-xs text-slate-500 whitespace-nowrap">
+                          {(() => {
+                            const v = rollingVal(c as unknown as RollingRow, col.key);
+                            return v != null ? col.fmt(v) : <span className="text-slate-300">—</span>;
+                          })()}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </>
+              );
+            })}
           </tbody>
           <tfoot className="border-t-2 border-slate-200">
-            {/* 12-period average */}
             <tr className="bg-slate-800 text-white">
               <td className="sticky left-0 z-10 bg-slate-800 px-6 py-3 text-xs font-bold uppercase tracking-wide whitespace-nowrap">
                 12-Period Avg
               </td>
               {ROLLING_COLS.map(col => (
                 <td key={col.key} className="px-4 py-3 text-right tabular-nums text-slate-200 font-semibold whitespace-nowrap">
-                  {(() => {
-                    const v = rollingVal(avg12, col.key);
-                    return v != null ? col.fmt(v) : "—";
-                  })()}
+                  {(() => { const v = rollingVal(avg12, col.key); return v != null ? col.fmt(v) : "—"; })()}
                 </td>
               ))}
             </tr>
 
-            {/* WoW delta */}
             {wowDelta && wowPct && (
               <tr className="bg-slate-100 border-t border-slate-200">
                 <td className="sticky left-0 z-10 bg-slate-100 px-6 py-2.5 text-xs font-semibold text-slate-600 uppercase tracking-wide whitespace-nowrap">
@@ -243,22 +310,16 @@ function RollingTable({ data }: { data: RollingData }) {
                 {ROLLING_COLS.map(col => {
                   const raw = rollingVal(wowDelta, col.key);
                   const pct = rollingVal(wowPct, col.key);
-                  const lowerBetter = col.key === "cpc" || col.key === "spend";
+                  const lowerBetter = col.key === "cpc" || col.key === "spend" || col.key === "searchLostISRank" || col.key === "searchLostISBudget";
                   return (
                     <td key={col.key} className={cn("px-4 py-2.5 text-right tabular-nums text-xs whitespace-nowrap", deltaClass(raw, lowerBetter))}>
-                      {raw != null ? (
-                        <>
-                          <div>{fmtDelta(raw, col.fmt)}</div>
-                          <div className="text-[10px] opacity-70">{fmtPctDelta(pct)}</div>
-                        </>
-                      ) : "—"}
+                      {raw != null ? (<><div>{fmtDelta(raw, col.fmt)}</div><div className="text-[10px] opacity-70">{fmtPctDelta(pct)}</div></>) : "—"}
                     </td>
                   );
                 })}
               </tr>
             )}
 
-            {/* 12-period average delta */}
             {avg12Delta && avg12Pct && (
               <tr className="bg-slate-50 border-t border-slate-200">
                 <td className="sticky left-0 z-10 bg-slate-50 px-6 py-2.5 text-xs font-semibold text-slate-600 uppercase tracking-wide whitespace-nowrap">
@@ -267,15 +328,10 @@ function RollingTable({ data }: { data: RollingData }) {
                 {ROLLING_COLS.map(col => {
                   const raw = rollingVal(avg12Delta, col.key);
                   const pct = rollingVal(avg12Pct, col.key);
-                  const lowerBetter = col.key === "cpc" || col.key === "spend";
+                  const lowerBetter = col.key === "cpc" || col.key === "spend" || col.key === "searchLostISRank" || col.key === "searchLostISBudget";
                   return (
                     <td key={col.key} className={cn("px-4 py-2.5 text-right tabular-nums text-xs whitespace-nowrap", deltaClass(raw, lowerBetter))}>
-                      {raw != null ? (
-                        <>
-                          <div>{fmtDelta(raw, col.fmt)}</div>
-                          <div className="text-[10px] opacity-70">{fmtPctDelta(pct)}</div>
-                        </>
-                      ) : "—"}
+                      {raw != null ? (<><div>{fmtDelta(raw, col.fmt)}</div><div className="text-[10px] opacity-70">{fmtPctDelta(pct)}</div></>) : "—"}
                     </td>
                   );
                 })}

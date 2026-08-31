@@ -182,7 +182,12 @@ export async function syncCampaignData(fromDate?: Date): Promise<{ rows: number 
       metrics.clicks,
       metrics.cost_micros,
       metrics.conversions,
-      metrics.conversions_value
+      metrics.conversions_value,
+      metrics.search_impression_share,
+      metrics.search_top_impression_share,
+      metrics.search_absolute_top_impression_share,
+      metrics.search_rank_lost_impression_share,
+      metrics.search_budget_lost_impression_share
     FROM campaign
     WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
       AND campaign.status IN ('ENABLED', 'PAUSED')
@@ -208,16 +213,29 @@ export async function syncCampaignData(fromDate?: Date): Promise<{ rows: number 
     const conversions     = Number(row.metrics?.conversions      ?? 0);
     const conversionValue = Number(row.metrics?.conversionsValue ?? 0);
 
+    // Impression share metrics — Google returns these as decimals (0–1) or null
+    function toIS(v: unknown): number | null {
+      const n = Number(v);
+      return isNaN(n) ? null : n;
+    }
+    const searchImprShare    = toIS(row.metrics?.searchImpressionShare);
+    const searchTopIS        = toIS(row.metrics?.searchTopImpressionShare);
+    const searchAbsTopIS     = toIS(row.metrics?.searchAbsoluteTopImpressionShare);
+    const searchLostISRank   = toIS(row.metrics?.searchRankLostImpressionShare);
+    const searchLostISBudget = toIS(row.metrics?.searchBudgetLostImpressionShare);
+
     const spend = costMicros / 1_000_000;
     const ctr   = impressions > 0 ? clicks / impressions : null;
     const cpc   = clicks      > 0 ? spend  / clicks      : null;
 
     const date = new Date(dateStr + "T00:00:00Z");
 
+    const isFields = { searchImprShare, searchTopIS, searchAbsTopIS, searchLostISRank, searchLostISBudget };
+
     await prisma.campaignDailySpend.upsert({
       where:  { campaignId_date: { campaignId, date } },
-      create: { campaignId, campaignName, date, spend, clicks, impressions, conversions, conversionValue, ctr, cpc },
-      update: { campaignName, spend, clicks, impressions, conversions, conversionValue, ctr, cpc },
+      create: { campaignId, campaignName, date, spend, clicks, impressions, conversions, conversionValue, ctr, cpc, ...isFields },
+      update: { campaignName, spend, clicks, impressions, conversions, conversionValue, ctr, cpc, ...isFields },
     });
 
     if (campaignName) campaignNames.set(campaignId, campaignName);

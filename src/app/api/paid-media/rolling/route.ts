@@ -1,17 +1,11 @@
 /**
  * GET /api/paid-media/rolling?view=daily|weekly&campaignId=all|{id}
  *
- * Returns 12 rolling periods of Google Ads campaign data.
+ * Returns 12 rolling periods of Google Ads campaign data with per-period
+ * campaign breakdowns for accordion expansion.
  *
  * daily   — last 12 occurrences of the anchor day-of-week (defaults to yesterday)
  * weekly  — last 12 ISO weeks ending on or before the anchor date
- *
- * Each response includes:
- *   rows        — the 12 periods, newest first
- *   avg12       — average across all 12 rows
- *   wowDelta    — most-recent minus the period before it (raw + pct)
- *   avg12Delta  — most-recent minus avg12 (raw + pct)
- *   campaigns   — list of all campaigns available (for the selector UI)
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -23,29 +17,45 @@ export const dynamic = "force-dynamic";
 // Types
 // ---------------------------------------------------------------------------
 
-interface RollingRow {
-  label:          string; // "8/27/2026" or "8/24 – 8/30"
-  startDate:      string; // ISO date YYYY-MM-DD
-  endDate:        string;
-  impressions:    number;
-  clicks:         number;
-  spend:          number;
-  ctr:            number | null;
-  cpc:            number | null;
-  conversions:    number;
-  conversionValue: number;
-  roas:           number | null;
+interface MetricBucket {
+  impressions:       number;
+  clicks:            number;
+  spend:             number;
+  searchImprShare:   number | null;
+  searchTopIS:       number | null;
+  searchAbsTopIS:    number | null;
+  searchLostISRank:  number | null;
+  searchLostISBudget: number | null;
+}
+
+interface RollingRow extends MetricBucket {
+  label:      string;
+  startDate:  string;
+  endDate:    string;
+  ctr:        number | null;
+  cpc:        number | null;
+  // Per-period campaign breakdown for accordion
+  campaigns?: CampaignBreakdown[];
+}
+
+interface CampaignBreakdown extends MetricBucket {
+  campaignId:   string;
+  campaignName: string;
+  ctr:          number | null;
+  cpc:          number | null;
 }
 
 interface Delta {
-  impressions:    number | null;
-  clicks:         number | null;
-  spend:          number | null;
-  ctr:            number | null;
-  cpc:            number | null;
-  conversions:    number | null;
-  conversionValue: number | null;
-  roas:           number | null;
+  impressions:       number | null;
+  clicks:            number | null;
+  spend:             number | null;
+  ctr:               number | null;
+  cpc:               number | null;
+  searchImprShare:   number | null;
+  searchTopIS:       number | null;
+  searchAbsTopIS:    number | null;
+  searchLostISRank:  number | null;
+  searchLostISBudget: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -67,86 +77,148 @@ function addDays(d: Date, n: number): Date {
 }
 
 function startOfISOWeek(d: Date): Date {
-  // ISO week starts Monday
-  const dow = d.getUTCDay(); // 0=Sun
+  const dow = d.getUTCDay();
   const diff = dow === 0 ? -6 : 1 - dow;
   const r = new Date(d);
   r.setUTCDate(r.getUTCDate() + diff);
   return r;
 }
 
-function deriveMetrics(
-  impressions: number,
-  clicks: number,
-  spend: number,
-  conversions: number,
-  conversionValue: number,
-): Pick<RollingRow, "ctr" | "cpc" | "roas"> {
+function nullableAvg(vals: (number | null)[]): number | null {
+  const valid = vals.filter((v): v is number => v != null);
+  return valid.length > 0 ? valid.reduce((s, v) => s + v, 0) / valid.length : null;
+}
+
+function derivedCtrCpc(impressions: number, clicks: number, spend: number) {
   return {
-    ctr:  impressions > 0 ? clicks / impressions : null,
-    cpc:  clicks      > 0 ? spend  / clicks      : null,
-    roas: spend       > 0 && conversionValue > 0 ? conversionValue / spend : null,
+    ctr: impressions > 0 ? clicks / impressions : null,
+    cpc: clicks      > 0 ? spend  / clicks      : null,
   };
+}
+
+type DbRow = {
+  campaignId: string;
+  campaignName: string | null;
+  date: Date;
+  impressions: number;
+  clicks: number;
+  spend: number;
+  searchImprShare: number | null;
+  searchTopIS: number | null;
+  searchAbsTopIS: number | null;
+  searchLostISRank: number | null;
+  searchLostISBudget: number | null;
+};
+
+function aggregateDbRows(
+  dbRows: DbRow[],
+  label: string,
+  startDate: string,
+  endDate: string,
+  includeCampaigns = false,
+): RollingRow {
+  const impressions = dbRows.reduce((s, r) => s + r.impressions, 0);
+  const clicks      = dbRows.reduce((s, r) => s + r.clicks, 0);
+  const spend       = dbRows.reduce((s, r) => s + r.spend, 0);
+
+  // IS metrics: weighted by impressions where available, else simple avg
+  const searchImprShare    = nullableAvg(dbRows.map(r => r.searchImprShare));
+  const searchTopIS        = nullableAvg(dbRows.map(r => r.searchTopIS));
+  const searchAbsTopIS     = nullableAvg(dbRows.map(r => r.searchAbsTopIS));
+  const searchLostISRank   = nullableAvg(dbRows.map(r => r.searchLostISRank));
+  const searchLostISBudget = nullableAvg(dbRows.map(r => r.searchLostISBudget));
+
+  const row: RollingRow = {
+    label, startDate, endDate,
+    impressions, clicks, spend,
+    searchImprShare, searchTopIS, searchAbsTopIS, searchLostISRank, searchLostISBudget,
+    ...derivedCtrCpc(impressions, clicks, spend),
+  };
+
+  if (includeCampaigns) {
+    // Group by campaign
+    const byCampaign = new Map<string, { name: string; rows: DbRow[] }>();
+    for (const r of dbRows) {
+      const entry = byCampaign.get(r.campaignId) ?? { name: r.campaignName ?? r.campaignId, rows: [] };
+      entry.rows.push(r);
+      byCampaign.set(r.campaignId, entry);
+    }
+
+    row.campaigns = Array.from(byCampaign.entries()).map(([id, { name, rows }]) => {
+      const ci = rows.reduce((s, r) => s + r.impressions, 0);
+      const cc = rows.reduce((s, r) => s + r.clicks, 0);
+      const cs = rows.reduce((s, r) => s + r.spend, 0);
+      return {
+        campaignId:   id,
+        campaignName: name,
+        impressions:  ci,
+        clicks:       cc,
+        spend:        cs,
+        searchImprShare:    nullableAvg(rows.map(r => r.searchImprShare)),
+        searchTopIS:        nullableAvg(rows.map(r => r.searchTopIS)),
+        searchAbsTopIS:     nullableAvg(rows.map(r => r.searchAbsTopIS)),
+        searchLostISRank:   nullableAvg(rows.map(r => r.searchLostISRank)),
+        searchLostISBudget: nullableAvg(rows.map(r => r.searchLostISBudget)),
+        ...derivedCtrCpc(ci, cc, cs),
+      };
+    }).sort((a, b) => b.spend - a.spend);
+  }
+
+  return row;
 }
 
 function avgRow(rows: RollingRow[]): RollingRow {
   const n = rows.length;
-  if (n === 0) return { label: "12-period avg", startDate: "", endDate: "", impressions: 0, clicks: 0, spend: 0, ctr: null, cpc: null, conversions: 0, conversionValue: 0, roas: null };
-  const imp  = rows.reduce((s, r) => s + r.impressions, 0) / n;
-  const clk  = rows.reduce((s, r) => s + r.clicks, 0) / n;
-  const spd  = rows.reduce((s, r) => s + r.spend, 0) / n;
-  const conv = rows.reduce((s, r) => s + r.conversions, 0) / n;
-  const cv   = rows.reduce((s, r) => s + r.conversionValue, 0) / n;
-  return { label: "12-period avg", startDate: "", endDate: "", impressions: imp, clicks: clk, spend: spd, conversions: conv, conversionValue: cv, ...deriveMetrics(imp, clk, spd, conv, cv) };
+  if (n === 0) {
+    return { label: "12-period avg", startDate: "", endDate: "", impressions: 0, clicks: 0, spend: 0, ctr: null, cpc: null, searchImprShare: null, searchTopIS: null, searchAbsTopIS: null, searchLostISRank: null, searchLostISBudget: null };
+  }
+  const impressions = rows.reduce((s, r) => s + r.impressions, 0) / n;
+  const clicks      = rows.reduce((s, r) => s + r.clicks, 0) / n;
+  const spend       = rows.reduce((s, r) => s + r.spend, 0) / n;
+  return {
+    label: "12-period avg", startDate: "", endDate: "",
+    impressions, clicks, spend,
+    searchImprShare:    nullableAvg(rows.map(r => r.searchImprShare)),
+    searchTopIS:        nullableAvg(rows.map(r => r.searchTopIS)),
+    searchAbsTopIS:     nullableAvg(rows.map(r => r.searchAbsTopIS)),
+    searchLostISRank:   nullableAvg(rows.map(r => r.searchLostISRank)),
+    searchLostISBudget: nullableAvg(rows.map(r => r.searchLostISBudget)),
+    ...derivedCtrCpc(impressions, clicks, spend),
+  };
 }
 
 function deltaRow(a: RollingRow, b: RollingRow): Delta {
-  function d(av: number | null, bv: number | null): number | null {
-    if (av == null || bv == null) return null;
-    return av - bv;
-  }
+  function d(av: number | null, bv: number | null) { return av != null && bv != null ? av - bv : null; }
   return {
-    impressions:    d(a.impressions, b.impressions),
-    clicks:         d(a.clicks, b.clicks),
-    spend:          d(a.spend, b.spend),
-    ctr:            d(a.ctr, b.ctr),
-    cpc:            d(a.cpc, b.cpc),
-    conversions:    d(a.conversions, b.conversions),
-    conversionValue: d(a.conversionValue, b.conversionValue),
-    roas:           d(a.roas, b.roas),
+    impressions:       d(a.impressions, b.impressions),
+    clicks:            d(a.clicks, b.clicks),
+    spend:             d(a.spend, b.spend),
+    ctr:               d(a.ctr, b.ctr),
+    cpc:               d(a.cpc, b.cpc),
+    searchImprShare:   d(a.searchImprShare, b.searchImprShare),
+    searchTopIS:       d(a.searchTopIS, b.searchTopIS),
+    searchAbsTopIS:    d(a.searchAbsTopIS, b.searchAbsTopIS),
+    searchLostISRank:  d(a.searchLostISRank, b.searchLostISRank),
+    searchLostISBudget: d(a.searchLostISBudget, b.searchLostISBudget),
   };
 }
 
 function pctDeltaRow(a: RollingRow, b: RollingRow): Delta {
-  function pd(av: number | null, bv: number | null): number | null {
-    if (av == null || bv == null || bv === 0) return null;
-    return (av - bv) / Math.abs(bv);
+  function pd(av: number | null, bv: number | null) {
+    return av != null && bv != null && bv !== 0 ? (av - bv) / Math.abs(bv) : null;
   }
   return {
-    impressions:    pd(a.impressions, b.impressions),
-    clicks:         pd(a.clicks, b.clicks),
-    spend:          pd(a.spend, b.spend),
-    ctr:            pd(a.ctr, b.ctr),
-    cpc:            pd(a.cpc, b.cpc),
-    conversions:    pd(a.conversions, b.conversions),
-    conversionValue: pd(a.conversionValue, b.conversionValue),
-    roas:           pd(a.roas, b.roas),
+    impressions:       pd(a.impressions, b.impressions),
+    clicks:            pd(a.clicks, b.clicks),
+    spend:             pd(a.spend, b.spend),
+    ctr:               pd(a.ctr, b.ctr),
+    cpc:               pd(a.cpc, b.cpc),
+    searchImprShare:   pd(a.searchImprShare, b.searchImprShare),
+    searchTopIS:       pd(a.searchTopIS, b.searchTopIS),
+    searchAbsTopIS:    pd(a.searchAbsTopIS, b.searchAbsTopIS),
+    searchLostISRank:  pd(a.searchLostISRank, b.searchLostISRank),
+    searchLostISBudget: pd(a.searchLostISBudget, b.searchLostISBudget),
   };
-}
-
-// Aggregate raw DB rows into a single RollingRow
-function aggregateRows(
-  dbRows: { impressions: number; clicks: number; spend: number; conversions: number; conversionValue: number }[],
-  label: string,
-  startDate: string,
-  endDate: string,
-): RollingRow {
-  const impressions    = dbRows.reduce((s, r) => s + r.impressions, 0);
-  const clicks         = dbRows.reduce((s, r) => s + r.clicks, 0);
-  const spend          = dbRows.reduce((s, r) => s + r.spend, 0);
-  const conversions    = dbRows.reduce((s, r) => s + r.conversions, 0);
-  const conversionValue = dbRows.reduce((s, r) => s + r.conversionValue, 0);
-  return { label, startDate, endDate, impressions, clicks, spend, conversions, conversionValue, ...deriveMetrics(impressions, clicks, spend, conversions, conversionValue) };
 }
 
 // ---------------------------------------------------------------------------
@@ -158,13 +230,10 @@ export async function GET(req: NextRequest) {
   const view       = (searchParams.get("view") ?? "daily") as "daily" | "weekly";
   const campaignId = searchParams.get("campaignId") ?? "all";
 
-  // Anchor date — defaults to yesterday (most recent complete day)
   const anchorStr = searchParams.get("date");
   const anchor    = anchorStr ? parseDate(anchorStr) : addDays(new Date(), -1);
-  // Normalise to UTC midnight
   anchor.setUTCHours(0, 0, 0, 0);
 
-  // Fetch raw data for the last ~90 days so we have enough to fill 12 periods
   const lookback = new Date(anchor);
   lookback.setUTCDate(lookback.getUTCDate() - (view === "daily" ? 12 * 7 + 7 : 12 * 7 + 14));
 
@@ -181,25 +250,24 @@ export async function GET(req: NextRequest) {
       impressions: true,
       clicks: true,
       spend: true,
-      conversions: true,
-      conversionValue: true,
+      searchImprShare: true,
+      searchTopIS: true,
+      searchAbsTopIS: true,
+      searchLostISRank: true,
+      searchLostISBudget: true,
     },
   });
 
-  // Build a map: YYYY-MM-DD → aggregated metrics
-  const byDate = new Map<string, { impressions: number; clicks: number; spend: number; conversions: number; conversionValue: number }>();
+  // Build date-keyed map for fast lookup
+  const byDate = new Map<string, DbRow[]>();
   for (const row of dbRows) {
     const key = isoDate(row.date);
-    const cur = byDate.get(key) ?? { impressions: 0, clicks: 0, spend: 0, conversions: 0, conversionValue: 0 };
-    cur.impressions    += row.impressions;
-    cur.clicks         += row.clicks;
-    cur.spend          += row.spend;
-    cur.conversions    += row.conversions;
-    cur.conversionValue += row.conversionValue;
-    byDate.set(key, cur);
+    const arr = byDate.get(key) ?? [];
+    arr.push(row);
+    byDate.set(key, arr);
   }
 
-  // Unique campaign list (for selector)
+  // Campaign list for selector UI
   const campaignMap = new Map<string, string>();
   for (const row of dbRows) {
     campaignMap.set(row.campaignId, row.campaignName ?? row.campaignId);
@@ -208,42 +276,37 @@ export async function GET(req: NextRequest) {
     .map(([id, name]) => ({ campaignId: id, campaignName: name }))
     .sort((a, b) => a.campaignName.localeCompare(b.campaignName));
 
-  let rows: RollingRow[] = [];
+  const rows: RollingRow[] = [];
 
   if (view === "daily") {
-    // Walk back through dates that match the anchor's day-of-week
     const anchorDow = anchor.getUTCDay();
     let cur = new Date(anchor);
     while (rows.length < 12) {
       if (cur < lookback) break;
       if (cur.getUTCDay() === anchorDow) {
-        const key  = isoDate(cur);
-        const data = byDate.get(key) ?? { impressions: 0, clicks: 0, spend: 0, conversions: 0, conversionValue: 0 };
-        const d    = new Date(cur);
+        const key   = isoDate(cur);
+        const data  = byDate.get(key) ?? [];
+        const d     = new Date(cur);
         const label = `${d.getUTCMonth() + 1}/${d.getUTCDate()}/${d.getUTCFullYear()}`;
-        rows.push(aggregateRows([data], label, key, key));
+        rows.push(aggregateDbRows(data, label, key, key, true));
       }
       cur = addDays(cur, -1);
     }
   } else {
-    // Weekly: 12 full ISO weeks ending on or before anchor
     let weekEnd = new Date(anchor);
-    // snap to the end of the ISO week that contains anchor (Sunday)
     const dow = anchor.getUTCDay();
     weekEnd = addDays(anchor, dow === 0 ? 0 : 7 - dow);
-    // if that overshoots anchor, pull back to anchor
     if (weekEnd > anchor) weekEnd = new Date(anchor);
 
     while (rows.length < 12) {
       const weekStart = startOfISOWeek(weekEnd);
       if (weekStart < lookback) break;
 
-      // Collect all days in [weekStart, weekEnd]
-      const bucket: { impressions: number; clicks: number; spend: number; conversions: number; conversionValue: number }[] = [];
+      const bucket: DbRow[] = [];
       let d = new Date(weekStart);
       while (d <= weekEnd) {
         const data = byDate.get(isoDate(d));
-        if (data) bucket.push(data);
+        if (data) bucket.push(...data);
         d = addDays(d, 1);
       }
 
@@ -252,14 +315,12 @@ export async function GET(req: NextRequest) {
       const ws = new Date(weekStart);
       const we = new Date(weekEnd);
       const label = `${ws.getUTCMonth() + 1}/${ws.getUTCDate()} – ${we.getUTCMonth() + 1}/${we.getUTCDate()}`;
-      rows.push(aggregateRows(bucket, label, startStr, endStr));
+      rows.push(aggregateDbRows(bucket, label, startStr, endStr, true));
 
-      // Move to previous week
       weekEnd = addDays(weekStart, -1);
     }
   }
 
-  // Summary statistics
   const avg12      = avgRow(rows);
   const wowDelta   = rows.length >= 2 ? deltaRow(rows[0], rows[1]) : null;
   const wowPct     = rows.length >= 2 ? pctDeltaRow(rows[0], rows[1]) : null;
@@ -267,11 +328,10 @@ export async function GET(req: NextRequest) {
   const avg12Pct   = rows.length >= 1 ? pctDeltaRow(rows[0], avg12) : null;
 
   const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-  const dayName  = dayNames[anchor.getUTCDay()];
 
   return NextResponse.json({
     view,
-    dayName,
+    dayName:    dayNames[anchor.getUTCDay()],
     anchorDate: isoDate(anchor),
     campaigns,
     rows,

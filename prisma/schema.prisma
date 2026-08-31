@@ -123,6 +123,12 @@ model CampaignDailySpend {
   conversionValue Float    @default(0)  // revenue Google Ads attributes to this campaign
   ctr             Float?
   cpc             Float?
+  // Search impression share metrics (null for non-search campaigns)
+  searchImprShare    Float?
+  searchTopIS        Float?
+  searchAbsTopIS     Float?
+  searchLostISRank   Float?
+  searchLostISBudget Float?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
