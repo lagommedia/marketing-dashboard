@@ -18,7 +18,7 @@ function formatTableForPrompt(tableData: Record<string, unknown>): string {
   const avg12 = tableData.avg12 as Record<string, unknown> | undefined;
   const view = tableData.view as string | undefined;
 
-  if (!rows?.length) return "No data available.";
+  if (!rows?.length) return "No rolling average data available.";
 
   function fmtVal(key: string, v: unknown): string {
     if (v == null) return "—";
@@ -32,13 +32,13 @@ function formatTableForPrompt(tableData: Record<string, unknown>): string {
   }
 
   const cols = ["impressions","clicks","ctr","spend","cpc","conversions","conversionValue","roas","costPerConversion","invalidClicks","searchImprShare","searchTopIS","searchAbsTopIS","searchLostISRank","searchLostISBudget"];
-  const header = `Period | ${cols.map(c => c).join(" | ")}`;
-  const rowLines = rows.map(r =>
+  const header = `Period | ${cols.join(" | ")}`;
+  const rowLines = (rows ?? []).map(r =>
     `${r.label} | ${cols.map(c => fmtVal(c, r[c])).join(" | ")}`
   );
   const avgLine = avg12 ? `12-period avg | ${cols.map(c => fmtVal(c, avg12[c])).join(" | ")}` : "";
 
-  return `View: ${view}\n\n${header}\n${rowLines.join("\n")}${avgLine ? "\n" + avgLine : ""}`;
+  return `View: ${view ?? "unknown"}\n\n${header}\n${rowLines.join("\n")}${avgLine ? "\n" + avgLine : ""}`;
 }
 
 export async function POST(req: NextRequest) {
@@ -50,14 +50,18 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let question: string, tableData: Record<string, unknown>, funnelData: Record<string, unknown> | null, summaryData: Record<string, unknown> | null, campaigns: unknown[] | null, rollingView: string, messages: Array<{ role: string; content: string }>;
+  let question: string,
+      tableData: Record<string, unknown>,
+      funnelData: Record<string, unknown> | null,
+      summaryData: Record<string, unknown> | null,
+      rollingView: string,
+      messages: Array<{ role: string; content: string }>;
   try {
     const body  = await req.json();
     question    = body.question    ?? "";
     tableData   = body.tableData   ?? {};
     funnelData  = body.funnelData  ?? null;
     summaryData = body.summaryData ?? null;
-    campaigns   = body.campaigns   ?? null;
     rollingView = body.rollingView ?? "weekly";
     messages    = body.messages    ?? [];
   } catch {
@@ -71,40 +75,85 @@ export async function POST(req: NextRequest) {
   const tableText = formatTableForPrompt(tableData);
 
   const summaryText = summaryData ? `
-## Campaign Summary (overall)
-Spend: $${(summaryData.spend as number ?? 0).toLocaleString("en-US", { maximumFractionDigits: 0 })}
-Impressions: ${(summaryData.impressions as number ?? 0).toLocaleString()}
-Clicks: ${(summaryData.clicks as number ?? 0).toLocaleString()}
-CTR: ${((summaryData.ctr as number ?? 0) * 100).toFixed(2)}%
-CPC: $${(summaryData.cpc as number ?? 0).toFixed(2)}
-Conversions: ${(summaryData.conversions as number ?? 0).toFixed(1)}
-ROAS: ${summaryData.roas ? `${(summaryData.roas as number).toFixed(2)}×` : "N/A"}
+## Campaign Summary (all campaigns, combined)
+- Spend: $${(summaryData.spend as number ?? 0).toLocaleString("en-US", { maximumFractionDigits: 0 })}
+- Impressions: ${(summaryData.impressions as number ?? 0).toLocaleString()}
+- Clicks: ${(summaryData.clicks as number ?? 0).toLocaleString()}
+- CTR: ${((summaryData.ctr as number ?? 0) * 100).toFixed(2)}%
+- Avg CPC: $${(summaryData.cpc as number ?? 0).toFixed(2)}
+- Conversions: ${(summaryData.conversions as number ?? 0).toFixed(1)}
+- ROAS: ${summaryData.roas ? `${(summaryData.roas as number).toFixed(2)}×` : "N/A (conversion tracking not set up)"}
 ` : "";
 
-  const funnelText = funnelData ? `
+  const cur = funnelData?.current as Record<string, unknown> | undefined;
+  const funnelText = cur ? `
 ## HubSpot Funnel Attribution (QTD)
-Leads: ${funnelData.current ? (funnelData.current as Record<string, unknown>).leads ?? "—" : "—"}
-MQLs: ${funnelData.current ? (funnelData.current as Record<string, unknown>).mqls ?? "—" : "—"}
-SQOs: ${funnelData.current ? (funnelData.current as Record<string, unknown>).sqos ?? "—" : "—"}
-Closed Won: ${funnelData.current ? (funnelData.current as Record<string, unknown>).closedWon ?? "—" : "—"}
+- Leads: ${cur.leads ?? "—"}
+- MQLs: ${cur.mqls ?? "—"} (${cur.leadToMql != null ? `${((cur.leadToMql as number) * 100).toFixed(1)}% lead→MQL` : "—"})
+- SQOs: ${cur.sqos ?? "—"} (${cur.mqlToSqo != null ? `${((cur.mqlToSqo as number) * 100).toFixed(1)}% MQL→SQO` : "—"})
+- Closed Won: ${cur.closedWon ?? "—"} (${cur.sqoToClose != null ? `${((cur.sqoToClose as number) * 100).toFixed(1)}% SQO→close` : "—"})
 ` : "";
 
-  const systemPrompt = `You are a Paid Media AI analyst for a B2B SaaS company using the google-ads-analyzer framework. You have full visibility into the user's Google Ads performance and HubSpot funnel attribution. Be concise (2-4 paragraphs), specific with numbers, and actionable.
+  // Extract raw row data for chart generation
+  const rows = (tableData.rows ?? []) as Array<Record<string, unknown>>;
+  const chartRows = rows.slice(0, 12).map(r => ({
+    period: String(r.label ?? r.startDate ?? ""),
+    spend:  typeof r.spend === "number" ? Math.round(r.spend) : 0,
+    clicks: typeof r.clicks === "number" ? Math.round(r.clicks) : 0,
+    impressions: typeof r.impressions === "number" ? Math.round(r.impressions) : 0,
+    ctr:    typeof r.ctr === "number" ? parseFloat((r.ctr * 100).toFixed(2)) : null,
+    cpc:    typeof r.cpc === "number" ? parseFloat(r.cpc.toFixed(2)) : null,
+    conversions: typeof r.conversions === "number" ? parseFloat(r.conversions.toFixed(1)) : null,
+    roas:   typeof r.roas === "number" ? parseFloat(r.roas.toFixed(2)) : null,
+    searchImprShare: typeof r.searchImprShare === "number" ? parseFloat((r.searchImprShare * 100).toFixed(1)) : null,
+    searchLostISRank: typeof r.searchLostISRank === "number" ? parseFloat((r.searchLostISRank * 100).toFixed(1)) : null,
+    searchLostISBudget: typeof r.searchLostISBudget === "number" ? parseFloat((r.searchLostISBudget * 100).toFixed(1)) : null,
+  }));
+
+  const systemPrompt = `You are a Paid Media AI analyst for a B2B SaaS company. You have full visibility into the user's Google Ads and HubSpot performance data below.
 ${summaryText}
-## Rolling Averages Table (${rollingView} view)
+## Rolling Averages Table (${rollingView} view — most recent period first)
 ${tableText}
 ${funnelText}
-## Analysis Guidelines
-- IS metrics (Search Impr. Share, Top IS, Abs. Top IS) represent capture rate of available impressions (e.g. 0.75 = 75%)
-- Lost IS (Rank) = lost due to poor Ad Rank/QS — fix bids and quality score first
-- Lost IS (Budget) = lost because budget ran out — increase budget or reduce bids
-- IS metrics are ONLY available for Search campaigns — Performance Max shows "—" by design
-- For PMax campaigns, focus on Conversions, ROAS, and Cost/Conv. rather than IS metrics
-- For Search campaigns, IS metrics are the primary diagnostic alongside Conversions and ROAS
-- Invalid Clicks = bot/fraudulent clicks auto-filtered by Google — high numbers warrant investigation
-- Never recommend increasing budget if Lost IS (Rank) > 50% — fix QS first
-- Always compare current period vs prior periods and vs 12-period average
-- Format key numbers in bold. Show calculations when helpful.`;
+## Underlying row data for chart generation (newest first, raw numbers)
+${JSON.stringify(chartRows.slice(0, 8), null, 2)}
+
+## Analysis Rules
+- IS metrics represent capture % of available impressions (e.g. 0.75 = 75%)
+- Lost IS (Rank) = lost due to poor Ad Rank/QS — fix bids/QS first, never just increase budget
+- Lost IS (Budget) = budget ran out — can increase budget or reduce bids
+- IS metrics only exist for Search campaigns — Performance Max always shows null/—
+- For PMax: focus on Conversions, ROAS, Cost/Conv. For Search: IS metrics are the primary diagnostic
+- Never recommend increasing budget if Lost IS (Rank) > 50%
+- Always compare current vs prior periods and vs 12-period average
+- Use **bold** for all key numbers
+
+## Response Format
+Respond ONLY with a valid JSON object, no other text before or after. Schema:
+{
+  "answer": "2-4 paragraph analysis with **bold** numbers, bullet points using - prefix",
+  "charts": [
+    {
+      "title": "descriptive chart title",
+      "type": "bar|line|area",
+      "xKey": "period",
+      "unit": "$|%|×|",
+      "series": [
+        { "key": "fieldname", "label": "Display Label", "color": "#6366f1" }
+      ],
+      "data": [{ "period": "label", "fieldname": number }, ...]
+    }
+  ],
+  "suggestions": ["follow-up question 1", "follow-up question 2", "follow-up question 3"]
+}
+
+Chart rules:
+- Include 1-2 charts ONLY when they genuinely illustrate your point (trends, comparisons, forecasts)
+- For forecasts: extrapolate from real data, show "Projected" as a separate series using a dashed style (set "dashed": true on that series)
+- Use real data from the rows above — never fabricate numbers
+- Reverse the data array so it goes oldest→newest (chronological order) for trend charts
+- Omit "charts" key entirely if no chart adds value
+- suggestions: always include 3 relevant follow-up questions`;
 
   const chatHistory = messages.map((m: { role: string; content: string }) => ({
     role: m.role as "user" | "assistant",
@@ -114,12 +163,26 @@ ${funnelText}
   const client = new Anthropic({ apiKey });
   const response = await client.messages.create({
     model:      "claude-sonnet-5",
-    max_tokens: 1024,
+    max_tokens: 2048,
     system:     systemPrompt,
     messages:   [...chatHistory, { role: "user", content: question }],
   });
 
   const textBlock = response.content.find(c => c.type === "text");
-  const text = textBlock?.type === "text" ? textBlock.text : "";
-  return NextResponse.json({ answer: text });
+  const raw = textBlock?.type === "text" ? textBlock.text.trim() : "";
+
+  // Parse the JSON response
+  try {
+    // Strip any markdown code fences if present
+    const cleaned = raw.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```\s*$/i, "").trim();
+    const parsed = JSON.parse(cleaned);
+    return NextResponse.json({
+      answer:      parsed.answer      ?? raw,
+      charts:      parsed.charts      ?? [],
+      suggestions: parsed.suggestions ?? [],
+    });
+  } catch {
+    // Fallback: return as plain text answer
+    return NextResponse.json({ answer: raw, charts: [], suggestions: [] });
+  }
 }

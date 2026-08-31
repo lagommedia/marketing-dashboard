@@ -3,7 +3,9 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   AreaChart, Area,
-  XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer,
+  BarChart, Bar,
+  LineChart, Line,
+  XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, Legend,
 } from "recharts";
 import {
   RefreshCw, Megaphone, TrendingUp, MousePointerClick, Eye,
@@ -355,6 +357,22 @@ function buildCampaignRollingData(sourceData: RollingData, campaignId: string): 
 // Floating AI Chatbot (global, page-level)
 // ---------------------------------------------------------------------------
 
+interface ChatChart {
+  title:   string;
+  type:    "bar" | "line" | "area";
+  xKey:    string;
+  unit?:   string;
+  series:  { key: string; label: string; color: string; dashed?: boolean }[];
+  data:    Record<string, string | number>[];
+}
+
+interface ChatMsg {
+  role:        "user" | "assistant";
+  content:     string;
+  charts?:     ChatChart[];
+  suggestions?: string[];
+}
+
 interface ChatContext {
   data:        PaidMediaData | null;
   rollingData: RollingData   | null;
@@ -362,9 +380,101 @@ interface ChatContext {
   rollingView: string;
 }
 
+function RichText({ text }: { text: string }) {
+  const lines = text.split("\n");
+  return (
+    <div className="space-y-1.5 text-sm leading-relaxed">
+      {lines.map((line, i) => {
+        if (!line.trim()) return <div key={i} className="h-1" />;
+        const isBullet = /^[-•]\s/.test(line.trim());
+        const raw = isBullet ? line.trim().slice(2) : line;
+        const parts = raw.split(/\*\*(.+?)\*\*/g);
+        const nodes = parts.map((p, j) =>
+          j % 2 === 1
+            ? <strong key={j} className="font-semibold text-slate-900">{p}</strong>
+            : p
+        );
+        return isBullet
+          ? <div key={i} className="flex gap-1.5 items-start"><span className="text-indigo-400 mt-0.5 shrink-0">•</span><span>{nodes}</span></div>
+          : <p key={i}>{nodes}</p>;
+      })}
+    </div>
+  );
+}
+
+function ChatChartCard({ chart }: { chart: ChatChart }) {
+  const fmtTick = (v: number) => {
+    if (chart.unit === "$") return v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`;
+    if (chart.unit === "%") return `${v}%`;
+    if (chart.unit === "×") return `${v}×`;
+    return v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v);
+  };
+  const fmtTooltip = (v: number) => {
+    if (chart.unit === "$") return `$${v.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+    if (chart.unit === "%") return `${v}%`;
+    if (chart.unit === "×") return `${v}×`;
+    return v.toLocaleString("en-US", { maximumFractionDigits: 1 });
+  };
+
+  const commonAxis = (
+    <>
+      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+      <XAxis dataKey={chart.xKey} tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+      <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={fmtTick} width={44} />
+      <Tooltip
+        formatter={(v: unknown) => [fmtTooltip(v as number)]}
+        contentStyle={{ border: "1px solid #e2e8f0", borderRadius: "8px", fontSize: "11px" }}
+      />
+      {chart.series.length > 1 && <Legend wrapperStyle={{ fontSize: "11px" }} />}
+    </>
+  );
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-3 mt-2">
+      <p className="text-xs font-semibold text-slate-600 mb-2">{chart.title}</p>
+      <ResponsiveContainer width="100%" height={140}>
+        {chart.type === "bar" ? (
+          <BarChart data={chart.data} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+            {commonAxis}
+            {chart.series.map(s => (
+              <Bar key={s.key} dataKey={s.key} name={s.label} fill={s.color} radius={[3, 3, 0, 0]} maxBarSize={32} />
+            ))}
+          </BarChart>
+        ) : chart.type === "area" ? (
+          <AreaChart data={chart.data} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+            <defs>
+              {chart.series.map(s => (
+                <linearGradient key={s.key} id={`grad-${s.key}`} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%"  stopColor={s.color} stopOpacity={0.2} />
+                  <stop offset="95%" stopColor={s.color} stopOpacity={0} />
+                </linearGradient>
+              ))}
+            </defs>
+            {commonAxis}
+            {chart.series.map(s => (
+              <Area key={s.key} type="monotone" dataKey={s.key} name={s.label}
+                stroke={s.color} strokeWidth={2} strokeDasharray={s.dashed ? "5 3" : undefined}
+                fill={`url(#grad-${s.key})`} dot={false} activeDot={{ r: 3 }} />
+            ))}
+          </AreaChart>
+        ) : (
+          <LineChart data={chart.data} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+            {commonAxis}
+            {chart.series.map(s => (
+              <Line key={s.key} type="monotone" dataKey={s.key} name={s.label}
+                stroke={s.color} strokeWidth={2} strokeDasharray={s.dashed ? "5 3" : undefined}
+                dot={false} activeDot={{ r: 3 }} />
+            ))}
+          </LineChart>
+        )}
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 function PaidMediaChatDrawer({ open, onClose, ctx }: { open: boolean; onClose: () => void; ctx: ChatContext }) {
   const [input,    setInput]    = useState("");
-  const [messages, setMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
+  const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [loading,  setLoading]  = useState(false);
   const bottomRef = React.useRef<HTMLDivElement>(null);
 
@@ -372,31 +482,35 @@ function PaidMediaChatDrawer({ open, onClose, ctx }: { open: boolean; onClose: (
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
-  async function send() {
-    const q = input.trim();
+  async function send(question?: string) {
+    const q = (question ?? input).trim();
     if (!q || loading) return;
     setInput("");
-    const newMsgs = [...messages, { role: "user" as const, content: q }];
+    const history = messages.map(m => ({ role: m.role, content: m.content }));
+    const newMsgs: ChatMsg[] = [...messages, { role: "user", content: q }];
     setMessages(newMsgs);
     setLoading(true);
     try {
-      const tableData = ctx.rollingData ?? {};
       const res = await fetch("/api/paid-media/chat", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({
-          question:   q,
-          tableTitle: "Paid Media Overview",
-          tableData,
-          funnelData: ctx.funnelData,
+          question:    q,
+          tableData:   ctx.rollingData ?? {},
+          funnelData:  ctx.funnelData,
           summaryData: ctx.data?.summary,
           campaigns:   ctx.data?.campaigns,
           rollingView: ctx.rollingView,
-          messages,
+          messages:    history,
         }),
       });
       const json = await res.json();
-      setMessages([...newMsgs, { role: "assistant", content: json.answer ?? json.error ?? "No response." }]);
+      setMessages([...newMsgs, {
+        role:        "assistant",
+        content:     json.answer ?? json.error ?? "No response.",
+        charts:      json.charts ?? [],
+        suggestions: json.suggestions ?? [],
+      }]);
     } catch {
       setMessages([...newMsgs, { role: "assistant", content: "Error reaching AI. Please try again." }]);
     } finally {
@@ -404,7 +518,7 @@ function PaidMediaChatDrawer({ open, onClose, ctx }: { open: boolean; onClose: (
     }
   }
 
-  const SUGGESTIONS = [
+  const INITIAL_SUGGESTIONS = [
     "How is Performance Max performing vs Search?",
     "Where are we losing impression share?",
     "What's driving our CPC trends?",
@@ -412,119 +526,137 @@ function PaidMediaChatDrawer({ open, onClose, ctx }: { open: boolean; onClose: (
   ];
 
   return (
-    <>
-      {/* Backdrop */}
-      {open && (
-        <div
-          className="fixed inset-0 z-40 bg-black/20 backdrop-blur-sm"
-          onClick={onClose}
-        />
-      )}
+    <div className={cn(
+      "fixed top-0 right-0 z-50 h-full w-full max-w-md bg-white shadow-2xl flex flex-col transition-transform duration-300 ease-in-out border-l border-slate-200",
+      open ? "translate-x-0" : "translate-x-full",
+    )}>
+      {/* Header */}
+      <div className="flex items-center justify-between px-5 py-4 border-b border-indigo-700 bg-indigo-600 shrink-0">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
+            <Bot className="w-4 h-4 text-white" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-white">Paid Media AI</p>
+            <p className="text-xs text-indigo-200">Powered by google-ads-analyzer</p>
+          </div>
+        </div>
+        <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/20 transition-colors">
+          <X className="w-4 h-4 text-white" />
+        </button>
+      </div>
 
-      {/* Drawer */}
-      <div className={cn(
-        "fixed top-0 right-0 z-50 h-full w-full max-w-md bg-white shadow-2xl flex flex-col transition-transform duration-300 ease-in-out",
-        open ? "translate-x-0" : "translate-x-full",
-      )}>
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-indigo-600">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
-              <Bot className="w-4 h-4 text-white" />
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 bg-slate-50">
+        {/* Welcome + initial suggestions */}
+        <div className="space-y-3">
+          <div className="flex gap-2.5">
+            <div className="w-7 h-7 rounded-full bg-indigo-100 flex items-center justify-center shrink-0 mt-0.5">
+              <Bot className="w-4 h-4 text-indigo-600" />
             </div>
-            <div>
-              <p className="text-sm font-semibold text-white">Paid Media AI</p>
-              <p className="text-xs text-indigo-200">Powered by google-ads-analyzer</p>
+            <div className="bg-white border border-slate-200 rounded-2xl rounded-tl-sm px-4 py-3 text-sm text-slate-700 leading-relaxed shadow-sm">
+              Hi! I can analyze your paid media performance — trends, IS diagnostics, campaign comparisons, budget pacing, and forecasts. What would you like to know?
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/20 transition-colors">
-            <X className="w-4 h-4 text-white" />
+          {messages.length === 0 && (
+            <div className="grid grid-cols-1 gap-2 pl-9">
+              {INITIAL_SUGGESTIONS.map(s => (
+                <button
+                  key={s}
+                  onClick={() => send(s)}
+                  className="text-left text-xs px-3 py-2 rounded-lg border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {messages.map((m, i) => (
+          <div key={i} className={cn("flex gap-2.5", m.role === "user" ? "justify-end" : "justify-start")}>
+            {m.role === "assistant" && (
+              <div className="w-7 h-7 rounded-full bg-indigo-100 flex items-center justify-center shrink-0 mt-0.5">
+                <Bot className="w-4 h-4 text-indigo-600" />
+              </div>
+            )}
+            <div className={cn("max-w-[88%]", m.role === "user" ? "flex flex-col items-end" : "space-y-2 w-full")}>
+              <div className={cn(
+                "rounded-2xl px-4 py-3",
+                m.role === "user"
+                  ? "bg-indigo-600 text-white rounded-tr-sm text-sm"
+                  : "bg-white border border-slate-200 text-slate-700 rounded-tl-sm shadow-sm w-full",
+              )}>
+                {m.role === "user"
+                  ? m.content
+                  : <RichText text={m.content} />}
+              </div>
+
+              {/* Charts */}
+              {m.role === "assistant" && m.charts && m.charts.length > 0 && (
+                <div className="w-full space-y-2">
+                  {m.charts.map((chart, ci) => (
+                    <ChatChartCard key={ci} chart={chart} />
+                  ))}
+                </div>
+              )}
+
+              {/* Follow-up suggestions */}
+              {m.role === "assistant" && m.suggestions && m.suggestions.length > 0 && i === messages.length - 1 && (
+                <div className="w-full grid grid-cols-1 gap-1.5 pt-1">
+                  {m.suggestions.map(s => (
+                    <button
+                      key={s}
+                      onClick={() => send(s)}
+                      className="text-left text-xs px-3 py-2 rounded-lg border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+
+        {loading && (
+          <div className="flex gap-2.5 justify-start">
+            <div className="w-7 h-7 rounded-full bg-indigo-100 flex items-center justify-center shrink-0">
+              <Bot className="w-4 h-4 text-indigo-600 animate-pulse" />
+            </div>
+            <div className="bg-white border border-slate-200 rounded-2xl rounded-tl-sm px-4 py-3 text-sm text-slate-400 shadow-sm">
+              Analyzing…
+            </div>
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Input */}
+      <div className="px-4 py-4 border-t border-slate-200 bg-white shrink-0">
+        <div className="flex gap-2">
+          <input
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && !e.shiftKey && send()}
+            placeholder="Ask about your campaigns…"
+            className="flex-1 text-sm rounded-xl border border-slate-200 px-4 py-2.5 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50"
+          />
+          <button
+            onClick={() => send()}
+            disabled={!input.trim() || loading}
+            className={cn(
+              "px-3.5 py-2.5 rounded-xl text-sm font-medium transition-colors flex items-center",
+              input.trim() && !loading
+                ? "bg-indigo-600 text-white hover:bg-indigo-700"
+                : "bg-slate-100 text-slate-400 cursor-not-allowed",
+            )}
+          >
+            <Send className="w-4 h-4" />
           </button>
         </div>
-
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-          {messages.length === 0 && (
-            <div className="space-y-4">
-              <div className="flex gap-2.5">
-                <div className="w-7 h-7 rounded-full bg-indigo-100 flex items-center justify-center shrink-0 mt-0.5">
-                  <Bot className="w-4 h-4 text-indigo-600" />
-                </div>
-                <div className="bg-slate-50 border border-slate-200 rounded-2xl rounded-tl-sm px-4 py-3 text-sm text-slate-700 leading-relaxed max-w-[85%]">
-                  Hi! I can help you analyze your paid media performance — trends, IS diagnostics, campaign comparisons, budget pacing, and more. What would you like to know?
-                </div>
-              </div>
-              <div className="grid grid-cols-1 gap-2 pl-9">
-                {SUGGESTIONS.map(s => (
-                  <button
-                    key={s}
-                    onClick={() => { setInput(s); }}
-                    className="text-left text-xs px-3 py-2 rounded-lg border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition-colors"
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {messages.map((m, i) => (
-            <div key={i} className={cn("flex gap-2.5", m.role === "user" ? "justify-end" : "justify-start")}>
-              {m.role === "assistant" && (
-                <div className="w-7 h-7 rounded-full bg-indigo-100 flex items-center justify-center shrink-0 mt-0.5">
-                  <Bot className="w-4 h-4 text-indigo-600" />
-                </div>
-              )}
-              <div className={cn(
-                "rounded-2xl px-4 py-3 text-sm max-w-[85%] whitespace-pre-wrap leading-relaxed",
-                m.role === "user"
-                  ? "bg-indigo-600 text-white rounded-tr-sm"
-                  : "bg-slate-50 border border-slate-200 text-slate-700 rounded-tl-sm shadow-sm",
-              )}>
-                {m.content}
-              </div>
-            </div>
-          ))}
-
-          {loading && (
-            <div className="flex gap-2.5 justify-start">
-              <div className="w-7 h-7 rounded-full bg-indigo-100 flex items-center justify-center shrink-0">
-                <Bot className="w-4 h-4 text-indigo-600 animate-pulse" />
-              </div>
-              <div className="bg-slate-50 border border-slate-200 rounded-2xl rounded-tl-sm px-4 py-3 text-sm text-slate-400 shadow-sm">
-                Analyzing…
-              </div>
-            </div>
-          )}
-          <div ref={bottomRef} />
-        </div>
-
-        {/* Input */}
-        <div className="px-4 py-4 border-t border-slate-100 bg-white">
-          <div className="flex gap-2">
-            <input
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && !e.shiftKey && send()}
-              placeholder="Ask about your campaigns…"
-              className="flex-1 text-sm rounded-xl border border-slate-200 px-4 py-2.5 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50"
-            />
-            <button
-              onClick={send}
-              disabled={!input.trim() || loading}
-              className={cn(
-                "px-3.5 py-2.5 rounded-xl text-sm font-medium transition-colors flex items-center",
-                input.trim() && !loading
-                  ? "bg-indigo-600 text-white hover:bg-indigo-700"
-                  : "bg-slate-100 text-slate-400 cursor-not-allowed",
-              )}
-            >
-              <Send className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
       </div>
-    </>
+    </div>
   );
 }
 
