@@ -568,8 +568,9 @@ async function fetchDeals(
       : mode === "new"
       ? [{ propertyName: "createdate", operator: "GTE", value: String(sinceTimestamp)      }]
       : [
-          { propertyName: "dealstage",  operator: "EQ",  value: CLOSED_WON_STAGE           },
-          { propertyName: "closedate",  operator: "GTE", value: String(sinceTimestamp)      },
+          { propertyName: "dealstage",          operator: "EQ",  value: CLOSED_WON_STAGE                              },
+          { propertyName: "closedate",          operator: "GTE", value: String(sinceTimestamp)                        },
+          { propertyName: DEAL_SOURCE_PROPERTY, operator: "IN",  values: ["Inbound", "Events", "Referral"]            },
         ];
 
   const results: DealRecord[] = [];
@@ -2481,8 +2482,9 @@ async function fetchDealRecordsClosed(
     const body: Record<string, unknown> = {
       filterGroups: [{
         filters: [
-          { propertyName: "dealstage",  operator: "EQ",  value: CLOSED_WON_STAGE },
-          { propertyName: "closedate",  operator: "GTE", value: String(fromTs)   },
+          { propertyName: "dealstage",          operator: "EQ",  value: CLOSED_WON_STAGE                   },
+          { propertyName: "closedate",          operator: "GTE", value: String(fromTs)                     },
+          { propertyName: DEAL_SOURCE_PROPERTY, operator: "IN",  values: ["Inbound", "Events", "Referral"] },
         ],
       }],
       properties: ["closedate", "amount", "dealtype", DEAL_SOURCE_PROPERTY, DEAL_SOURCE_DETAIL_PROPERTY],
