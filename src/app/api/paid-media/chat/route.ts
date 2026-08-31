@@ -54,16 +54,20 @@ export async function POST(req: NextRequest) {
       tableData: Record<string, unknown>,
       funnelData: Record<string, unknown> | null,
       summaryData: Record<string, unknown> | null,
+      campaigns: unknown[] | null,
+      campaignRolling: unknown[] | null,
       rollingView: string,
       messages: Array<{ role: string; content: string }>;
   try {
-    const body  = await req.json();
-    question    = body.question    ?? "";
-    tableData   = body.tableData   ?? {};
-    funnelData  = body.funnelData  ?? null;
-    summaryData = body.summaryData ?? null;
-    rollingView = body.rollingView ?? "weekly";
-    messages    = body.messages    ?? [];
+    const body      = await req.json();
+    question        = body.question        ?? "";
+    tableData       = body.tableData       ?? {};
+    funnelData      = body.funnelData      ?? null;
+    summaryData     = body.summaryData     ?? null;
+    campaigns       = body.campaigns       ?? null;
+    campaignRolling = body.campaignRolling ?? null;
+    rollingView     = body.rollingView     ?? "weekly";
+    messages        = body.messages        ?? [];
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
@@ -83,6 +87,20 @@ export async function POST(req: NextRequest) {
 - Avg CPC: $${(summaryData.cpc as number ?? 0).toFixed(2)}
 - Conversions: ${(summaryData.conversions as number ?? 0).toFixed(1)}
 - ROAS: ${summaryData.roas ? `${(summaryData.roas as number).toFixed(2)}×` : "N/A (conversion tracking not set up)"}
+` : "";
+
+  // Per-campaign 30/90d breakdown
+  type CampaignBreak = { campaignName: string; spend?: number; impressions?: number; clicks?: number; ctr?: number | null; cpc?: number | null; conversions?: number; roas?: number | null };
+  const campaignBreakdownText = campaigns && (campaigns as CampaignBreak[]).length > 0 ? `
+## Per-Campaign Breakdown (last 30/90 days)
+${(campaigns as CampaignBreak[]).map(c => `**${c.campaignName}**: Spend $${(c.spend ?? 0).toLocaleString("en-US", { maximumFractionDigits: 0 })}, Impressions ${(c.impressions ?? 0).toLocaleString()}, Clicks ${(c.clicks ?? 0).toLocaleString()}, CTR ${c.ctr != null ? (c.ctr * 100).toFixed(2) : "—"}%, CPC ${c.cpc != null ? "$" + c.cpc.toFixed(2) : "—"}, Conv ${(c.conversions ?? 0).toFixed(1)}, ROAS ${c.roas != null && c.roas > 0 ? c.roas.toFixed(2) + "×" : "N/A"}`).join("\n")}
+` : "";
+
+  // Per-campaign rolling data
+  type CampaignRollingEntry = { campaignName: string; campaignId: string; rows: unknown[] };
+  const campaignRollingText = campaignRolling && (campaignRolling as CampaignRollingEntry[]).length > 0 ? `
+## Per-Campaign Rolling Data (${rollingView} view, newest first)
+${JSON.stringify(campaignRolling, null, 2)}
 ` : "";
 
   const cur = funnelData?.current as Record<string, unknown> | undefined;
@@ -110,11 +128,11 @@ export async function POST(req: NextRequest) {
     searchLostISBudget: typeof r.searchLostISBudget === "number" ? parseFloat((r.searchLostISBudget * 100).toFixed(1)) : null,
   }));
 
-  const systemPrompt = `You are a Paid Media AI analyst for a B2B SaaS company. You have full visibility into the user's Google Ads and HubSpot performance data below.
-${summaryText}
-## Rolling Averages Table (${rollingView} view — most recent period first)
+  const systemPrompt = `You are a Paid Media AI analyst for a B2B SaaS company. You have full visibility into the user's Google Ads and HubSpot performance data below. The three active campaigns are: Performance Max (PMax, no IS metrics), S_Non-Brand (Search), and S_Brand (Search).
+${summaryText}${campaignBreakdownText}
+## Aggregate Rolling Averages Table (all campaigns combined, ${rollingView} view — most recent period first)
 ${tableText}
-${funnelText}
+${campaignRollingText}${funnelText}
 ## Underlying row data for chart generation (newest first, raw numbers)
 ${JSON.stringify(chartRows.slice(0, 8), null, 2)}
 

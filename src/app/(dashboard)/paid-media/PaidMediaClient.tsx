@@ -491,17 +491,44 @@ function PaidMediaChatDrawer({ open, onClose, ctx }: { open: boolean; onClose: (
     setMessages(newMsgs);
     setLoading(true);
     try {
+      // Build per-campaign rolling rows so the AI has individual campaign data
+      const campaignRolling = ctx.rollingData
+        ? (ctx.rollingData.campaigns ?? [])
+            .filter(c => ACTIVE_CAMPAIGNS.includes(c.campaignName))
+            .map(c => {
+              const d = buildCampaignRollingData(ctx.rollingData!, c.campaignId);
+              return {
+                campaignName: c.campaignName,
+                campaignId:   c.campaignId,
+                rows: d.rows.slice(0, 12).map(r => ({
+                  period:        r.label,
+                  spend:         r.spend,
+                  impressions:   r.impressions,
+                  clicks:        r.clicks,
+                  ctr:           r.ctr != null ? parseFloat((r.ctr * 100).toFixed(2)) : null,
+                  cpc:           r.cpc != null ? parseFloat(r.cpc.toFixed(2)) : null,
+                  conversions:   r.conversions,
+                  roas:          r.roas != null ? parseFloat(r.roas.toFixed(2)) : null,
+                  searchImprShare:    r.searchImprShare    != null ? parseFloat((r.searchImprShare * 100).toFixed(1)) : null,
+                  searchLostISRank:   r.searchLostISRank   != null ? parseFloat((r.searchLostISRank * 100).toFixed(1)) : null,
+                  searchLostISBudget: r.searchLostISBudget != null ? parseFloat((r.searchLostISBudget * 100).toFixed(1)) : null,
+                })),
+              };
+            })
+        : [];
+
       const res = await fetch("/api/paid-media/chat", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({
-          question:    q,
-          tableData:   ctx.rollingData ?? {},
-          funnelData:  ctx.funnelData,
-          summaryData: ctx.data?.summary,
-          campaigns:   ctx.data?.campaigns,
-          rollingView: ctx.rollingView,
-          messages:    history,
+          question:        q,
+          tableData:       ctx.rollingData ?? {},
+          funnelData:      ctx.funnelData,
+          summaryData:     ctx.data?.summary,
+          campaigns:       ctx.data?.campaigns,
+          campaignRolling,
+          rollingView:     ctx.rollingView,
+          messages:        history,
         }),
       });
       const json = await res.json();
