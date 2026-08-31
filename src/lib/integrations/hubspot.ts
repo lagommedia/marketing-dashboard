@@ -2180,6 +2180,19 @@ export async function backfillHubspot(
     }
   }
 
+  // ── Clear stale rows in the backfill window ───────────────────────────────
+  // Days with no HubSpot activity are absent from dayBuckets and would never
+  // be upserted, leaving any old inflated rows intact. Deleting the window
+  // first guarantees a clean slate — no leftover cumulative data survives.
+  const today = new Date();
+  today.setUTCHours(23, 59, 59, 999);
+  await prisma.metricSnapshot.deleteMany({
+    where: {
+      platform: "hubspot",
+      date:     { gte: from, lte: today },
+    },
+  });
+
   // ── Write snapshots ────────────────────────────────────────────────────────
   let snapshotCount = 0;
 

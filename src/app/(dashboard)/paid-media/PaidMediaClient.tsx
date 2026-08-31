@@ -8,7 +8,7 @@ import {
 import {
   RefreshCw, Megaphone, TrendingUp, MousePointerClick, Eye,
   DollarSign, BarChart2, Zap, ArrowUpDown, ChevronUp, ChevronDown,
-  CalendarDays,
+  CalendarDays, Target,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -192,20 +192,95 @@ function rollingVal(row: RollingRow | RollingDelta, key: RollingColKey): number 
   return typeof v === "number" ? v : null;
 }
 
-function RollingTable({ data }: { data: RollingData }) {
-  const { rows, avg12, wowDelta, wowPct, avg12Delta, avg12Pct, view, dayName } = data;
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+// ---------------------------------------------------------------------------
+// Client-side rolling computation helpers (mirrors API logic)
+// ---------------------------------------------------------------------------
 
-  const subLabel = view === "daily" ? `Last 12 ${dayName}s` : "Last 12 Weeks";
-  const wowLabel = view === "daily" ? "WoW Δ" : "Week-over-Week Δ";
+function nullableAvg(vals: (number | null)[]): number | null {
+  const valid = vals.filter((v): v is number => v != null);
+  return valid.length > 0 ? valid.reduce((s, v) => s + v, 0) / valid.length : null;
+}
 
-  function toggleRow(key: string) {
-    setExpanded(prev => {
-      const next = new Set(prev);
-      next.has(key) ? next.delete(key) : next.add(key);
-      return next;
-    });
+function clientAvgRow(rows: RollingRow[]): RollingRow {
+  const n = rows.length;
+  if (n === 0) return { label: "12-period avg", startDate: "", endDate: "", impressions: 0, clicks: 0, spend: 0, ctr: null, cpc: null, searchImprShare: null, searchTopIS: null, searchAbsTopIS: null, searchLostISRank: null, searchLostISBudget: null };
+  const impressions = rows.reduce((s, r) => s + r.impressions, 0) / n;
+  const clicks      = rows.reduce((s, r) => s + r.clicks, 0) / n;
+  const spend       = rows.reduce((s, r) => s + r.spend, 0) / n;
+  return {
+    label: "12-period avg", startDate: "", endDate: "",
+    impressions, clicks, spend,
+    ctr: impressions > 0 ? clicks / impressions : null,
+    cpc: clicks      > 0 ? spend  / clicks      : null,
+    searchImprShare:    nullableAvg(rows.map(r => r.searchImprShare)),
+    searchTopIS:        nullableAvg(rows.map(r => r.searchTopIS)),
+    searchAbsTopIS:     nullableAvg(rows.map(r => r.searchAbsTopIS)),
+    searchLostISRank:   nullableAvg(rows.map(r => r.searchLostISRank)),
+    searchLostISBudget: nullableAvg(rows.map(r => r.searchLostISBudget)),
+  };
+}
+
+function clientDeltaRow(a: RollingRow, b: RollingRow): RollingDelta {
+  function d(av: number | null, bv: number | null) { return av != null && bv != null ? av - bv : null; }
+  return {
+    impressions: d(a.impressions, b.impressions), clicks: d(a.clicks, b.clicks),
+    spend: d(a.spend, b.spend), ctr: d(a.ctr, b.ctr), cpc: d(a.cpc, b.cpc),
+    searchImprShare: d(a.searchImprShare, b.searchImprShare),
+    searchTopIS: d(a.searchTopIS, b.searchTopIS),
+    searchAbsTopIS: d(a.searchAbsTopIS, b.searchAbsTopIS),
+    searchLostISRank: d(a.searchLostISRank, b.searchLostISRank),
+    searchLostISBudget: d(a.searchLostISBudget, b.searchLostISBudget),
+  };
+}
+
+function clientPctDeltaRow(a: RollingRow, b: RollingRow): RollingDelta {
+  function pd(av: number | null, bv: number | null) {
+    return av != null && bv != null && bv !== 0 ? (av - bv) / Math.abs(bv) : null;
   }
+  return {
+    impressions: pd(a.impressions, b.impressions), clicks: pd(a.clicks, b.clicks),
+    spend: pd(a.spend, b.spend), ctr: pd(a.ctr, b.ctr), cpc: pd(a.cpc, b.cpc),
+    searchImprShare: pd(a.searchImprShare, b.searchImprShare),
+    searchTopIS: pd(a.searchTopIS, b.searchTopIS),
+    searchAbsTopIS: pd(a.searchAbsTopIS, b.searchAbsTopIS),
+    searchLostISRank: pd(a.searchLostISRank, b.searchLostISRank),
+    searchLostISBudget: pd(a.searchLostISBudget, b.searchLostISBudget),
+  };
+}
+
+function buildCampaignRollingData(sourceData: RollingData, campaignId: string): RollingData {
+  const rows: RollingRow[] = sourceData.rows.map(row => {
+    const c = row.campaigns?.find(c => c.campaignId === campaignId);
+    const impressions = c?.impressions ?? 0;
+    const clicks      = c?.clicks      ?? 0;
+    const spend       = c?.spend       ?? 0;
+    return {
+      label: row.label, startDate: row.startDate, endDate: row.endDate,
+      impressions, clicks, spend,
+      ctr: impressions > 0 ? clicks / impressions : null,
+      cpc: clicks      > 0 ? spend  / clicks      : null,
+      searchImprShare:    c?.searchImprShare    ?? null,
+      searchTopIS:        c?.searchTopIS        ?? null,
+      searchAbsTopIS:     c?.searchAbsTopIS     ?? null,
+      searchLostISRank:   c?.searchLostISRank   ?? null,
+      searchLostISBudget: c?.searchLostISBudget ?? null,
+    };
+  });
+
+  const avg12      = clientAvgRow(rows);
+  const wowDelta   = rows.length >= 2 ? clientDeltaRow(rows[0], rows[1]) : null;
+  const wowPct     = rows.length >= 2 ? clientPctDeltaRow(rows[0], rows[1]) : null;
+  const avg12Delta = rows.length >= 1 ? clientDeltaRow(rows[0], avg12) : null;
+  const avg12Pct   = rows.length >= 1 ? clientPctDeltaRow(rows[0], avg12) : null;
+
+  return { ...sourceData, rows, avg12, wowDelta, wowPct, avg12Delta, avg12Pct };
+}
+
+function RollingTable({ data, title, subtitle }: { data: RollingData; title?: string; subtitle?: string }) {
+  const { rows, avg12, wowDelta, wowPct, avg12Delta, avg12Pct, view, dayName } = data;
+
+  const defaultSubtitle = view === "daily" ? `Last 12 ${dayName}s` : "Last 12 Weeks";
+  const wowLabel = view === "daily" ? "WoW Δ" : "Week-over-Week Δ";
 
   function DataCells({ row }: { row: RollingRow | RollingDelta }) {
     return (
@@ -225,8 +300,8 @@ function RollingTable({ data }: { data: RollingData }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
       <div className="px-6 py-4 border-b border-slate-100">
-        <h2 className="text-sm font-semibold text-slate-900">12-Period Rolling Average</h2>
-        <p className="text-xs text-slate-400 mt-0.5">{subLabel} · newest first · click a row to expand campaigns</p>
+        <h2 className="text-sm font-semibold text-slate-900">{title ?? "12-Period Rolling Average"}</h2>
+        <p className="text-xs text-slate-400 mt-0.5">{subtitle ?? defaultSubtitle} · newest first</p>
       </div>
 
       <div className="overflow-x-auto">
@@ -244,51 +319,23 @@ function RollingTable({ data }: { data: RollingData }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {rows.map((row, i) => {
-              const isOpen = expanded.has(row.startDate);
-              const hasCampaigns = (row.campaigns?.length ?? 0) > 0;
-              return (
-                <>
-                  <tr
-                    key={row.startDate}
-                    onClick={() => hasCampaigns && toggleRow(row.startDate)}
-                    className={cn(
-                      "transition-colors",
-                      hasCampaigns && "cursor-pointer",
-                      i === 0 ? "bg-indigo-50/30 hover:bg-indigo-50/50" : i % 2 === 1 ? "bg-slate-50/40 hover:bg-slate-100/60" : "hover:bg-slate-50/60",
-                    )}
-                  >
-                    <td className={cn("sticky left-0 z-10 px-4 py-3 font-medium whitespace-nowrap", i === 0 ? "bg-indigo-50/30 text-indigo-700" : "bg-white text-slate-900")}>
-                      <span className="inline-flex items-center gap-2">
-                        {hasCampaigns && (
-                          <ChevronDown className={cn("w-3.5 h-3.5 text-slate-400 transition-transform flex-shrink-0", isOpen && "rotate-180")} />
-                        )}
-                        {row.label}
-                        {i === 0 && <span className="text-xs text-indigo-400 font-normal">most recent</span>}
-                      </span>
-                    </td>
-                    <DataCells row={row} />
-                  </tr>
-
-                  {/* Accordion: per-campaign rows */}
-                  {isOpen && row.campaigns?.map(c => (
-                    <tr key={`${row.startDate}-${c.campaignId}`} className="bg-slate-50 border-l-4 border-indigo-200">
-                      <td className="sticky left-0 z-10 bg-slate-50 pl-10 pr-4 py-2.5 text-xs text-slate-600 whitespace-nowrap max-w-[220px]">
-                        <span className="block truncate" title={c.campaignName}>{c.campaignName}</span>
-                      </td>
-                      {ROLLING_COLS.map(col => (
-                        <td key={col.key} className="px-4 py-2.5 text-right tabular-nums text-xs text-slate-500 whitespace-nowrap">
-                          {(() => {
-                            const v = rollingVal(c as unknown as RollingRow, col.key);
-                            return v != null ? col.fmt(v) : <span className="text-slate-300">—</span>;
-                          })()}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </>
-              );
-            })}
+            {rows.map((row, i) => (
+              <tr
+                key={row.startDate}
+                className={cn(
+                  "transition-colors",
+                  i === 0 ? "bg-indigo-50/30 hover:bg-indigo-50/50" : i % 2 === 1 ? "bg-slate-50/40 hover:bg-slate-100/60" : "hover:bg-slate-50/60",
+                )}
+              >
+                <td className={cn("sticky left-0 z-10 px-4 py-3 font-medium whitespace-nowrap", i === 0 ? "bg-indigo-50/30 text-indigo-700" : "bg-white text-slate-900")}>
+                  <span className="inline-flex items-center gap-2">
+                    {row.label}
+                    {i === 0 && <span className="text-xs text-indigo-400 font-normal">most recent</span>}
+                  </span>
+                </td>
+                <DataCells row={row} />
+              </tr>
+            ))}
           </tbody>
           <tfoot className="border-t-2 border-slate-200">
             <tr className="bg-slate-800 text-white">
@@ -394,7 +441,6 @@ export default function PaidMediaClient() {
 
   // Rolling average state
   const [rollingView,  setRollingView] = useState<"daily" | "weekly">("daily");
-  const [rollingCampaign, setRollingCampaign] = useState<string>("all");
   const [rollingData,  setRollingData] = useState<RollingData | null>(null);
   const [rollingLoading, setRollingLoading] = useState(false);
 
@@ -408,10 +454,10 @@ export default function PaidMediaClient() {
     }
   }, []);
 
-  const loadRolling = useCallback(async (view: "daily" | "weekly", campaignId: string) => {
+  const loadRolling = useCallback(async (view: "daily" | "weekly") => {
     setRollingLoading(true);
     try {
-      const res = await fetch(`/api/paid-media/rolling?view=${view}&campaignId=${encodeURIComponent(campaignId)}`);
+      const res = await fetch(`/api/paid-media/rolling?view=${view}&campaignId=all`);
       if (res.ok) setRollingData(await res.json());
     } finally {
       setRollingLoading(false);
@@ -419,7 +465,7 @@ export default function PaidMediaClient() {
   }, []);
 
   useEffect(() => { load(days); }, [days, load]);
-  useEffect(() => { loadRolling(rollingView, rollingCampaign); }, [rollingView, rollingCampaign, loadRolling]);
+  useEffect(() => { loadRolling(rollingView); }, [rollingView, loadRolling]);
 
   async function handleSync() {
     setSyncing(true);
@@ -437,7 +483,7 @@ export default function PaidMediaClient() {
       if (!res.ok) throw new Error(json.error ?? "Sync failed");
       setSyncMsg(`Synced ${json.rows} rows across campaigns.`);
       await load(days);
-      await loadRolling(rollingView, rollingCampaign);
+      await loadRolling(rollingView);
     } catch (err) {
       setSyncMsg(err instanceof Error ? err.message : "Sync failed");
     } finally {
@@ -783,22 +829,8 @@ export default function PaidMediaClient() {
                   ))}
                 </div>
 
-                {/* Campaign selector */}
-                {(rollingData?.campaigns?.length ?? 0) > 0 && (
-                  <select
-                    value={rollingCampaign}
-                    onChange={e => setRollingCampaign(e.target.value)}
-                    className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-300"
-                  >
-                    <option value="all">All Campaigns</option>
-                    {rollingData!.campaigns.map(c => (
-                      <option key={c.campaignId} value={c.campaignId}>{c.campaignName}</option>
-                    ))}
-                  </select>
-                )}
-
                 <button
-                  onClick={() => loadRolling(rollingView, rollingCampaign)}
+                  onClick={() => loadRolling(rollingView)}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors"
                 >
                   <RefreshCw className={cn("w-3.5 h-3.5", rollingLoading && "animate-spin")} />
@@ -816,7 +848,20 @@ export default function PaidMediaClient() {
 
             {!rollingLoading && rollingData && (
               rollingData.rows.length > 0 ? (
-                <RollingTable data={rollingData} />
+                <div className="space-y-6">
+                  {/* All-campaigns aggregate table */}
+                  <RollingTable data={rollingData} />
+
+                  {/* Per-campaign tables */}
+                  {(rollingData.campaigns ?? []).map(c => (
+                    <RollingTable
+                      key={c.campaignId}
+                      data={buildCampaignRollingData(rollingData, c.campaignId)}
+                      title={c.campaignName}
+                      subtitle={`12-period rolling · ${rollingView === "daily" ? `${rollingData.dayName}s` : "weekly"}`}
+                    />
+                  ))}
+                </div>
               ) : (
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-10 text-center">
                   <CalendarDays className="w-8 h-8 mx-auto mb-2 text-slate-300" />

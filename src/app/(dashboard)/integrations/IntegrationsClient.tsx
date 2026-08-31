@@ -248,7 +248,17 @@ export function IntegrationsClient({ statuses, linkedinOrgUrn }: Props) {
   async function handleBackfill(platform: string) {
     const endpoint = BACKFILL_ENDPOINTS[platform];
     if (!endpoint) return;
-    const from = `${new Date().getFullYear()}-04-01`;
+    const defaultFrom = `${new Date().getFullYear()}-04-01`;
+    const input = window.prompt(
+      `Backfill from date (YYYY-MM-DD):\nLeave as-is or enter an earlier date (e.g. ${new Date().getFullYear()}-07-01).`,
+      defaultFrom,
+    );
+    if (input === null) return; // user cancelled
+    const from = input.trim() || defaultFrom;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) {
+      alert("Invalid date format — please use YYYY-MM-DD.");
+      return;
+    }
     const res = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
