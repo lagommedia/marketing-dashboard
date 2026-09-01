@@ -2732,14 +2732,17 @@ function parseHubspotDate(raw: string | null | undefined): string {
     ms = Date.parse(raw);
   }
   if (isNaN(ms)) return "";
-  // Use UTC date parts — HubSpot closedate/createdate are midnight-UTC date fields,
-  // so the UTC calendar date is the canonical value. Using local parts caused
-  // different date strings on Vercel (UTC) vs local dev (Mountain Time), creating
-  // duplicate MetricSnapshot rows for the same calendar day.
-  const d = new Date(ms);
-  const yyyy = d.getUTCFullYear();
-  const mm   = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const dd   = String(d.getUTCDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
+  // Use the HubSpot portal timezone (America/Chicago, UTC-5 CDT / UTC-6 CST) so
+  // that date attribution matches HubSpot's own dashboards. closedate is stored
+  // as a full datetime timestamp (not midnight-UTC), so the calendar date must be
+  // resolved in the portal timezone, not UTC.
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago",
+    year:  "numeric",
+    month: "2-digit",
+    day:   "2-digit",
+  }).formatToParts(new Date(ms));
+  const get = (t: string) => parts.find(p => p.type === t)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
 }
 
