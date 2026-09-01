@@ -31,6 +31,11 @@ const STAGE_RANK: Record<string, number> = {
   customer:                5,
 };
 
+// hs_analytics_source IS indexed for CRM Search; utm_campaign is not.
+// Filter by paid sources + date range, then match utm_campaign server-side.
+// This keeps the result set small (only paid contacts, not all contacts).
+const PAID_SOURCES = ["PAID_SEARCH", "PAID_SOCIAL"];
+
 async function fetchAllContacts(
   token: string,
   utmValues: string[],
@@ -40,16 +45,17 @@ async function fetchAllContacts(
   const contacts: Array<{ lifecyclestage: string; createdate: number }> = [];
   let after: string | undefined;
 
-  for (let page = 0; page < 10; page++) {
+  for (let page = 0; page < 20; page++) {
+    // Filter by paid sources (indexed) + date range, then filter by utm_campaign server-side
     const body: Record<string, unknown> = {
-      filterGroups: utmValues.map(utm => ({
+      filterGroups: PAID_SOURCES.map(source => ({
         filters: [
-          { propertyName: "utm_campaign", operator: "EQ",  value: utm },
-          { propertyName: "createdate",   operator: "GTE", value: String(sinceTs) },
-          { propertyName: "createdate",   operator: "LTE", value: String(untilTs) },
+          { propertyName: "hs_analytics_source", operator: "EQ",  value: source },
+          { propertyName: "createdate",           operator: "GTE", value: String(sinceTs) },
+          { propertyName: "createdate",           operator: "LTE", value: String(untilTs) },
         ],
       })),
-      properties: ["lifecyclestage", "createdate"],
+      properties: ["lifecyclestage", "createdate", "utm_campaign"],
       limit: 200,
     };
     if (after) body.after = after;
@@ -59,11 +65,18 @@ async function fetchAllContacts(
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body:    JSON.stringify(body),
     });
-    if (!res.ok) break;
+    if (!res.ok) {
+      console.error("[funnel/campaign] HubSpot search failed:", res.status, await res.text());
+      break;
+    }
     const json = await res.json();
 
     for (const c of json.results ?? []) {
-      const ts = parseInt(c.properties?.createdate ?? "0", 10);
+      const contactUtm = c.properties?.utm_campaign ?? "";
+      if (!utmValues.includes(contactUtm)) continue;
+      const raw = c.properties?.createdate ?? "";
+      // HubSpot returns createdate as an ISO string, not a millisecond timestamp
+      const ts = raw ? new Date(raw).getTime() : 0;
       if (ts > 0) {
         contacts.push({
           lifecyclestage: c.properties?.lifecyclestage ?? "lead",
