@@ -913,12 +913,54 @@ function FunnelKpiCard({
   );
 }
 
-function HubSpotFunnelSection({ data }: { data: FunnelData }) {
+type CampaignFunnelData = { leads: number; mqls: number; sqos: number; closedWon: number };
+
+function HubSpotFunnelSection({
+  data,
+  campaigns,
+}: {
+  data: FunnelData;
+  campaigns?: { campaignId: string; campaignName: string }[];
+}) {
   const { current: c, prior: p, qtdLabel, prevLabel } = data;
+  const [byCampaign, setByCampaign] = useState(false);
+  const [campaignFunnel, setCampaignFunnel] = useState<Record<string, CampaignFunnelData> | null>(null);
+  const [campaignLoading, setCampaignLoading] = useState(false);
+
+  const CAMPAIGN_COLORS: Record<string, string> = {
+    "Performance Max": "#6366f1",
+    "S_Non-Brand":     "#818cf8",
+    "S_Brand":         "#c7d2fe",
+  };
+
+  useEffect(() => {
+    if (!byCampaign || !campaigns?.length || campaignFunnel) return;
+    setCampaignLoading(true);
+    const today = new Date().toISOString().slice(0, 10);
+    const range  = `${data.qtdStart}~${today}`;
+    Promise.all(
+      campaigns.map(async (cam) => {
+        const url = `/api/paid-media/funnel/campaign/rolling?campaignId=${encodeURIComponent(cam.campaignId)}&campaignName=${encodeURIComponent(cam.campaignName)}&ranges=${encodeURIComponent(range)}`;
+        const res = await fetch(url).then(r => r.ok ? r.json() : null);
+        const bucket = res?.data?.[data.qtdStart] ?? { leads: 0, mqls: 0, sqos: 0, closedWon: 0 };
+        return [cam.campaignName, bucket] as [string, CampaignFunnelData];
+      })
+    ).then(entries => {
+      setCampaignFunnel(Object.fromEntries(entries));
+      setCampaignLoading(false);
+    });
+  }, [byCampaign, campaigns, campaignFunnel, data.qtdStart]);
 
   function delta(cur: number | null, prev: number | null) {
     return cur != null && prev != null ? cur - prev : null;
   }
+
+  const STAGES = [
+    { key: "leads"     as const, label: "Leads"      },
+    { key: "mqls"      as const, label: "MQLs"       },
+    { key: "sqos"      as const, label: "SQOs"       },
+    { key: "closedWon" as const, label: "Closed Won" },
+  ];
 
   return (
     <div className="space-y-4">
@@ -927,9 +969,24 @@ function HubSpotFunnelSection({ data }: { data: FunnelData }) {
           <Target className="w-4 h-4 text-slate-400" />
           <span className="text-sm font-semibold text-slate-900">Bottom-of-Funnel · HubSpot Attribution</span>
         </div>
-        <span className="text-xs text-slate-400 bg-slate-100 rounded-md px-2.5 py-1 font-medium">
-          {qtdLabel} QTD · vs {prevLabel}
-        </span>
+        <div className="flex items-center gap-2">
+          {campaigns && campaigns.length > 0 && (
+            <button
+              onClick={() => setByCampaign(v => !v)}
+              className={cn(
+                "text-xs rounded-md px-2.5 py-1 font-medium transition-colors",
+                byCampaign
+                  ? "bg-indigo-100 text-indigo-700"
+                  : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+              )}
+            >
+              By Campaign
+            </button>
+          )}
+          <span className="text-xs text-slate-400 bg-slate-100 rounded-md px-2.5 py-1 font-medium">
+            {qtdLabel} QTD · vs {prevLabel}
+          </span>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -959,8 +1016,52 @@ function HubSpotFunnelSection({ data }: { data: FunnelData }) {
         />
       </div>
 
+      {/* Per-campaign funnel breakdown */}
+      {byCampaign && (
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-4">
+            Funnel by Campaign — {qtdLabel} QTD
+          </p>
+          {campaignLoading ? (
+            <p className="text-xs text-slate-400 text-center py-4">Loading campaign data…</p>
+          ) : campaignFunnel && campaigns ? (
+            <div className="space-y-5">
+              {campaigns.map(cam => {
+                const f = campaignFunnel[cam.campaignName] ?? { leads: 0, mqls: 0, sqos: 0, closedWon: 0 };
+                const color = CAMPAIGN_COLORS[cam.campaignName] ?? "#6366f1";
+                const maxVal = Math.max(f.leads, 1);
+                return (
+                  <div key={cam.campaignId}>
+                    <p className="text-xs font-semibold mb-2" style={{ color }}>{cam.campaignName}</p>
+                    <div className="flex items-end gap-2">
+                      {STAGES.map(({ key, label }) => {
+                        const val = f[key];
+                        const pct = val / maxVal;
+                        return (
+                          <div key={key} className="flex-1 flex flex-col items-center gap-1">
+                            <span className="text-xs font-semibold text-slate-700">{fmtN(val, 0)}</span>
+                            <div
+                              className="w-full rounded-t-sm"
+                              style={{ height: `${Math.max(pct * 80, 4)}px`, backgroundColor: color, opacity: key === "leads" ? 0.3 : key === "mqls" ? 0.55 : key === "sqos" ? 0.8 : 1 }}
+                            />
+                            <span className="text-[10px] text-slate-500 text-center">{label}</span>
+                            {key !== "leads" && f.leads > 0 && (
+                              <span className="text-[10px] text-slate-400">{((val / f.leads) * 100).toFixed(1)}%</span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+      )}
+
       {/* Funnel conversion rate bar */}
-      {(c.leads != null && c.leads > 0) && (
+      {!byCampaign && (c.leads != null && c.leads > 0) && (
         <div className="rounded-xl border border-slate-200 bg-white p-5">
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-4">
             Paid Media Funnel Conversion — {qtdLabel}
@@ -1534,7 +1635,12 @@ export default function PaidMediaClient() {
           {/* -------------------------------------------------------------- */}
           {/* HubSpot Bottom-of-Funnel                                        */}
           {/* -------------------------------------------------------------- */}
-          {funnelData && <HubSpotFunnelSection data={funnelData} />}
+          {funnelData && (
+            <HubSpotFunnelSection
+              data={funnelData}
+              campaigns={rollingData?.campaigns}
+            />
+          )}
 
           {/* -------------------------------------------------------------- */}
           {/* ROAS setup note (only when no ROAS data)                        */}
