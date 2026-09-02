@@ -1813,10 +1813,10 @@ export default function PaidMediaClient() {
                     const hasData = campaignData.rows.some(r => r.spend > 0 || r.impressions > 0 || r.clicks > 0);
                     if (!hasData) return null;
                     const isPMax = /performance.?max|pmax/i.test(c.campaignName);
-                    // Annotations for this campaign: events targeting this campaign, or account-wide events
-                    const campaignAnnotations = annotations.filter(
-                      ann => ann.events.some(e => !e.campaignId || e.campaignId === c.campaignId)
-                    );
+                    // Annotations for this campaign: only entries explicitly logged for this campaign
+                    const campaignAnnotations = annotations
+                      .map(ann => ({ ...ann, events: ann.events.filter(e => e.campaignId === c.campaignId) }))
+                      .filter(ann => ann.events.length > 0);
                     return (
                       <RollingTable
                         key={c.campaignId}
