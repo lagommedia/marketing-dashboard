@@ -305,6 +305,10 @@ export async function syncChangeHistory(): Promise<{ synced: number }> {
   const startStr = formatDate(from);
   const endStr   = formatDate(today);
 
+  // change_date_time requires full datetime format; ORDER BY is not supported on this resource
+  const startDateTime = `${startStr} 00:00:00`;
+  const endDateTime   = `${endStr} 23:59:59`;
+
   const gaql = `
     SELECT
       google_ads_change_event.resource_name,
@@ -315,11 +319,9 @@ export async function syncChangeHistory(): Promise<{ synced: number }> {
       google_ads_change_event.user_email,
       campaign.name
     FROM google_ads_change_event
-    WHERE google_ads_change_event.change_date_time >= '${startStr}'
-      AND google_ads_change_event.change_date_time <= '${endStr}'
-      AND google_ads_change_event.user_email != ''
-    ORDER BY google_ads_change_event.change_date_time DESC
-    LIMIT 1000
+    WHERE google_ads_change_event.change_date_time >= '${startDateTime}'
+      AND google_ads_change_event.change_date_time <= '${endDateTime}'
+    LIMIT 10000
   `.trim();
 
   const rows: ChangeEventRow[] = await withRetry(
