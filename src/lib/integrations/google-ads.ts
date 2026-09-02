@@ -265,15 +265,14 @@ export async function syncCampaignData(fromDate?: Date): Promise<{ rows: number 
 
 type ChangeEventRow = {
   googleAdsChangeEvent?: {
-    resourceName?:          string;
-    changeDateTimeMs?:      string; // epoch-millis string from REST
-    changeDateTime?:        string; // ISO timestamp
-    changeResourceType?:    string;
+    resourceName?:            string;
+    changeDateTimeMs?:        string; // epoch-millis string from REST
+    changeDateTime?:          string; // ISO timestamp
+    changeResourceType?:      string;
     resourceChangeOperation?: string;
-    campaign?:              string; // resource name e.g. customers/x/campaigns/y
-    userEmail?:             string;
+    campaign?:                string; // resource name e.g. customers/x/campaigns/y
+    userEmail?:               string;
   };
-  campaign?: { name?: string };
 };
 
 function buildDescription(resourceType: string, operation: string): string {
@@ -316,8 +315,7 @@ export async function syncChangeHistory(): Promise<{ synced: number }> {
       google_ads_change_event.change_resource_type,
       google_ads_change_event.resource_change_operation,
       google_ads_change_event.campaign,
-      google_ads_change_event.user_email,
-      campaign.name
+      google_ads_change_event.user_email
     FROM google_ads_change_event
     WHERE google_ads_change_event.change_date_time >= '${startDateTime}'
       AND google_ads_change_event.change_date_time <= '${endDateTime}'
@@ -328,6 +326,10 @@ export async function syncChangeHistory(): Promise<{ synced: number }> {
     () => fetchGoogleAdsReport(accessToken, customerId, gaql),
     { label: "google_ads:change_events" }
   );
+
+  // Load campaign name map from DB for name resolution
+  const nameMapRecords = await prisma.campaignNameMap.findMany({ select: { campaignId: true, campaignName: true } });
+  const nameMap = new Map(nameMapRecords.map(r => [r.campaignId, r.campaignName]));
 
   // Known service-account / automation patterns to exclude
   const AUTOMATION_PATTERNS = [
@@ -362,7 +364,7 @@ export async function syncChangeHistory(): Promise<{ synced: number }> {
     const campaignResource = ev.campaign ?? "";
     const campaignIdMatch  = campaignResource.match(/campaigns\/(\d+)/);
     const campaignId       = campaignIdMatch?.[1] ?? null;
-    const campaignName     = row.campaign?.name ?? null;
+    const campaignName     = campaignId ? (nameMap.get(campaignId) ?? null) : null;
 
     const changeResourceType = ev.changeResourceType ?? "";
     const operation          = ev.resourceChangeOperation ?? "UPDATE";
