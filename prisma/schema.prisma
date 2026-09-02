@@ -310,6 +310,7 @@ model CampaignChangeEvent {
   campaignName       String?
   userEmail          String
   description        String?  // human-readable summary built at sync time
+  expectedOutcome    String?  // what the user expected this change to achieve
   createdAt          DateTime @default(now())
 
   @@index([changedAt])

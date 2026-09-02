@@ -10,7 +10,7 @@ import {
 import {
   RefreshCw, Megaphone, TrendingUp, MousePointerClick, Eye,
   DollarSign, BarChart2, Zap, ArrowUpDown, ChevronUp, ChevronDown,
-  CalendarDays, Target, Send, Bot, X,
+  CalendarDays, Target, Send, Bot, X, Plus, Sparkles, Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -27,6 +27,7 @@ interface ChangeAnnotation {
   campaignName: string | null;
   userEmail: string;
   description: string | null;
+  expectedOutcome: string | null;
 }
 
 interface AnnotationDay {
@@ -489,7 +490,13 @@ function ChatChartCard({ chart }: { chart: ChatChart }) {
   );
 }
 
-function PaidMediaChatDrawer({ open, onClose, ctx }: { open: boolean; onClose: () => void; ctx: ChatContext }) {
+function PaidMediaChatDrawer({ open, onClose, ctx, pendingQuestion, onPendingConsumed }: {
+  open: boolean;
+  onClose: () => void;
+  ctx: ChatContext;
+  pendingQuestion?: string | null;
+  onPendingConsumed?: () => void;
+}) {
   const [input,    setInput]    = useState("");
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [loading,  setLoading]  = useState(false);
@@ -498,6 +505,14 @@ function PaidMediaChatDrawer({ open, onClose, ctx }: { open: boolean; onClose: (
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
+
+  useEffect(() => {
+    if (open && pendingQuestion && !loading) {
+      send(pendingQuestion);
+      onPendingConsumed?.();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, pendingQuestion]);
 
   async function send(question?: string) {
     const q = (question ?? input).trim();
@@ -706,7 +721,7 @@ function PaidMediaChatDrawer({ open, onClose, ctx }: { open: boolean; onClose: (
 
 type FunnelBucket = { leads: number; mqls: number; sqos: number; closedWon: number };
 
-function RollingTable({ data, title, subtitle, hideIS, campaignId, campaignName, annotations }: { data: RollingData; title?: string; subtitle?: string; hideIS?: boolean; campaignId?: string; campaignName?: string; annotations?: AnnotationDay[] }) {
+function RollingTable({ data, title, subtitle, hideIS, campaignId, campaignName, annotations, onAnalyze, onDeleteAnnotation }: { data: RollingData; title?: string; subtitle?: string; hideIS?: boolean; campaignId?: string; campaignName?: string; annotations?: AnnotationDay[]; onAnalyze?: (q: string) => void; onDeleteAnnotation?: (id: string) => void }) {
   const { rows, avg12, wowDelta, wowPct, avg12Delta, avg12Pct, view, dayName } = data;
 
   // Per-period funnel data (campaign tables only)
@@ -790,23 +805,51 @@ function RollingTable({ data, title, subtitle, hideIS, campaignId, campaignName,
         </div>
       </div>
 
-      {/* Per-campaign change history */}
+      {/* Change history */}
       {annotations && annotations.length > 0 && (
-        <div className="px-6 py-3 border-b border-amber-100 bg-amber-50/60">
-          <p className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide mb-2">Change History</p>
-          <div className="space-y-1.5">
-            {annotations.map(ann => (
-              <div key={ann.date} className="flex gap-2 text-xs text-amber-800">
-                <span className="font-medium whitespace-nowrap text-amber-600">
-                  {new Date(ann.date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                </span>
-                <span className="text-amber-700/70">·</span>
-                <span>{ann.events.map(e => e.description ?? e.changeResourceType).join(" · ")}</span>
-                <span className="text-amber-500 ml-auto whitespace-nowrap">
-                  {[...new Set(ann.events.map(e => e.userEmail.split("@")[0]))].join(", ")}
-                </span>
-              </div>
-            ))}
+        <div className="px-6 py-4 border-b border-amber-100 bg-amber-50/60">
+          <p className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide mb-3">Change Log</p>
+          <div className="space-y-3">
+            {annotations.map(ann => ann.events.map(ev => {
+              const dateLabel = new Date(ann.date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+              const analyzeQ = ev.expectedOutcome
+                ? `On ${dateLabel} I made the following change: "${ev.description}". My expected outcome was: "${ev.expectedOutcome}". Based on the performance data before and after this date, did this change achieve the expected result? Please compare key metrics in the ~14 days before vs after.`
+                : `On ${dateLabel} I made this change: "${ev.description}". Looking at the performance data around this date, what impact did this change have? Compare key metrics before vs after.`;
+              return (
+                <div key={ev.id} className="rounded-lg border border-amber-200 bg-white px-4 py-3 space-y-1.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="space-y-0.5 flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-amber-800">{dateLabel}{ev.campaignName ? ` · ${ev.campaignName}` : " · Account-wide"}</p>
+                      <p className="text-xs text-slate-700">{ev.description}</p>
+                      {ev.expectedOutcome && (
+                        <p className="text-xs text-slate-500 italic">Expected: {ev.expectedOutcome}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {onAnalyze && (
+                        <button
+                          onClick={() => onAnalyze(analyzeQ)}
+                          title="Ask AI to analyze this change"
+                          className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium bg-indigo-50 text-indigo-600 hover:bg-indigo-100 border border-indigo-200 transition-colors"
+                        >
+                          <Sparkles className="w-3 h-3" />
+                          Analyze
+                        </button>
+                      )}
+                      {onDeleteAnnotation && (
+                        <button
+                          onClick={() => onDeleteAnnotation(ev.id)}
+                          title="Delete this entry"
+                          className="p-1 rounded-md text-slate-300 hover:text-red-400 hover:bg-red-50 transition-colors"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            }))}
           </div>
         </div>
       )}
@@ -1197,11 +1240,19 @@ export default function PaidMediaClient() {
 
   // Change history annotations
   const [annotations,    setAnnotations]    = useState<AnnotationDay[]>([]);
-  const [annotSyncing,   setAnnotSyncing]   = useState(false);
-  const [annotMsg,       setAnnotMsg]       = useState<string | null>(null);
+
+  // Log Change modal
+  const [logOpen,        setLogOpen]        = useState(false);
+  const [logDate,        setLogDate]        = useState(() => new Date().toISOString().slice(0, 10));
+  const [logCampaignId,  setLogCampaignId]  = useState("");
+  const [logDesc,        setLogDesc]        = useState("");
+  const [logExpected,    setLogExpected]    = useState("");
+  const [logSubmitting,  setLogSubmitting]  = useState(false);
+  const [logError,       setLogError]       = useState<string | null>(null);
 
   // Global AI chat drawer
-  const [chatOpen, setChatOpen] = useState(false);
+  const [chatOpen,       setChatOpen]       = useState(false);
+  const [pendingQ,       setPendingQ]       = useState<string | null>(null);
 
   const load = useCallback(async (d: 30 | 90) => {
     setLoading(true);
@@ -1224,7 +1275,7 @@ export default function PaidMediaClient() {
   }, []);
 
   const loadAnnotations = useCallback(async () => {
-    const from = new Date(Date.now() - 31 * 86400_000).toISOString().slice(0, 10);
+    const from = new Date(Date.now() - 370 * 86400_000).toISOString().slice(0, 10);
     const to   = new Date().toISOString().slice(0, 10);
     const res  = await fetch(`/api/paid-media/annotations?from=${from}&to=${to}`);
     if (res.ok) {
@@ -1233,20 +1284,44 @@ export default function PaidMediaClient() {
     }
   }, []);
 
-  async function syncAnnotations() {
-    setAnnotSyncing(true);
-    setAnnotMsg(null);
+  async function submitLogChange() {
+    if (!logDesc.trim()) return;
+    setLogSubmitting(true);
+    setLogError(null);
     try {
-      const res  = await fetch("/api/paid-media/annotations", { method: "POST" });
+      const selectedCampaign = rollingData?.campaigns?.find(c => c.campaignId === logCampaignId);
+      const res  = await fetch("/api/paid-media/annotations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          date:            logDate,
+          campaignId:      selectedCampaign?.campaignId ?? null,
+          campaignName:    selectedCampaign?.campaignName ?? null,
+          description:     logDesc.trim(),
+          expectedOutcome: logExpected.trim() || null,
+        }),
+      });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "Sync failed");
-      setAnnotMsg(`Change history: synced ${json.synced} events.`);
+      if (!res.ok) throw new Error(json.error ?? "Failed to save");
       await loadAnnotations();
+      setLogOpen(false);
+      setLogDesc("");
+      setLogExpected("");
     } catch (err) {
-      setAnnotMsg(err instanceof Error ? err.message : "Sync failed");
+      setLogError(err instanceof Error ? err.message : "Failed to save");
     } finally {
-      setAnnotSyncing(false);
+      setLogSubmitting(false);
     }
+  }
+
+  async function deleteAnnotation(id: string) {
+    await fetch(`/api/paid-media/annotations?id=${id}`, { method: "DELETE" });
+    await loadAnnotations();
+  }
+
+  function openAnalyze(q: string) {
+    setPendingQ(q);
+    setChatOpen(true);
   }
 
   useEffect(() => { load(days); }, [days, load]);
@@ -1379,33 +1454,16 @@ export default function PaidMediaClient() {
             {backfilling ? "Backfilling…" : "Backfill 12 Months"}
           </button>
 
-          {/* Sync change history */}
+          {/* Log a change */}
           <button
-            onClick={syncAnnotations}
-            disabled={annotSyncing}
-            className={cn(
-              "flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors",
-              annotSyncing
-                ? "border-slate-200 text-slate-400 cursor-not-allowed"
-                : "border-amber-200 text-amber-700 hover:bg-amber-50",
-            )}
+            onClick={() => { setLogDate(new Date().toISOString().slice(0, 10)); setLogOpen(true); }}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors border-amber-200 text-amber-700 hover:bg-amber-50"
           >
-            <CalendarDays className={cn("w-3.5 h-3.5", annotSyncing && "animate-spin")} />
-            {annotSyncing ? "Syncing…" : "Sync Change History"}
+            <Plus className="w-3.5 h-3.5" />
+            Log Change
           </button>
         </div>
       </div>
-
-      {annotMsg && (
-        <div className={cn(
-          "rounded-lg px-4 py-3 text-sm",
-          annotMsg.toLowerCase().includes("fail") || annotMsg.toLowerCase().includes("error")
-            ? "bg-red-50 text-red-700 border border-red-200"
-            : "bg-amber-50 text-amber-700 border border-amber-200",
-        )}>
-          {annotMsg}
-        </div>
-      )}
 
       {syncMsg && (
         <div className={cn(
@@ -1717,7 +1775,7 @@ export default function PaidMediaClient() {
               rollingData.rows.length > 0 ? (
                 <div className="space-y-6">
                   {/* All-campaigns aggregate table */}
-                  <RollingTable data={rollingData} annotations={annotations} />
+                  <RollingTable data={rollingData} annotations={annotations} onAnalyze={openAnalyze} onDeleteAnnotation={deleteAnnotation} />
 
                   {/* Per-campaign tables — active campaigns only */}
                   {(rollingData.campaigns ?? []).map(c => {
@@ -1740,6 +1798,8 @@ export default function PaidMediaClient() {
                         campaignId={c.campaignId}
                         campaignName={c.campaignName}
                         annotations={campaignAnnotations}
+                        onAnalyze={openAnalyze}
+                        onDeleteAnnotation={deleteAnnotation}
                       />
                     );
                   })}
@@ -1805,7 +1865,110 @@ export default function PaidMediaClient() {
         open={chatOpen}
         onClose={() => setChatOpen(false)}
         ctx={{ data, rollingData, funnelData, rollingView }}
+        pendingQuestion={pendingQ}
+        onPendingConsumed={() => setPendingQ(null)}
       />
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Log Change Modal                                                     */}
+      {/* ------------------------------------------------------------------ */}
+      {logOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setLogOpen(false)} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-5">
+            {/* Header */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CalendarDays className="w-4 h-4 text-amber-600" />
+                <h2 className="text-base font-semibold text-slate-900">Log a Change</h2>
+              </div>
+              <button onClick={() => setLogOpen(false)} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors">
+                <X className="w-4 h-4 text-slate-400" />
+              </button>
+            </div>
+
+            {/* Date */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-slate-600 uppercase tracking-wide">Date</label>
+              <input
+                type="date"
+                value={logDate}
+                onChange={e => setLogDate(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-400"
+              />
+            </div>
+
+            {/* Campaign */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-slate-600 uppercase tracking-wide">Campaign <span className="text-slate-400 normal-case font-normal">(optional)</span></label>
+              <select
+                value={logCampaignId}
+                onChange={e => setLogCampaignId(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+              >
+                <option value="">Account-wide</option>
+                {(rollingData?.campaigns ?? [])
+                  .filter(c => ACTIVE_CAMPAIGNS.includes(c.campaignName))
+                  .map(c => (
+                    <option key={c.campaignId} value={c.campaignId}>{c.campaignName}</option>
+                  ))}
+              </select>
+            </div>
+
+            {/* What changed */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-slate-600 uppercase tracking-wide">What changed</label>
+              <input
+                type="text"
+                value={logDesc}
+                onChange={e => setLogDesc(e.target.value)}
+                placeholder="e.g. Increased PMax daily budget from $800 → $1,000"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400"
+              />
+            </div>
+
+            {/* Expected outcome */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-slate-600 uppercase tracking-wide">
+                Expected outcome <span className="text-slate-400 normal-case font-normal">(optional — the AI uses this to evaluate impact)</span>
+              </label>
+              <textarea
+                value={logExpected}
+                onChange={e => setLogExpected(e.target.value)}
+                rows={2}
+                placeholder="e.g. Improve impression share by 5–10% without increasing CPA"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none"
+              />
+            </div>
+
+            {logError && (
+              <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{logError}</p>
+            )}
+
+            {/* Actions */}
+            <div className="flex gap-3 pt-1">
+              <button
+                onClick={() => setLogOpen(false)}
+                className="flex-1 rounded-lg border border-slate-200 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submitLogChange}
+                disabled={!logDesc.trim() || logSubmitting}
+                className={cn(
+                  "flex-1 rounded-lg py-2 text-sm font-medium transition-colors",
+                  logDesc.trim() && !logSubmitting
+                    ? "bg-amber-500 text-white hover:bg-amber-600"
+                    : "bg-slate-100 text-slate-400 cursor-not-allowed",
+                )}
+              >
+                {logSubmitting ? "Saving…" : "Save Change"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
