@@ -5,7 +5,7 @@ import {
   AreaChart, Area,
   BarChart, Bar,
   LineChart, Line,
-  XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, Legend,
+  XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, Legend, ReferenceLine,
 } from "recharts";
 import {
   RefreshCw, Megaphone, TrendingUp, MousePointerClick, Eye,
@@ -17,6 +17,23 @@ import { cn } from "@/lib/utils";
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
+interface ChangeAnnotation {
+  id: string;
+  changedAt: string;
+  changeResourceType: string;
+  operation: string;
+  campaignId: string | null;
+  campaignName: string | null;
+  userEmail: string;
+  description: string | null;
+}
+
+interface AnnotationDay {
+  date: string;
+  events: ChangeAnnotation[];
+  campaignIds: string[];
+}
 
 interface CampaignBreakdown {
   campaignId:        string;
@@ -689,7 +706,7 @@ function PaidMediaChatDrawer({ open, onClose, ctx }: { open: boolean; onClose: (
 
 type FunnelBucket = { leads: number; mqls: number; sqos: number; closedWon: number };
 
-function RollingTable({ data, title, subtitle, hideIS, campaignId, campaignName }: { data: RollingData; title?: string; subtitle?: string; hideIS?: boolean; campaignId?: string; campaignName?: string }) {
+function RollingTable({ data, title, subtitle, hideIS, campaignId, campaignName, annotations }: { data: RollingData; title?: string; subtitle?: string; hideIS?: boolean; campaignId?: string; campaignName?: string; annotations?: AnnotationDay[] }) {
   const { rows, avg12, wowDelta, wowPct, avg12Delta, avg12Pct, view, dayName } = data;
 
   // Per-period funnel data (campaign tables only)
@@ -772,6 +789,27 @@ function RollingTable({ data, title, subtitle, hideIS, campaignId, campaignName 
           )}
         </div>
       </div>
+
+      {/* Per-campaign change history */}
+      {annotations && annotations.length > 0 && (
+        <div className="px-6 py-3 border-b border-amber-100 bg-amber-50/60">
+          <p className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide mb-2">Change History</p>
+          <div className="space-y-1.5">
+            {annotations.map(ann => (
+              <div key={ann.date} className="flex gap-2 text-xs text-amber-800">
+                <span className="font-medium whitespace-nowrap text-amber-600">
+                  {new Date(ann.date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                </span>
+                <span className="text-amber-700/70">·</span>
+                <span>{ann.events.map(e => e.description ?? e.changeResourceType).join(" · ")}</span>
+                <span className="text-amber-500 ml-auto whitespace-nowrap">
+                  {[...new Set(ann.events.map(e => e.userEmail.split("@")[0]))].join(", ")}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -1157,6 +1195,11 @@ export default function PaidMediaClient() {
   const [funnelData,    setFunnelData]    = useState<FunnelData | null>(null);
   const [backfilling,   setBackfilling]   = useState(false);
 
+  // Change history annotations
+  const [annotations,    setAnnotations]    = useState<AnnotationDay[]>([]);
+  const [annotSyncing,   setAnnotSyncing]   = useState(false);
+  const [annotMsg,       setAnnotMsg]       = useState<string | null>(null);
+
   // Global AI chat drawer
   const [chatOpen, setChatOpen] = useState(false);
 
@@ -1180,8 +1223,35 @@ export default function PaidMediaClient() {
     }
   }, []);
 
+  const loadAnnotations = useCallback(async () => {
+    const from = new Date(Date.now() - 31 * 86400_000).toISOString().slice(0, 10);
+    const to   = new Date().toISOString().slice(0, 10);
+    const res  = await fetch(`/api/paid-media/annotations?from=${from}&to=${to}`);
+    if (res.ok) {
+      const d = await res.json();
+      setAnnotations(d.annotations ?? []);
+    }
+  }, []);
+
+  async function syncAnnotations() {
+    setAnnotSyncing(true);
+    setAnnotMsg(null);
+    try {
+      const res  = await fetch("/api/paid-media/annotations", { method: "POST" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Sync failed");
+      setAnnotMsg(`Change history: synced ${json.synced} events.`);
+      await loadAnnotations();
+    } catch (err) {
+      setAnnotMsg(err instanceof Error ? err.message : "Sync failed");
+    } finally {
+      setAnnotSyncing(false);
+    }
+  }
+
   useEffect(() => { load(days); }, [days, load]);
   useEffect(() => { loadRolling(rollingView); }, [rollingView, loadRolling]);
+  useEffect(() => { loadAnnotations(); }, [loadAnnotations]);
   useEffect(() => {
     fetch("/api/paid-media/funnel").then(r => r.ok ? r.json() : null).then(d => { if (d) setFunnelData(d); });
   }, []);
@@ -1308,8 +1378,34 @@ export default function PaidMediaClient() {
             <RefreshCw className={cn("w-3.5 h-3.5", backfilling && "animate-spin")} />
             {backfilling ? "Backfilling…" : "Backfill 12 Months"}
           </button>
+
+          {/* Sync change history */}
+          <button
+            onClick={syncAnnotations}
+            disabled={annotSyncing}
+            className={cn(
+              "flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors",
+              annotSyncing
+                ? "border-slate-200 text-slate-400 cursor-not-allowed"
+                : "border-amber-200 text-amber-700 hover:bg-amber-50",
+            )}
+          >
+            <CalendarDays className={cn("w-3.5 h-3.5", annotSyncing && "animate-spin")} />
+            {annotSyncing ? "Syncing…" : "Sync Change History"}
+          </button>
         </div>
       </div>
+
+      {annotMsg && (
+        <div className={cn(
+          "rounded-lg px-4 py-3 text-sm",
+          annotMsg.toLowerCase().includes("fail") || annotMsg.toLowerCase().includes("error")
+            ? "bg-red-50 text-red-700 border border-red-200"
+            : "bg-amber-50 text-amber-700 border border-amber-200",
+        )}>
+          {annotMsg}
+        </div>
+      )}
 
       {syncMsg && (
         <div className={cn(
@@ -1432,11 +1528,32 @@ export default function PaidMediaClient() {
                       : [fmtN(value ?? 0), "Clicks"]
                   }
                   labelFormatter={l => {
-                    const d = new Date(String(l) + "T00:00:00");
-                    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+                    const dateStr = String(l);
+                    const d = new Date(dateStr + "T00:00:00");
+                    const label = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+                    const ann = annotations.find(a => a.date === dateStr);
+                    if (!ann) return label;
+                    const lines = ann.events.map(e => `• ${e.description ?? e.changeResourceType}${e.campaignName ? ` (${e.campaignName})` : ""}`).join("\n");
+                    return `${label}\n${lines}`;
                   }}
                   contentStyle={{ border: "1px solid #e2e8f0", borderRadius: "8px", fontSize: "12px" }}
                 />
+                {/* Change history annotation lines */}
+                {annotations.map(ann => (
+                  <ReferenceLine
+                    key={ann.date}
+                    x={ann.date}
+                    stroke="#f59e0b"
+                    strokeWidth={1.5}
+                    strokeDasharray="4 3"
+                    label={{
+                      value: "✎",
+                      position: "insideTopRight",
+                      fontSize: 10,
+                      fill: "#f59e0b",
+                    }}
+                  />
+                ))}
                 {chartView === "spend" ? (
                   <Area
                     type="monotone"
@@ -1600,7 +1717,7 @@ export default function PaidMediaClient() {
               rollingData.rows.length > 0 ? (
                 <div className="space-y-6">
                   {/* All-campaigns aggregate table */}
-                  <RollingTable data={rollingData} />
+                  <RollingTable data={rollingData} annotations={annotations} />
 
                   {/* Per-campaign tables — active campaigns only */}
                   {(rollingData.campaigns ?? []).map(c => {
@@ -1609,6 +1726,10 @@ export default function PaidMediaClient() {
                     const hasData = campaignData.rows.some(r => r.spend > 0 || r.impressions > 0 || r.clicks > 0);
                     if (!hasData) return null;
                     const isPMax = /performance.?max|pmax/i.test(c.campaignName);
+                    // Annotations for this campaign: events targeting this campaign, or account-wide events
+                    const campaignAnnotations = annotations.filter(
+                      ann => ann.events.some(e => !e.campaignId || e.campaignId === c.campaignId)
+                    );
                     return (
                       <RollingTable
                         key={c.campaignId}
@@ -1618,6 +1739,7 @@ export default function PaidMediaClient() {
                         hideIS={isPMax}
                         campaignId={c.campaignId}
                         campaignName={c.campaignName}
+                        annotations={campaignAnnotations}
                       />
                     );
                   })}

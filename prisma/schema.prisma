@@ -298,6 +298,24 @@ model PipelineQuarterSnapshot {
   @@index([quarter])
 }
 
+// Google Ads change history — human-initiated changes only (user_email non-empty).
+// Synced on demand; used to render annotations on the daily performance chart.
+model CampaignChangeEvent {
+  id                 String   @id @default(cuid())
+  googleResourceName String   @unique  // customers/{cid}/googleAdsChangeEvents/{eid}
+  changedAt          DateTime
+  changeResourceType String   // CAMPAIGN | CAMPAIGN_BUDGET | AD_GROUP | AD | KEYWORD | ...
+  operation          String   // CREATE | UPDATE | REMOVE
+  campaignId         String?  // extracted from the campaign resource name
+  campaignName       String?
+  userEmail          String
+  description        String?  // human-readable summary built at sync time
+  createdAt          DateTime @default(now())
+
+  @@index([changedAt])
+  @@index([campaignId])
+}
+
 // ---------------------------------------------------------------------------
 // NextAuth.js required models
 // ---------------------------------------------------------------------------

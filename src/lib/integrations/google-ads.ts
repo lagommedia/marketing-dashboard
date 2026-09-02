@@ -258,6 +258,134 @@ export async function syncCampaignData(fromDate?: Date): Promise<{ rows: number 
 }
 
 // ---------------------------------------------------------------------------
+// Change history sync — human-initiated changes only
+// Google Ads API only retains google_ads_change_event for 30 days, but we
+// persist them in the DB so they remain visible in weekly/monthly views.
+// ---------------------------------------------------------------------------
+
+type ChangeEventRow = {
+  googleAdsChangeEvent?: {
+    resourceName?:          string;
+    changeDateTimeMs?:      string; // epoch-millis string from REST
+    changeDateTime?:        string; // ISO timestamp
+    changeResourceType?:    string;
+    resourceChangeOperation?: string;
+    campaign?:              string; // resource name e.g. customers/x/campaigns/y
+    userEmail?:             string;
+  };
+  campaign?: { name?: string };
+};
+
+function buildDescription(resourceType: string, operation: string): string {
+  const op = operation === "CREATE" ? "added" : operation === "REMOVE" ? "removed" : "updated";
+  const typeMap: Record<string, string> = {
+    CAMPAIGN:           "Campaign settings",
+    CAMPAIGN_BUDGET:    "Campaign budget",
+    AD_GROUP:           "Ad group",
+    AD_GROUP_AD:        "Ad",
+    AD_GROUP_CRITERION: "Keyword / targeting",
+    CAMPAIGN_CRITERION: "Campaign targeting",
+    FEED:               "Feed",
+    FEED_ITEM:          "Feed item",
+    ASSET:              "Asset",
+    ASSET_GROUP:        "Asset group",
+    CAMPAIGN_ASSET:     "Campaign asset",
+    AD_GROUP_ASSET:     "Ad group asset",
+  };
+  const label = typeMap[resourceType] ?? resourceType.replace(/_/g, " ").toLowerCase();
+  return `${label} ${op}`;
+}
+
+export async function syncChangeHistory(): Promise<{ synced: number }> {
+  const { accessToken, customerId } = await getCredentials();
+
+  // Google Ads API only supports last-30-days for this resource
+  const today = new Date();
+  const from  = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const startStr = formatDate(from);
+  const endStr   = formatDate(today);
+
+  const gaql = `
+    SELECT
+      google_ads_change_event.resource_name,
+      google_ads_change_event.change_date_time,
+      google_ads_change_event.change_resource_type,
+      google_ads_change_event.resource_change_operation,
+      google_ads_change_event.campaign,
+      google_ads_change_event.user_email,
+      campaign.name
+    FROM google_ads_change_event
+    WHERE google_ads_change_event.change_date_time >= '${startStr}'
+      AND google_ads_change_event.change_date_time <= '${endStr}'
+      AND google_ads_change_event.user_email != ''
+    ORDER BY google_ads_change_event.change_date_time DESC
+    LIMIT 1000
+  `.trim();
+
+  const rows: ChangeEventRow[] = await withRetry(
+    () => fetchGoogleAdsReport(accessToken, customerId, gaql),
+    { label: "google_ads:change_events" }
+  );
+
+  // Known service-account / automation patterns to exclude
+  const AUTOMATION_PATTERNS = [
+    /@system\./i,
+    /noreply@/i,
+    /serviceaccount/i,
+    /automation@/i,
+    /hubspot/i,
+    /zapier/i,
+  ];
+
+  let synced = 0;
+  for (const row of rows) {
+    const ev = row.googleAdsChangeEvent;
+    if (!ev?.resourceName) continue;
+
+    const userEmail = ev.userEmail ?? "";
+    if (!userEmail) continue;
+    if (AUTOMATION_PATTERNS.some(p => p.test(userEmail))) continue;
+
+    // Parse timestamp — REST returns epoch-millis as a string, or ISO string
+    const rawTs = ev.changeDateTime ?? ev.changeDateTimeMs ?? "";
+    let changedAt: Date;
+    if (/^\d+$/.test(rawTs)) {
+      changedAt = new Date(Number(rawTs));
+    } else {
+      changedAt = new Date(rawTs);
+    }
+    if (isNaN(changedAt.getTime())) continue;
+
+    // Extract numeric campaign ID from resource name "customers/x/campaigns/y"
+    const campaignResource = ev.campaign ?? "";
+    const campaignIdMatch  = campaignResource.match(/campaigns\/(\d+)/);
+    const campaignId       = campaignIdMatch?.[1] ?? null;
+    const campaignName     = row.campaign?.name ?? null;
+
+    const changeResourceType = ev.changeResourceType ?? "";
+    const operation          = ev.resourceChangeOperation ?? "UPDATE";
+    const description        = buildDescription(changeResourceType, operation);
+
+    await prisma.campaignChangeEvent.upsert({
+      where:  { googleResourceName: ev.resourceName },
+      create: {
+        googleResourceName: ev.resourceName,
+        changedAt, changeResourceType, operation,
+        campaignId, campaignName, userEmail, description,
+      },
+      update: {
+        changedAt, changeResourceType, operation,
+        campaignId, campaignName, userEmail, description,
+      },
+    });
+    synced++;
+  }
+
+  console.log(`[google_ads] change history: synced ${synced} human-initiated events`);
+  return { synced };
+}
+
+// ---------------------------------------------------------------------------
 // Campaign name map — campaign ID (string) → campaign name
 // Used by HubSpot revenue breakdown to resolve utm_campaign IDs to readable names
 // ---------------------------------------------------------------------------
