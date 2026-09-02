@@ -10,7 +10,7 @@ import {
 import {
   RefreshCw, Megaphone, TrendingUp, MousePointerClick, Eye,
   DollarSign, BarChart2, Zap, ArrowUpDown, ChevronUp, ChevronDown,
-  CalendarDays, Target, Send, Bot, X, Plus, Sparkles, Trash2, Pencil,
+  CalendarDays, Target, Send, Bot, X, Plus, Sparkles, Trash2, Pencil, Info,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -28,6 +28,7 @@ interface ChangeAnnotation {
   userEmail: string;
   description: string | null;
   expectedOutcome: string | null;
+  aiSummary: string | null;
 }
 
 interface AnnotationDay {
@@ -490,12 +491,14 @@ function ChatChartCard({ chart }: { chart: ChatChart }) {
   );
 }
 
-function PaidMediaChatDrawer({ open, onClose, ctx, pendingQuestion, onPendingConsumed }: {
+function PaidMediaChatDrawer({ open, onClose, ctx, pendingQuestion, pendingAnnotationId, onPendingConsumed, onAnalysisComplete }: {
   open: boolean;
   onClose: () => void;
   ctx: ChatContext;
   pendingQuestion?: string | null;
+  pendingAnnotationId?: string | null;
   onPendingConsumed?: () => void;
+  onAnalysisComplete?: (annotationId: string, answer: string) => void;
 }) {
   const [input,    setInput]    = useState("");
   const [messages, setMessages] = useState<ChatMsg[]>([]);
@@ -564,12 +567,16 @@ function PaidMediaChatDrawer({ open, onClose, ctx, pendingQuestion, onPendingCon
         }),
       });
       const json = await res.json();
-      setMessages([...newMsgs, {
-        role:        "assistant",
+      const assistantMsg = {
+        role:        "assistant" as const,
         content:     json.answer || json.error || "No response.",
         charts:      Array.isArray(json.charts) ? json.charts : [],
         suggestions: Array.isArray(json.suggestions) ? json.suggestions : [],
-      }]);
+      };
+      setMessages([...newMsgs, assistantMsg]);
+      if (pendingAnnotationId && onAnalysisComplete && json.answer) {
+        onAnalysisComplete(pendingAnnotationId, json.answer);
+      }
     } catch {
       setMessages([...newMsgs, { role: "assistant", content: "Error reaching AI. Please try again." }]);
     } finally {
@@ -721,7 +728,7 @@ function PaidMediaChatDrawer({ open, onClose, ctx, pendingQuestion, onPendingCon
 
 type FunnelBucket = { leads: number; mqls: number; sqos: number; closedWon: number };
 
-function RollingTable({ data, title, subtitle, hideIS, campaignId, campaignName, annotations, onAnalyze, onDeleteAnnotation, onEditAnnotation }: { data: RollingData; title?: string; subtitle?: string; hideIS?: boolean; campaignId?: string; campaignName?: string; annotations?: AnnotationDay[]; onAnalyze?: (q: string) => void; onDeleteAnnotation?: (id: string) => void; onEditAnnotation?: (ev: ChangeAnnotation) => void }) {
+function RollingTable({ data, title, subtitle, hideIS, campaignId, campaignName, annotations, onAnalyze, onDeleteAnnotation, onEditAnnotation }: { data: RollingData; title?: string; subtitle?: string; hideIS?: boolean; campaignId?: string; campaignName?: string; annotations?: AnnotationDay[]; onAnalyze?: (q: string, annotId: string) => void; onDeleteAnnotation?: (id: string) => void; onEditAnnotation?: (ev: ChangeAnnotation) => void }) {
   const { rows, avg12, wowDelta, wowPct, avg12Delta, avg12Pct, view, dayName } = data;
 
   // Per-period funnel data (campaign tables only)
@@ -826,9 +833,25 @@ function RollingTable({ data, title, subtitle, hideIS, campaignId, campaignName,
                       )}
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
+                      {/* AI summary tooltip */}
+                      {ev.aiSummary && (
+                        <div className="relative group">
+                          <button className="p-1 rounded-full bg-indigo-100 text-indigo-600 hover:bg-indigo-200 transition-colors">
+                            <Info className="w-3 h-3" />
+                          </button>
+                          <div className="absolute right-0 top-6 z-50 hidden group-hover:block w-72 rounded-xl border border-slate-200 bg-white shadow-xl p-3">
+                            <p className="text-[10px] font-semibold text-indigo-600 uppercase tracking-wide mb-2">AI Analysis</p>
+                            <div className="space-y-1">
+                              {ev.aiSummary.split("\n").filter(Boolean).map((line, li) => (
+                                <p key={li} className="text-xs text-slate-700 leading-relaxed">{line}</p>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
                       {onAnalyze && (
                         <button
-                          onClick={() => onAnalyze(analyzeQ)}
+                          onClick={() => onAnalyze(analyzeQ, ev.id)}
                           title="Ask AI to analyze this change"
                           className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium bg-indigo-50 text-indigo-600 hover:bg-indigo-100 border border-indigo-200 transition-colors"
                         >
@@ -1261,8 +1284,9 @@ export default function PaidMediaClient() {
   const [editingId,      setEditingId]      = useState<string | null>(null);
 
   // Global AI chat drawer
-  const [chatOpen,       setChatOpen]       = useState(false);
-  const [pendingQ,       setPendingQ]       = useState<string | null>(null);
+  const [chatOpen,           setChatOpen]           = useState(false);
+  const [pendingQ,           setPendingQ]           = useState<string | null>(null);
+  const [pendingAnnotId,     setPendingAnnotId]     = useState<string | null>(null);
 
   const load = useCallback(async (d: 30 | 90) => {
     setLoading(true);
@@ -1348,9 +1372,27 @@ export default function PaidMediaClient() {
     await loadAnnotations();
   }
 
-  function openAnalyze(q: string) {
+  function openAnalyze(q: string, annotationId?: string) {
     setPendingQ(q);
+    setPendingAnnotId(annotationId ?? null);
     setChatOpen(true);
+  }
+
+  async function saveAiSummary(annotationId: string, answer: string) {
+    // Extract bullet lines from the AI response; fall back to first 300 chars
+    const bullets = answer
+      .split("\n")
+      .map(l => l.trim())
+      .filter(l => /^[•\-\*]/.test(l))
+      .slice(0, 6)
+      .join("\n");
+    const aiSummary = bullets || answer.slice(0, 300).trim();
+    await fetch(`/api/paid-media/annotations?id=${annotationId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ aiSummary }),
+    });
+    await loadAnnotations();
   }
 
   useEffect(() => { load(days); }, [days, load]);
@@ -1896,7 +1938,9 @@ export default function PaidMediaClient() {
         onClose={() => setChatOpen(false)}
         ctx={{ data, rollingData, funnelData, rollingView }}
         pendingQuestion={pendingQ}
+        pendingAnnotationId={pendingAnnotId}
         onPendingConsumed={() => setPendingQ(null)}
+        onAnalysisComplete={saveAiSummary}
       />
 
       {/* ------------------------------------------------------------------ */}

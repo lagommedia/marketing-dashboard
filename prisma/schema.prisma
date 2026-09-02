@@ -311,6 +311,7 @@ model CampaignChangeEvent {
   userEmail          String
   description        String?  // human-readable summary built at sync time
   expectedOutcome    String?  // what the user expected this change to achieve
+  aiSummary          String?  // bullet-point summary saved after AI analysis
   createdAt          DateTime @default(now())
 
   @@index([changedAt])

@@ -51,6 +51,7 @@ export async function GET(req: NextRequest) {
       userEmail: true,
       description: true,
       expectedOutcome: true,
+      aiSummary: true,
     },
   });
 
@@ -142,6 +143,8 @@ export async function PATCH(req: NextRequest) {
     if (campaignName !== undefined)            data.campaignName   = campaignName ?? null;
     if (description  !== undefined)            data.description    = description.trim();
     if (expectedOutcome !== undefined)         data.expectedOutcome = expectedOutcome?.trim() ?? null;
+    const { aiSummary } = body as { aiSummary?: string | null };
+    if (aiSummary !== undefined)              data.aiSummary       = aiSummary?.trim()       ?? null;
 
     await prisma.campaignChangeEvent.update({ where: { id }, data });
     return NextResponse.json({ ok: true });
