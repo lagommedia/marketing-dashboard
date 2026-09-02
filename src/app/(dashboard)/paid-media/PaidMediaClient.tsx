@@ -10,7 +10,7 @@ import {
 import {
   RefreshCw, Megaphone, TrendingUp, MousePointerClick, Eye,
   DollarSign, BarChart2, Zap, ArrowUpDown, ChevronUp, ChevronDown,
-  CalendarDays, Target, Send, Bot, X, Plus, Sparkles, Trash2,
+  CalendarDays, Target, Send, Bot, X, Plus, Sparkles, Trash2, Pencil,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -721,7 +721,7 @@ function PaidMediaChatDrawer({ open, onClose, ctx, pendingQuestion, onPendingCon
 
 type FunnelBucket = { leads: number; mqls: number; sqos: number; closedWon: number };
 
-function RollingTable({ data, title, subtitle, hideIS, campaignId, campaignName, annotations, onAnalyze, onDeleteAnnotation }: { data: RollingData; title?: string; subtitle?: string; hideIS?: boolean; campaignId?: string; campaignName?: string; annotations?: AnnotationDay[]; onAnalyze?: (q: string) => void; onDeleteAnnotation?: (id: string) => void }) {
+function RollingTable({ data, title, subtitle, hideIS, campaignId, campaignName, annotations, onAnalyze, onDeleteAnnotation, onEditAnnotation }: { data: RollingData; title?: string; subtitle?: string; hideIS?: boolean; campaignId?: string; campaignName?: string; annotations?: AnnotationDay[]; onAnalyze?: (q: string) => void; onDeleteAnnotation?: (id: string) => void; onEditAnnotation?: (ev: ChangeAnnotation) => void }) {
   const { rows, avg12, wowDelta, wowPct, avg12Delta, avg12Pct, view, dayName } = data;
 
   // Per-period funnel data (campaign tables only)
@@ -834,6 +834,15 @@ function RollingTable({ data, title, subtitle, hideIS, campaignId, campaignName,
                         >
                           <Sparkles className="w-3 h-3" />
                           Analyze
+                        </button>
+                      )}
+                      {onEditAnnotation && (
+                        <button
+                          onClick={() => onEditAnnotation(ev)}
+                          title="Edit this entry"
+                          className="p-1 rounded-md text-slate-300 hover:text-amber-500 hover:bg-amber-50 transition-colors"
+                        >
+                          <Pencil className="w-3 h-3" />
                         </button>
                       )}
                       {onDeleteAnnotation && (
@@ -1249,6 +1258,7 @@ export default function PaidMediaClient() {
   const [logExpected,    setLogExpected]    = useState("");
   const [logSubmitting,  setLogSubmitting]  = useState(false);
   const [logError,       setLogError]       = useState<string | null>(null);
+  const [editingId,      setEditingId]      = useState<string | null>(null);
 
   // Global AI chat drawer
   const [chatOpen,       setChatOpen]       = useState(false);
@@ -1290,28 +1300,47 @@ export default function PaidMediaClient() {
     setLogError(null);
     try {
       const selectedCampaign = rollingData?.campaigns?.find(c => c.campaignId === logCampaignId);
-      const res  = await fetch("/api/paid-media/annotations", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          date:            logDate,
-          campaignId:      selectedCampaign?.campaignId ?? null,
-          campaignName:    selectedCampaign?.campaignName ?? null,
-          description:     logDesc.trim(),
-          expectedOutcome: logExpected.trim() || null,
-        }),
-      });
+      const payload = {
+        date:            logDate,
+        campaignId:      selectedCampaign?.campaignId ?? null,
+        campaignName:    selectedCampaign?.campaignName ?? null,
+        description:     logDesc.trim(),
+        expectedOutcome: logExpected.trim() || null,
+      };
+      const res = editingId
+        ? await fetch(`/api/paid-media/annotations?id=${editingId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          })
+        : await fetch("/api/paid-media/annotations", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Failed to save");
       await loadAnnotations();
       setLogOpen(false);
+      setEditingId(null);
       setLogDesc("");
       setLogExpected("");
+      setLogCampaignId("");
     } catch (err) {
       setLogError(err instanceof Error ? err.message : "Failed to save");
     } finally {
       setLogSubmitting(false);
     }
+  }
+
+  function openEditModal(ev: ChangeAnnotation) {
+    setEditingId(ev.id);
+    setLogDate(ev.changedAt.slice(0, 10));
+    setLogCampaignId(ev.campaignId ?? "");
+    setLogDesc(ev.description ?? "");
+    setLogExpected(ev.expectedOutcome ?? "");
+    setLogError(null);
+    setLogOpen(true);
   }
 
   async function deleteAnnotation(id: string) {
@@ -1456,7 +1485,7 @@ export default function PaidMediaClient() {
 
           {/* Log a change */}
           <button
-            onClick={() => { setLogDate(new Date().toISOString().slice(0, 10)); setLogOpen(true); }}
+            onClick={() => { setEditingId(null); setLogDate(new Date().toISOString().slice(0, 10)); setLogCampaignId(""); setLogDesc(""); setLogExpected(""); setLogError(null); setLogOpen(true); }}
             className="flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors border-amber-200 text-amber-700 hover:bg-amber-50"
           >
             <Plus className="w-3.5 h-3.5" />
@@ -1775,7 +1804,7 @@ export default function PaidMediaClient() {
               rollingData.rows.length > 0 ? (
                 <div className="space-y-6">
                   {/* All-campaigns aggregate table */}
-                  <RollingTable data={rollingData} annotations={annotations} onAnalyze={openAnalyze} onDeleteAnnotation={deleteAnnotation} />
+                  <RollingTable data={rollingData} annotations={annotations} onAnalyze={openAnalyze} onDeleteAnnotation={deleteAnnotation} onEditAnnotation={openEditModal} />
 
                   {/* Per-campaign tables — active campaigns only */}
                   {(rollingData.campaigns ?? []).map(c => {
@@ -1800,6 +1829,7 @@ export default function PaidMediaClient() {
                         annotations={campaignAnnotations}
                         onAnalyze={openAnalyze}
                         onDeleteAnnotation={deleteAnnotation}
+                        onEditAnnotation={openEditModal}
                       />
                     );
                   })}
@@ -1880,9 +1910,9 @@ export default function PaidMediaClient() {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <CalendarDays className="w-4 h-4 text-amber-600" />
-                <h2 className="text-base font-semibold text-slate-900">Log a Change</h2>
+                <h2 className="text-base font-semibold text-slate-900">{editingId ? "Edit Change" : "Log a Change"}</h2>
               </div>
-              <button onClick={() => setLogOpen(false)} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors">
+              <button onClick={() => { setLogOpen(false); setEditingId(null); }} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors">
                 <X className="w-4 h-4 text-slate-400" />
               </button>
             </div>
@@ -1948,7 +1978,7 @@ export default function PaidMediaClient() {
             {/* Actions */}
             <div className="flex gap-3 pt-1">
               <button
-                onClick={() => setLogOpen(false)}
+                onClick={() => { setLogOpen(false); setEditingId(null); }}
                 className="flex-1 rounded-lg border border-slate-200 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors"
               >
                 Cancel
@@ -1963,7 +1993,7 @@ export default function PaidMediaClient() {
                     : "bg-slate-100 text-slate-400 cursor-not-allowed",
                 )}
               >
-                {logSubmitting ? "Saving…" : "Save Change"}
+                {logSubmitting ? "Saving…" : editingId ? "Update Change" : "Save Change"}
               </button>
             </div>
           </div>

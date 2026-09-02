@@ -120,6 +120,37 @@ export async function POST(req: NextRequest) {
 }
 
 // ---------------------------------------------------------------------------
+// PATCH — update an existing manual entry
+// ---------------------------------------------------------------------------
+
+export async function PATCH(req: NextRequest) {
+  const id = new URL(req.url).searchParams.get("id");
+  if (!id) return NextResponse.json({ ok: false, error: "id required" }, { status: 400 });
+  try {
+    const body = await req.json();
+    const { date, campaignId, campaignName, description, expectedOutcome } = body as {
+      date?:            string;
+      campaignId?:      string | null;
+      campaignName?:    string | null;
+      description?:     string;
+      expectedOutcome?: string | null;
+    };
+
+    const data: Record<string, unknown> = {};
+    if (date)                                  data.changedAt      = new Date(date + "T12:00:00Z");
+    if (campaignId   !== undefined)            data.campaignId     = campaignId   ?? null;
+    if (campaignName !== undefined)            data.campaignName   = campaignName ?? null;
+    if (description  !== undefined)            data.description    = description.trim();
+    if (expectedOutcome !== undefined)         data.expectedOutcome = expectedOutcome?.trim() ?? null;
+
+    await prisma.campaignChangeEvent.update({ where: { id }, data });
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    return NextResponse.json({ ok: false, error: String(err) }, { status: 500 });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // DELETE — remove a manual entry
 // ---------------------------------------------------------------------------
 
