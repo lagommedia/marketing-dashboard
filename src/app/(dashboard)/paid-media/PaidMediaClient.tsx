@@ -841,10 +841,23 @@ function RollingTable({ data, title, subtitle, hideIS, campaignId, campaignName,
                           </button>
                           <div className="absolute right-0 top-6 z-50 hidden group-hover:block w-72 rounded-xl border border-slate-200 bg-white shadow-xl p-3">
                             <p className="text-[10px] font-semibold text-indigo-600 uppercase tracking-wide mb-2">AI Analysis</p>
-                            <div className="space-y-1">
-                              {ev.aiSummary.split("\n").filter(Boolean).map((line, li) => (
-                                <p key={li} className="text-xs text-slate-700 leading-relaxed">{line}</p>
-                              ))}
+                            <div className="space-y-1.5">
+                              {ev.aiSummary.split("\n").filter(Boolean).map((line, li) => {
+                                const m = line.match(/^([GYR]):(.*)/);
+                                const status = m ? m[1] as "G" | "Y" | "R" : "Y";
+                                const text   = m ? m[2].trim() : line;
+                                const dot = status === "G"
+                                  ? "bg-green-500"
+                                  : status === "R"
+                                  ? "bg-red-500"
+                                  : "bg-yellow-400";
+                                return (
+                                  <div key={li} className="flex items-start gap-2">
+                                    <span className={`mt-1 w-2 h-2 rounded-full shrink-0 ${dot}`} />
+                                    <p className="text-xs text-slate-700 leading-relaxed">{text}</p>
+                                  </div>
+                                );
+                              })}
                             </div>
                           </div>
                         </div>
@@ -1378,15 +1391,29 @@ export default function PaidMediaClient() {
     setChatOpen(true);
   }
 
+  function detectSentiment(text: string): "G" | "Y" | "R" {
+    const lower = text.toLowerCase();
+    const greenTerms = ["improv", "increas", "higher", "better", "up ", "grew", "growth", "strong", "exceed", "outperform", "on track", "working", "effective", "positive", "above", "ahead"];
+    const redTerms   = ["declin", "decreas", "lower", "worse", "drop", "fell", "fell ", "below", "concern", "underperform", "not meeting", "miss", "fail", "lag", "negative", "behind"];
+    const g = greenTerms.filter(w => lower.includes(w)).length;
+    const r = redTerms.filter(w => lower.includes(w)).length;
+    return g > r ? "G" : r > g ? "R" : "Y";
+  }
+
   async function saveAiSummary(annotationId: string, answer: string) {
-    // Extract bullet lines from the AI response; fall back to first 300 chars
-    const bullets = answer
+    // Extract bullet lines; tag each with G/Y/R sentiment prefix
+    const rawBullets = answer
       .split("\n")
       .map(l => l.trim())
       .filter(l => /^[•\-\*]/.test(l))
       .slice(0, 6)
-      .join("\n");
-    const aiSummary = bullets || answer.slice(0, 300).trim();
+      .map(l => l.replace(/^[•\-\*]\s*/, "").trim())
+      .filter(Boolean);
+
+    const taggedBullets = rawBullets.map(text => `${detectSentiment(text)}:${text}`);
+    const aiSummary = taggedBullets.length
+      ? taggedBullets.join("\n")
+      : answer.slice(0, 300).trim();
     await fetch(`/api/paid-media/annotations?id=${annotationId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
