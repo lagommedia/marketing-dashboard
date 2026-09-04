@@ -267,20 +267,33 @@ model AeoPillarScore {
   fetchedAt DateTime @default(now())
 }
 
-// AI engine mention tracking — fires pillar queries against OpenAI / Gemini,
-// records whether Zeni was mentioned or cited in the response.
-model AiMentionSnapshot {
+// User-managed GEO prompts — the exact questions fired at AI engines.
+model GeoPrompt {
   id        String   @id @default(cuid())
-  pillarId  String
-  query     String   // The question fired at the AI engine
-  engine    String   // "openai" | "gemini"
-  mentioned Boolean  @default(false)
-  citedUrls String?  // JSON: string[] — zeni.ai URLs found in grounding citations
-  syncedAt  DateTime @default(now())
+  text      String   // The question to fire at AI engines
+  notes     String?  // Why we care / what we're testing
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
 
-  @@unique([pillarId, engine, query])
+// AI engine mention tracking — fires queries against OpenAI / Gemini,
+// records aggregate mention rate across multiple runs.
+model AiMentionSnapshot {
+  id           String   @id @default(cuid())
+  pillarId     String?  // set for auto-generated pillar queries; null for custom GeoPrompts
+  promptId     String?  // set for user-managed GeoPrompt queries
+  query        String   // The question fired at the AI engine
+  engine       String   // "openai" | "gemini"
+  mentioned    Boolean  @default(false)  // result of the most recent run
+  runCount     Int      @default(1)      // total times this query has been run
+  mentionCount Int      @default(0)      // how many runs included a Zeni mention
+  citedUrls    String?  // JSON: string[] — unique zeni.ai URLs cited across all runs
+  syncedAt     DateTime @default(now())
+
+  @@unique([engine, query])
   @@index([syncedAt])
   @@index([pillarId])
+  @@index([promptId])
   @@index([engine])
 }
 

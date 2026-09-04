@@ -175,12 +175,22 @@ export async function syncAiMentions(): Promise<{ rows: number; skipped: string[
     }
   }
 
-  // Upsert all results
+  // Upsert all results (unique key is now engine+query, not pillarId+engine+query)
   for (const r of results) {
+    // Merge any existing cited URLs so we don't lose prior grounding data
+    const existing = await prisma.aiMentionSnapshot.findUnique({
+      where: { engine_query: { engine: r.engine, query: r.query } },
+      select: { citedUrls: true },
+    });
+    const existingUrls: string[] = existing?.citedUrls
+      ? (JSON.parse(existing.citedUrls) as string[])
+      : [];
+    const mergedUrls = [...new Set([...existingUrls, ...r.citedUrls])];
+
     await prisma.aiMentionSnapshot.upsert({
-      where:  { pillarId_engine_query: { pillarId: r.pillarId, engine: r.engine, query: r.query } },
-      create: { pillarId: r.pillarId, query: r.query, engine: r.engine, mentioned: r.mentioned, citedUrls: JSON.stringify(r.citedUrls), syncedAt: new Date() },
-      update: { mentioned: r.mentioned, citedUrls: JSON.stringify(r.citedUrls), syncedAt: new Date() },
+      where:  { engine_query: { engine: r.engine, query: r.query } },
+      create: { pillarId: r.pillarId, query: r.query, engine: r.engine, mentioned: r.mentioned, runCount: 1, mentionCount: r.mentioned ? 1 : 0, citedUrls: JSON.stringify(mergedUrls), syncedAt: new Date() },
+      update: { pillarId: r.pillarId, mentioned: r.mentioned, runCount: { increment: 1 }, mentionCount: r.mentioned ? { increment: 1 } : undefined, citedUrls: JSON.stringify(mergedUrls), syncedAt: new Date() },
     });
   }
 

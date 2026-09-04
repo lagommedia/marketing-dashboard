@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { RefreshCw, TrendingUp, MousePointerClick, Eye, Crosshair, ChevronDown, ChevronUp, Star, Search, Bot, Globe } from "lucide-react";
+import { RefreshCw, TrendingUp, MousePointerClick, Eye, Crosshair, ChevronDown, ChevronUp, Star, Search, Bot, Globe, Plus, Pencil, Trash2, Play, ExternalLink, BarChart2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type Channel = "seo" | "aeo" | "geo";
@@ -58,6 +58,36 @@ interface AiVisibilityData {
   engines:         Record<string, AiVisibilityEngine>;
   allCitedPages:   string[];
   byPillar:        AiVisibilityPillar[];
+}
+
+// ---------------------------------------------------------------------------
+// GEO types
+// ---------------------------------------------------------------------------
+
+interface GeoEngineResult {
+  runCount:     number;
+  mentionCount: number;
+  rate:         number | null; // 0-100
+  lastRun:      string;
+  citedUrls:    string[];
+}
+
+interface GeoPromptResult {
+  id:                string;
+  text:              string;
+  notes:             string | null;
+  createdAt:         string;
+  byEngine:          Record<string, GeoEngineResult>;
+  allCitedUrls:      string[];
+  lastRun:           string | null;
+  gscImpressions90d: number;
+}
+
+interface GeoPrompt {
+  id:        string;
+  text:      string;
+  notes:     string | null;
+  createdAt: string;
 }
 
 interface PillarData {
@@ -527,6 +557,16 @@ export function SeoClient() {
   const [aiMentionSyncMsg, setAiMentionSyncMsg] = useState<string | null>(null);
   const [aiMentionCooldownUntil, setAiMentionCooldownUntil] = useState<Date | null>(null);
 
+  // GEO prompt tracker state
+  const [geoResults, setGeoResults]           = useState<GeoPromptResult[]>([]);
+  const [geoLoading, setGeoLoading]           = useState(false);
+  const [geoRunning, setGeoRunning]           = useState<string | null>(null); // promptId being run
+  const [geoPromptOpen, setGeoPromptOpen]     = useState(false);
+  const [geoEditId, setGeoEditId]             = useState<string | null>(null);
+  const [geoText, setGeoText]                 = useState("");
+  const [geoNotes, setGeoNotes]               = useState("");
+  const [geoSubmitting, setGeoSubmitting]     = useState(false);
+
   const loadAeoOverview = useCallback(async () => {
     setAeoOverviewLoading(true);
     try {
@@ -558,6 +598,62 @@ export function SeoClient() {
     }
   }, []);
 
+  const loadGeoResults = useCallback(async () => {
+    setGeoLoading(true);
+    try {
+      const res = await fetch("/api/geo/results");
+      const json = await res.json();
+      setGeoResults(json.results ?? []);
+    } finally {
+      setGeoLoading(false);
+    }
+  }, []);
+
+  async function submitGeoPrompt() {
+    if (!geoText.trim()) return;
+    setGeoSubmitting(true);
+    try {
+      const url = geoEditId
+        ? `/api/geo/prompts?id=${geoEditId}`
+        : "/api/geo/prompts";
+      await fetch(url, {
+        method: geoEditId ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: geoText, notes: geoNotes }),
+      });
+      setGeoPromptOpen(false);
+      setGeoEditId(null);
+      setGeoText("");
+      setGeoNotes("");
+      await loadGeoResults();
+    } finally {
+      setGeoSubmitting(false);
+    }
+  }
+
+  async function deleteGeoPrompt(id: string) {
+    if (!confirm("Delete this prompt and all its run history?")) return;
+    await fetch(`/api/geo/prompts?id=${id}`, { method: "DELETE" });
+    await loadGeoResults();
+  }
+
+  function openGeoEdit(prompt: GeoPrompt) {
+    setGeoEditId(prompt.id);
+    setGeoText(prompt.text);
+    setGeoNotes(prompt.notes ?? "");
+    setGeoPromptOpen(true);
+  }
+
+  async function runGeoPrompt(id: string) {
+    setGeoRunning(id);
+    try {
+      await fetch(`/api/geo/run?id=${id}&runs=10`, { method: "POST" });
+      await loadGeoResults();
+    } finally {
+      setGeoRunning(null);
+    }
+  }
+
   const load = useCallback(async (seg: Segment) => {
     setLoading(true);
     try {
@@ -588,7 +684,10 @@ export function SeoClient() {
       if (!aeoReadiness)  loadAeoReadiness();
       if (!aiVisibility)  loadAiVisibility();
     }
-  }, [channel, aeoOverview, aeoReadiness, aiVisibility, loadAeoOverview, loadAeoReadiness, loadAiVisibility]);
+    if (channel === "geo") {
+      loadGeoResults();
+    }
+  }, [channel, aeoOverview, aeoReadiness, aiVisibility, loadAeoOverview, loadAeoReadiness, loadAiVisibility, loadGeoResults]);
 
   async function handleSync() {
     setSyncing(true);
@@ -1142,67 +1241,250 @@ export function SeoClient() {
       {/* ── GEO view ── */}
       {channel === "geo" && (
         <div className="space-y-6">
-          {/* Stat overview */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-white rounded-xl border border-slate-200 p-5">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-1">ChatGPT Mentions</p>
-              <p className="text-2xl font-bold text-slate-900">—</p>
-              <p className="text-xs text-slate-400 mt-1">Tracked manually below</p>
-            </div>
-            <div className="bg-white rounded-xl border border-slate-200 p-5">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-1">Perplexity Citations</p>
-              <p className="text-2xl font-bold text-slate-900">—</p>
-              <p className="text-xs text-slate-400 mt-1">Tracked manually below</p>
-            </div>
-            <div className="bg-white rounded-xl border border-slate-200 p-5">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-1">Gemini / Copilot</p>
-              <p className="text-2xl font-bold text-slate-900">—</p>
-              <p className="text-xs text-slate-400 mt-1">Tracked manually below</p>
-            </div>
-          </div>
 
-          {/* Manual tracking table */}
+          {/* ── Summary stat row ── */}
+          {geoResults.length > 0 && (() => {
+            const allEngines = [...new Set(geoResults.flatMap(r => Object.keys(r.byEngine)))];
+            const totalCited = new Set(geoResults.flatMap(r => r.allCitedUrls)).size;
+            return (
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="bg-white rounded-xl border border-slate-200 p-5 text-center">
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-1">Prompts tracked</p>
+                  <p className="text-3xl font-bold text-slate-900">{geoResults.length}</p>
+                </div>
+                {allEngines.map(engine => {
+                  const totalMentions = geoResults.reduce((s, r) => s + (r.byEngine[engine]?.mentionCount ?? 0), 0);
+                  const totalRuns     = geoResults.reduce((s, r) => s + (r.byEngine[engine]?.runCount     ?? 0), 0);
+                  const rate = totalRuns > 0 ? Math.round((totalMentions / totalRuns) * 100) : null;
+                  return (
+                    <div key={engine} className="bg-white rounded-xl border border-slate-200 p-5">
+                      <div className="flex items-center gap-2 mb-2">
+                        {engine === "openai"
+                          ? <span className="text-[10px] font-bold bg-slate-900 text-white px-1.5 py-0.5 rounded">GPT</span>
+                          : <span className="text-[10px] font-bold bg-blue-600 text-white px-1.5 py-0.5 rounded">Gemini</span>}
+                        <span className="text-xs text-slate-400 uppercase tracking-wide">{engine === "openai" ? "OpenAI" : "Google"}</span>
+                      </div>
+                      <p className={cn("text-3xl font-bold",
+                        rate === null ? "text-slate-300" :
+                        rate >= 60 ? "text-emerald-600" :
+                        rate >= 30 ? "text-amber-500" : "text-rose-500"
+                      )}>{rate !== null ? `${rate}%` : "—"}</p>
+                      <p className="text-xs text-slate-400 mt-0.5">{totalMentions}/{totalRuns} runs mentioned Zeni</p>
+                    </div>
+                  );
+                })}
+                <div className="bg-white rounded-xl border border-slate-200 p-5">
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-2">Cited Pages</p>
+                  <p className="text-3xl font-bold text-slate-900">{totalCited}</p>
+                  <p className="text-xs text-slate-400 mt-0.5">Unique zeni.ai URLs cited by Gemini</p>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* ── Add/Edit prompt modal ── */}
+          {geoPromptOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 p-6 space-y-4">
+                <h3 className="text-sm font-semibold text-slate-800">
+                  {geoEditId ? "Edit prompt" : "Add prompt"}
+                </h3>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Prompt / query text</label>
+                    <input
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                      placeholder="e.g. Best AI bookkeeping software for startups"
+                      value={geoText}
+                      onChange={e => setGeoText(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Notes (optional)</label>
+                    <input
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                      placeholder="Why we care, what we're testing…"
+                      value={geoNotes}
+                      onChange={e => setGeoNotes(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    onClick={() => { setGeoPromptOpen(false); setGeoEditId(null); setGeoText(""); setGeoNotes(""); }}
+                    className="px-4 py-2 rounded-lg border border-slate-200 text-sm text-slate-600 hover:bg-slate-50"
+                  >Cancel</button>
+                  <button
+                    onClick={submitGeoPrompt}
+                    disabled={!geoText.trim() || geoSubmitting}
+                    className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-40"
+                  >{geoSubmitting ? "Saving…" : geoEditId ? "Save changes" : "Add prompt"}</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── Prompt list header ── */}
           <div>
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold text-slate-700">GEO Brand Mention Log</h2>
-              <span className="text-xs text-slate-400">Manual entry — update weekly</span>
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-700">GEO Prompt Tracker</h2>
+                <p className="text-xs text-slate-400 mt-0.5">Each prompt is run 10× against OpenAI and Gemini — results show mention rate + citation sources</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={loadGeoResults}
+                  disabled={geoLoading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+                >
+                  <RefreshCw className={cn("w-3.5 h-3.5", geoLoading && "animate-spin")} />
+                  Refresh
+                </button>
+                <button
+                  onClick={() => { setGeoEditId(null); setGeoText(""); setGeoNotes(""); setGeoPromptOpen(true); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Add prompt
+                </button>
+              </div>
             </div>
-            <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-100 bg-slate-50">
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Prompt / Query</th>
-                    <th className="text-center px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">ChatGPT</th>
-                    <th className="text-center px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Perplexity</th>
-                    <th className="text-center px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Gemini</th>
-                    <th className="text-center px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Copilot</th>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Notes</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {[
-                    "Best AI bookkeeping software for startups",
-                    "Best AI accounting tools",
-                    "What is the best AI accountant",
-                    "AI tools for month-end close",
-                    "AI accounts payable automation",
-                    "AI financial reporting tools",
-                  ].map((prompt, i) => (
-                    <tr key={prompt} className={cn("border-b border-slate-50", i % 2 === 1 && "bg-slate-50/50")}>
-                      <td className="px-4 py-3 text-slate-700 font-medium">{prompt}</td>
-                      {["chatgpt", "perplexity", "gemini", "copilot"].map(engine => (
-                        <td key={engine} className="px-4 py-3 text-center">
-                          <span className="inline-flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold bg-slate-100 text-slate-400">—</span>
-                        </td>
-                      ))}
-                      <td className="px-4 py-3 text-slate-400 text-xs italic">Not yet verified</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <p className="text-xs text-slate-400 mt-2">
-              Run each prompt in ChatGPT, Perplexity, Gemini, and Copilot. Mark ✓ if Zeni is mentioned or cited. Update this table weekly.
+
+            {geoLoading && <div className="text-sm text-slate-400 py-12 text-center">Loading…</div>}
+
+            {!geoLoading && geoResults.length === 0 && (
+              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-12 text-center">
+                <Bot className="w-8 h-8 text-slate-300 mx-auto mb-3" />
+                <p className="text-sm font-medium text-slate-500">No prompts yet</p>
+                <p className="text-xs text-slate-400 mt-1">Add a prompt to start tracking how often Zeni gets mentioned</p>
+              </div>
+            )}
+
+            {!geoLoading && geoResults.length > 0 && (
+              <div className="space-y-4">
+                {geoResults.map(result => {
+                  const engines = Object.entries(result.byEngine);
+                  const isRunning = geoRunning === result.id;
+                  return (
+                    <div key={result.id} className="bg-white rounded-xl border border-slate-200 p-5">
+                      {/* Prompt header */}
+                      <div className="flex items-start justify-between gap-3 mb-4">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-slate-800 leading-snug">{result.text}</p>
+                          {result.notes && <p className="text-xs text-slate-400 mt-0.5 italic">{result.notes}</p>}
+                          <div className="flex items-center gap-3 mt-1.5">
+                            {result.lastRun && (
+                              <span className="text-[10px] text-slate-400">
+                                Last run {new Date(result.lastRun).toLocaleDateString()}
+                              </span>
+                            )}
+                            {result.gscImpressions90d > 0 && (
+                              <span className="flex items-center gap-1 text-[10px] text-slate-500">
+                                <BarChart2 className="w-3 h-3" />
+                                ~{result.gscImpressions90d.toLocaleString()} GSC impressions (90d proxy)
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            onClick={() => runGeoPrompt(result.id)}
+                            disabled={isRunning || geoRunning !== null}
+                            title="Run 10× against OpenAI + Gemini"
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-indigo-50 text-indigo-600 text-xs font-medium hover:bg-indigo-100 disabled:opacity-40"
+                          >
+                            <Play className={cn("w-3 h-3", isRunning && "animate-pulse")} />
+                            {isRunning ? "Running…" : "Run 10×"}
+                          </button>
+                          <button
+                            onClick={() => openGeoEdit(result as GeoPrompt)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-50"
+                          ><Pencil className="w-3.5 h-3.5" /></button>
+                          <button
+                            onClick={() => deleteGeoPrompt(result.id)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                          ><Trash2 className="w-3.5 h-3.5" /></button>
+                        </div>
+                      </div>
+
+                      {/* Engine results */}
+                      {engines.length > 0 ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                          {engines.map(([engine, stats]) => {
+                            const rate = stats.rate ?? 0;
+                            const color = rate >= 60 ? "emerald" : rate >= 30 ? "amber" : "rose";
+                            return (
+                              <div key={engine} className={cn(
+                                "rounded-lg border p-3",
+                                color === "emerald" ? "border-emerald-100 bg-emerald-50" :
+                                color === "amber"   ? "border-amber-100 bg-amber-50" :
+                                                     "border-rose-100 bg-rose-50"
+                              )}>
+                                <div className="flex items-center justify-between mb-2">
+                                  <div className="flex items-center gap-1.5">
+                                    {engine === "openai"
+                                      ? <span className="text-[10px] font-bold bg-slate-900 text-white px-1.5 py-0.5 rounded">GPT</span>
+                                      : <span className="text-[10px] font-bold bg-blue-600 text-white px-1.5 py-0.5 rounded">Gemini</span>}
+                                  </div>
+                                  <span className={cn(
+                                    "text-xl font-bold",
+                                    color === "emerald" ? "text-emerald-700" :
+                                    color === "amber"   ? "text-amber-700" : "text-rose-700"
+                                  )}>{rate}%</span>
+                                </div>
+                                {/* Progress bar */}
+                                <div className="w-full h-1.5 rounded-full bg-white/60 mb-1.5">
+                                  <div
+                                    className={cn("h-1.5 rounded-full",
+                                      color === "emerald" ? "bg-emerald-500" :
+                                      color === "amber"   ? "bg-amber-400" : "bg-rose-400"
+                                    )}
+                                    style={{ width: `${rate}%` }}
+                                  />
+                                </div>
+                                <p className={cn("text-[10px]",
+                                  color === "emerald" ? "text-emerald-600" :
+                                  color === "amber"   ? "text-amber-600" : "text-rose-600"
+                                )}>Zeni mentioned {stats.mentionCount}/{stats.runCount} runs</p>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="rounded-lg border border-dashed border-slate-100 bg-slate-50 p-4 text-center text-xs text-slate-400 mb-4">
+                          No runs yet — click &ldquo;Run 10×&rdquo; to fire this prompt against AI engines
+                        </div>
+                      )}
+
+                      {/* Citation sources */}
+                      {result.allCitedUrls.length > 0 && (
+                        <div>
+                          <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Cited pages</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {result.allCitedUrls.map(url => (
+                              <a
+                                key={url}
+                                href={url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-1 text-[10px] text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full hover:bg-indigo-100 truncate max-w-xs"
+                              >
+                                <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                                {url.replace("https://", "").replace(/\/$/, "")}
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Search volume footnote */}
+            <p className="text-xs text-slate-400 mt-3">
+              * GSC impressions are a proxy for query volume using your Google Search Console data — exact AI engine query frequency is not publicly available from OpenAI or Google.
             </p>
           </div>
         </div>
