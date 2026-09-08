@@ -183,7 +183,7 @@ Chart rules:
     const client = new Anthropic({ apiKey });
     const response = await client.messages.create({
       model:      "claude-sonnet-4-6",
-      max_tokens: 2048,
+      max_tokens: 4096,
       system:     systemPrompt,
       messages:   [...chatHistory, { role: "user", content: question }],
     });
@@ -258,7 +258,12 @@ Chart rules:
       suggestions: Array.isArray(parsed.suggestions) ? parsed.suggestions : [],
     });
   } catch {
-    // Last resort: strip everything and return the raw text
-    return NextResponse.json({ answer: raw.replace(/^```json?\s*/i, "").replace(/```\s*$/, "").trim(), charts: [], suggestions: [] });
+    // JSON.parse failed (e.g. truncated response or unexpected escape). Try to
+    // regex-extract just the answer value, which is always the first string field.
+    const answerMatch = raw.match(/"answer"\s*:\s*"([\s\S]*?)(?<!\\)"(?:\s*,|\s*})/);
+    const rescued = answerMatch
+      ? answerMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"')
+      : raw.replace(/^```json?\s*/i, "").replace(/```\s*$/, "").trim();
+    return NextResponse.json({ answer: rescued, charts: [], suggestions: [] });
   }
 }
