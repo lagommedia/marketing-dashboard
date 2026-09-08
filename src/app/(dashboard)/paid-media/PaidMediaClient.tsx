@@ -1356,8 +1356,9 @@ export default function PaidMediaClient() {
   const [chartView,    setChartView]   = useState<"spend" | "clicks">("spend");
 
   // Rolling average state
-  const [rollingView,  setRollingView] = useState<"daily" | "weekly" | "monthly">("daily");
-  const [rollingData,  setRollingData] = useState<RollingData | null>(null);
+  const [rollingView,   setRollingView]   = useState<"daily" | "weekly" | "monthly">("daily");
+  const [anchorMode,    setAnchorMode]    = useState<"day" | "week" | "month">("day");
+  const [rollingData,   setRollingData]   = useState<RollingData | null>(null);
   const [rollingLoading, setRollingLoading] = useState(false);
 
   // HubSpot funnel state
@@ -1392,14 +1393,38 @@ export default function PaidMediaClient() {
     }
   }, []);
 
-  const loadRolling = useCallback(async (view: "daily" | "weekly" | "monthly") => {
+  function getAnchorDate(mode: "day" | "week" | "month"): string {
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    if (mode === "week") {
+      // Last completed ISO week ends on Sunday — find the most recent Sunday
+      const dow = today.getUTCDay(); // 0=Sun
+      const daysBack = dow === 0 ? 7 : dow;
+      const d = new Date(today);
+      d.setUTCDate(d.getUTCDate() - daysBack);
+      return d.toISOString().slice(0, 10);
+    }
+    if (mode === "month") {
+      // Last day of the previous calendar month
+      const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 0));
+      return d.toISOString().slice(0, 10);
+    }
+    // day: yesterday
+    const d = new Date(today);
+    d.setUTCDate(d.getUTCDate() - 1);
+    return d.toISOString().slice(0, 10);
+  }
+
+  const loadRolling = useCallback(async (view: "daily" | "weekly" | "monthly", mode: "day" | "week" | "month") => {
     setRollingLoading(true);
     try {
-      const res = await fetch(`/api/paid-media/rolling?view=${view}&campaignId=all`);
+      const anchor = getAnchorDate(mode);
+      const res = await fetch(`/api/paid-media/rolling?view=${view}&campaignId=all&date=${anchor}`);
       if (res.ok) setRollingData(await res.json());
     } finally {
       setRollingLoading(false);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadAnnotations = useCallback(async () => {
@@ -1504,7 +1529,7 @@ export default function PaidMediaClient() {
   }
 
   useEffect(() => { load(days); }, [days, load]);
-  useEffect(() => { loadRolling(rollingView); }, [rollingView, loadRolling]);
+  useEffect(() => { loadRolling(rollingView, anchorMode); }, [rollingView, anchorMode, loadRolling]);
   useEffect(() => { loadAnnotations(); }, [loadAnnotations]);
   useEffect(() => {
     fetch("/api/paid-media/funnel").then(r => r.ok ? r.json() : null).then(d => { if (d) setFunnelData(d); });
@@ -1523,7 +1548,7 @@ export default function PaidMediaClient() {
     if (!res.ok) throw new Error(json.error ?? `${label} failed`);
     setSyncMsg(`${label}: synced ${json.rows} rows across campaigns.`);
     await load(days);
-    await loadRolling(rollingView);
+    await loadRolling(rollingView, anchorMode);
   }
 
   async function handleSync() {
@@ -1915,7 +1940,7 @@ export default function PaidMediaClient() {
                 <span className="text-sm font-semibold text-slate-900">Rolling Averages</span>
               </div>
               <div className="flex items-center gap-3 flex-wrap">
-                {/* View toggle */}
+                {/* Granularity toggle */}
                 <div className="flex rounded-lg border border-slate-200 bg-slate-50 overflow-hidden text-sm">
                   {(["daily", "weekly", "monthly"] as const).map(v => (
                     <button
@@ -1933,8 +1958,33 @@ export default function PaidMediaClient() {
                   ))}
                 </div>
 
+                {/* Anchor toggle */}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-slate-400 font-medium whitespace-nowrap">Start from</span>
+                  <div className="flex rounded-lg border border-slate-200 bg-slate-50 overflow-hidden text-sm">
+                    {([
+                      { value: "day",   label: "Last day"   },
+                      { value: "week",  label: "Last week"  },
+                      { value: "month", label: "Last month" },
+                    ] as const).map(({ value, label }) => (
+                      <button
+                        key={value}
+                        onClick={() => setAnchorMode(value)}
+                        className={cn(
+                          "px-3 py-1.5 font-medium transition-colors",
+                          anchorMode === value
+                            ? "bg-indigo-600 text-white shadow-sm"
+                            : "text-slate-500 hover:text-slate-700",
+                        )}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 <button
-                  onClick={() => loadRolling(rollingView)}
+                  onClick={() => loadRolling(rollingView, anchorMode)}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors"
                 >
                   <RefreshCw className={cn("w-3.5 h-3.5", rollingLoading && "animate-spin")} />
