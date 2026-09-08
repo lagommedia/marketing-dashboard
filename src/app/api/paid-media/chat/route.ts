@@ -50,6 +50,13 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  interface Attachment {
+    name:     string;
+    mimeType: string;
+    data?:    string;
+    text?:    string;
+  }
+
   let question: string,
       tableData: Record<string, unknown>,
       funnelData: Record<string, unknown> | null,
@@ -57,7 +64,8 @@ export async function POST(req: NextRequest) {
       campaigns: unknown[] | null,
       campaignRolling: unknown[] | null,
       rollingView: string,
-      messages: Array<{ role: string; content: string }>;
+      messages: Array<{ role: string; content: string }>,
+      attachment: Attachment | null;
   try {
     const body      = await req.json();
     question        = body.question        ?? "";
@@ -68,6 +76,7 @@ export async function POST(req: NextRequest) {
     campaignRolling = body.campaignRolling ?? null;
     rollingView     = body.rollingView     ?? "weekly";
     messages        = body.messages        ?? [];
+    attachment      = body.attachment      ?? null;
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
@@ -178,6 +187,30 @@ Chart rules:
     content: m.content,
   }));
 
+  // Build the last user message — inject attachment content blocks if present
+  type ImageMediaType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+  type ContentBlock =
+    | { type: "text"; text: string }
+    | { type: "image"; source: { type: "base64"; media_type: ImageMediaType; data: string } }
+    | { type: "document"; source: { type: "base64"; media_type: "application/pdf"; data: string } };
+
+  let lastUserContent: string | ContentBlock[] = question;
+  if (attachment) {
+    const blocks: ContentBlock[] = [];
+    if (attachment.text) {
+      blocks.push({ type: "text", text: `[Attached file: ${attachment.name}]\n\`\`\`\n${attachment.text}\n\`\`\`` });
+    } else if (attachment.data) {
+      if (attachment.mimeType === "application/pdf") {
+        blocks.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: attachment.data } });
+      } else if (attachment.mimeType.startsWith("image/")) {
+        const mt = attachment.mimeType as ImageMediaType;
+        blocks.push({ type: "image", source: { type: "base64", media_type: mt, data: attachment.data } });
+      }
+    }
+    blocks.push({ type: "text", text: question });
+    lastUserContent = blocks;
+  }
+
   let raw = "";
   try {
     const client = new Anthropic({ apiKey });
@@ -185,7 +218,7 @@ Chart rules:
       model:      "claude-sonnet-4-6",
       max_tokens: 4096,
       system:     systemPrompt,
-      messages:   [...chatHistory, { role: "user", content: question }],
+      messages:   [...chatHistory, { role: "user", content: lastUserContent }],
     });
     const textBlock = response.content.find(c => c.type === "text");
     raw = textBlock?.type === "text" ? textBlock.text.trim() : "";

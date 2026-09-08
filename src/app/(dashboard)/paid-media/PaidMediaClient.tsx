@@ -10,7 +10,7 @@ import {
 import {
   RefreshCw, Megaphone, TrendingUp, MousePointerClick, Eye,
   DollarSign, BarChart2, Zap, ArrowUpDown, ChevronUp, ChevronDown,
-  CalendarDays, Target, Send, Bot, X, Plus, Sparkles, Trash2, Pencil, Info,
+  CalendarDays, Target, Send, Bot, X, Plus, Sparkles, Trash2, Pencil, Info, Paperclip,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -500,10 +500,13 @@ function PaidMediaChatDrawer({ open, onClose, ctx, pendingQuestion, pendingAnnot
   onPendingConsumed?: () => void;
   onAnalysisComplete?: (annotationId: string, answer: string) => void;
 }) {
-  const [input,    setInput]    = useState("");
-  const [messages, setMessages] = useState<ChatMsg[]>([]);
-  const [loading,  setLoading]  = useState(false);
-  const bottomRef = React.useRef<HTMLDivElement>(null);
+  const [input,      setInput]      = useState("");
+  const [messages,   setMessages]   = useState<ChatMsg[]>([]);
+  const [loading,    setLoading]    = useState(false);
+  const [attachment, setAttachment] = useState<{ name: string; mimeType: string; data?: string; text?: string; preview?: string } | null>(null);
+  const [fileError,  setFileError]  = useState<string | null>(null);
+  const bottomRef  = React.useRef<HTMLDivElement>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -517,13 +520,48 @@ function PaidMediaChatDrawer({ open, onClose, ctx, pendingQuestion, pendingAnnot
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, pendingQuestion]);
 
+  function handleFileSelect(file: File) {
+    setFileError(null);
+    if (file.size > 10 * 1024 * 1024) {
+      setFileError(`File too large (max 10 MB).`);
+      return;
+    }
+    const isImage = file.type.startsWith("image/");
+    const isPdf   = file.type === "application/pdf";
+    const isText  = ["text/csv", "text/plain", "application/json"].includes(file.type)
+                    || /\.(csv|tsv|txt|json)$/i.test(file.name);
+    if (!isImage && !isPdf && !isText) {
+      setFileError("Unsupported file type. Supported: images, PDF, CSV, TXT, JSON.");
+      return;
+    }
+    const reader = new FileReader();
+    if (isImage || isPdf) {
+      reader.onload = (e) => {
+        const dataUrl = e.target?.result as string;
+        const base64  = dataUrl.split(",")[1];
+        setAttachment({ name: file.name, mimeType: file.type, data: base64, preview: isImage ? dataUrl : undefined });
+      };
+      reader.readAsDataURL(file);
+    } else {
+      reader.onload = (e) => {
+        setAttachment({ name: file.name, mimeType: file.type, text: e.target?.result as string });
+      };
+      reader.readAsText(file);
+    }
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
   async function send(question?: string) {
     const q = (question ?? input).trim();
-    if (!q || loading) return;
+    if (!q && !attachment) return;
+    if (loading) return;
+    const userContent = q || `Please analyze the attached file: ${attachment!.name}`;
     setInput("");
     const history = messages.map(m => ({ role: m.role, content: m.content }));
-    const newMsgs: ChatMsg[] = [...messages, { role: "user", content: q }];
+    const newMsgs: ChatMsg[] = [...messages, { role: "user", content: userContent }];
     setMessages(newMsgs);
+    const sentAttachment = attachment;
+    setAttachment(null);
     setLoading(true);
     try {
       // Build per-campaign rolling rows so the AI has individual campaign data
@@ -556,7 +594,7 @@ function PaidMediaChatDrawer({ open, onClose, ctx, pendingQuestion, pendingAnnot
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({
-          question:        q,
+          question:        userContent,
           tableData:       ctx.rollingData ?? {},
           funnelData:      ctx.funnelData,
           summaryData:     ctx.data?.summary,
@@ -564,6 +602,12 @@ function PaidMediaChatDrawer({ open, onClose, ctx, pendingQuestion, pendingAnnot
           campaignRolling,
           rollingView:     ctx.rollingView,
           messages:        history,
+          attachment:      sentAttachment ? {
+            name:     sentAttachment.name,
+            mimeType: sentAttachment.mimeType,
+            data:     sentAttachment.data,
+            text:     sentAttachment.text,
+          } : null,
         }),
       });
       const json = await res.json();
@@ -699,21 +743,58 @@ function PaidMediaChatDrawer({ open, onClose, ctx, pendingQuestion, pendingAnnot
       </div>
 
       {/* Input */}
-      <div className="px-4 py-4 border-t border-slate-200 bg-white shrink-0">
+      <div className="px-4 pt-3 pb-4 border-t border-slate-200 bg-white shrink-0">
+        {/* Attachment preview */}
+        {(attachment || fileError) && (
+          <div className="mb-2">
+            {fileError && <p className="text-xs text-red-500 mb-1">{fileError}</p>}
+            {attachment && (
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-indigo-50 border border-indigo-100 rounded-lg text-indigo-700 text-xs font-medium">
+                  {attachment.preview
+                    // eslint-disable-next-line @next/next/no-img-element
+                    ? <img src={attachment.preview} alt="" className="w-4 h-4 rounded object-cover" />
+                    : <Paperclip className="w-3.5 h-3.5" />}
+                  <span className="truncate max-w-[200px]">{attachment.name}</span>
+                </div>
+                <button onClick={() => { setAttachment(null); setFileError(null); }} className="p-1 text-slate-400 hover:text-slate-600 rounded">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
         <div className="flex gap-2">
+          {/* Hidden file input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*,application/pdf,text/csv,text/plain,application/json,.csv,.tsv,.txt,.json"
+            className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelect(f); }}
+          />
+          {/* Attach button */}
+          <button
+            onClick={() => { setFileError(null); fileInputRef.current?.click(); }}
+            disabled={loading}
+            title="Attach image, PDF, or CSV"
+            className="p-2.5 rounded-xl text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 disabled:opacity-40 transition-colors shrink-0"
+          >
+            <Paperclip className="w-4 h-4" />
+          </button>
           <input
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => e.key === "Enter" && !e.shiftKey && send()}
-            placeholder="Ask about your campaigns…"
+            placeholder={attachment ? "Ask about the attached file…" : "Ask about your campaigns…"}
             className="flex-1 text-sm rounded-xl border border-slate-200 px-4 py-2.5 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50"
           />
           <button
             onClick={() => send()}
-            disabled={!input.trim() || loading}
+            disabled={(!input.trim() && !attachment) || loading}
             className={cn(
               "px-3.5 py-2.5 rounded-xl text-sm font-medium transition-colors flex items-center",
-              input.trim() && !loading
+              (input.trim() || attachment) && !loading
                 ? "bg-indigo-600 text-white hover:bg-indigo-700"
                 : "bg-slate-100 text-slate-400 cursor-not-allowed",
             )}
