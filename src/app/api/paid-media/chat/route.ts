@@ -198,12 +198,41 @@ Chart rules:
     return NextResponse.json({ answer: "The AI returned an empty response. Please try again.", charts: [], suggestions: [] });
   }
 
-  // Parse the structured JSON response
+  // Extract and parse the structured JSON response.
+  // Claude sometimes adds a preamble or wraps in code fences; extract the
+  // outermost { ... } object to handle both cases robustly.
+  function extractOutermostJson(text: string): string | null {
+    const start = text.indexOf("{");
+    if (start === -1) return null;
+    let depth = 0;
+    for (let i = start; i < text.length; i++) {
+      if (text[i] === "{") depth++;
+      else if (text[i] === "}") {
+        depth--;
+        if (depth === 0) return text.slice(start, i + 1);
+      }
+    }
+    return null; // unclosed brace
+  }
+
+  // Strip code fences first, then try to pull the JSON object
+  const stripped = raw
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/```\s*$/i, "")
+    .trim();
+
+  const jsonStr = extractOutermostJson(stripped);
+
+  if (!jsonStr) {
+    // No JSON found — return raw text as the answer
+    return NextResponse.json({ answer: raw, charts: [], suggestions: [] });
+  }
+
   try {
-    const cleaned = raw.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```\s*$/i, "").trim();
-    const parsed = JSON.parse(cleaned);
+    const parsed = JSON.parse(jsonStr);
     return NextResponse.json({
-      answer:      parsed.answer      || raw,
+      answer:      typeof parsed.answer === "string" && parsed.answer ? parsed.answer : raw,
       charts:      Array.isArray(parsed.charts)      ? parsed.charts      : [],
       suggestions: Array.isArray(parsed.suggestions) ? parsed.suggestions : [],
     });
