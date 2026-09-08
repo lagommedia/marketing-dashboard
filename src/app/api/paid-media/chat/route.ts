@@ -198,45 +198,67 @@ Chart rules:
     return NextResponse.json({ answer: "The AI returned an empty response. Please try again.", charts: [], suggestions: [] });
   }
 
-  // Extract and parse the structured JSON response.
-  // Claude sometimes adds a preamble or wraps in code fences; extract the
-  // outermost { ... } object to handle both cases robustly.
-  function extractOutermostJson(text: string): string | null {
+  // ── Robust JSON extraction ────────────────────────────────────────────────
+  // Problems to solve:
+  //   1. Claude sometimes wraps in ```json … ``` fences (with or without a
+  //      leading newline, so ^ anchoring alone is unreliable).
+  //   2. Claude sometimes writes LITERAL newlines/tabs inside JSON string
+  //      values, which makes JSON.parse throw even after fence stripping.
+  //   3. Claude sometimes adds a preamble sentence before the JSON object.
+  //
+  // Strategy:
+  //   a) Find the first { in the raw string (skips any preamble / fence header).
+  //   b) Find its matching } by tracking brace depth — this is robust to trailing
+  //      text and code fences after the object.
+  //   c) Sanitize the extracted string: escape literal control characters that
+  //      appear inside JSON string values so JSON.parse can handle them.
+
+  function extractOutermostObject(text: string): string | null {
     const start = text.indexOf("{");
     if (start === -1) return null;
     let depth = 0;
     for (let i = start; i < text.length; i++) {
       if (text[i] === "{") depth++;
-      else if (text[i] === "}") {
-        depth--;
-        if (depth === 0) return text.slice(start, i + 1);
-      }
+      else if (text[i] === "}") { depth--; if (depth === 0) return text.slice(start, i + 1); }
     }
-    return null; // unclosed brace
+    return null;
   }
 
-  // Strip code fences first, then try to pull the JSON object
-  const stripped = raw
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
-    .replace(/```\s*$/i, "")
-    .trim();
+  // Escape literal newlines / carriage-returns / tabs inside JSON string
+  // values (character-by-character so we don't corrupt escape sequences).
+  function sanitizeJsonStrings(text: string): string {
+    let out = "";
+    let inStr = false;
+    let esc = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (esc)                                  { out += ch; esc = false; continue; }
+      if (ch === "\\")                          { out += ch; esc = true;  continue; }
+      if (ch === '"')                           { out += ch; inStr = !inStr; continue; }
+      if (inStr && ch === "\n")                 { out += "\\n"; continue; }
+      if (inStr && ch === "\r")                 { out += "\\r"; continue; }
+      if (inStr && ch === "\t")                 { out += "\\t"; continue; }
+      out += ch;
+    }
+    return out;
+  }
 
-  const jsonStr = extractOutermostJson(stripped);
+  const jsonStr = extractOutermostObject(raw);
 
   if (!jsonStr) {
-    // No JSON found — return raw text as the answer
+    // No JSON object found anywhere — return raw text as the answer
     return NextResponse.json({ answer: raw, charts: [], suggestions: [] });
   }
 
   try {
-    const parsed = JSON.parse(jsonStr);
+    const parsed = JSON.parse(sanitizeJsonStrings(jsonStr));
     return NextResponse.json({
       answer:      typeof parsed.answer === "string" && parsed.answer ? parsed.answer : raw,
       charts:      Array.isArray(parsed.charts)      ? parsed.charts      : [],
       suggestions: Array.isArray(parsed.suggestions) ? parsed.suggestions : [],
     });
   } catch {
-    return NextResponse.json({ answer: raw, charts: [], suggestions: [] });
+    // Last resort: strip everything and return the raw text
+    return NextResponse.json({ answer: raw.replace(/^```json?\s*/i, "").replace(/```\s*$/, "").trim(), charts: [], suggestions: [] });
   }
 }
