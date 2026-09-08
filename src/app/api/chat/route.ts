@@ -359,10 +359,19 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  interface Attachment {
+    name:     string;
+    mimeType: string;
+    data?:    string; // base64 for image / PDF
+    text?:    string; // decoded text for CSV / TXT / JSON
+  }
+
   let messages: { role: "user" | "assistant"; content: string }[];
+  let attachment: Attachment | null = null;
   try {
     const body = await req.json();
-    messages = body.messages ?? [];
+    messages   = body.messages   ?? [];
+    attachment = body.attachment ?? null;
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
@@ -373,12 +382,40 @@ export async function POST(req: NextRequest) {
 
   const systemPrompt = await buildContext();
 
+  // Build the Anthropic message list, injecting any file attachment into the
+  // last user message as an appropriate content block.
+  type TextBlock  = { type: "text"; text: string };
+  type ImageBlock = { type: "image"; source: { type: "base64"; media_type: string; data: string } };
+  type DocBlock   = { type: "document"; source: { type: "base64"; media_type: string; data: string } };
+  type ContentBlock = TextBlock | ImageBlock | DocBlock;
+  type ApiMessage = { role: "user" | "assistant"; content: string | ContentBlock[] };
+
+  const apiMessages: ApiMessage[] = messages.map((m, idx) => {
+    const isLast = idx === messages.length - 1;
+    if (!isLast || !attachment || m.role !== "user") return m;
+
+    const textBlock: TextBlock = { type: "text", text: m.content };
+    const blocks: ContentBlock[] = [textBlock];
+
+    if (attachment.mimeType.startsWith("image/") && attachment.data) {
+      blocks.push({ type: "image", source: { type: "base64", media_type: attachment.mimeType, data: attachment.data } });
+    } else if (attachment.mimeType === "application/pdf" && attachment.data) {
+      blocks.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: attachment.data } });
+    } else if (attachment.text) {
+      // Text file (CSV, JSON, TXT) — prepend as a labelled text block
+      blocks.unshift({ type: "text", text: `[Attached file: ${attachment.name}]\n\`\`\`\n${attachment.text.slice(0, 50_000)}\n\`\`\`` });
+    }
+
+    return { role: "user", content: blocks };
+  });
+
   const client = new Anthropic({ apiKey });
   const response = await client.messages.create({
     model:      "claude-sonnet-5",
-    max_tokens: 2048,
+    max_tokens: 4096,
     system:     systemPrompt,
-    messages,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    messages:   apiMessages as any,
   });
 
   const textBlock = response.content.find(c => c.type === "text");
