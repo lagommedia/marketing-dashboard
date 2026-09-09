@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { runSync } from "@/lib/sync/engine";
 import { delay } from "@/lib/sync/utils";
+import { syncFunnelSnapshot } from "@/lib/integrations/hubspot-funnel";
 import type { Platform } from "@/types";
 
 const BETWEEN_PLATFORMS_DELAY_MS = 3000; // 3 seconds between each platform
@@ -54,6 +55,16 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Run funnel snapshot after all platform syncs (detects stage regressions)
+  let funnelResult: { checked: number; regressions: number } | null = null;
+  try {
+    console.log("[cron] running funnel snapshot…");
+    funnelResult = await syncFunnelSnapshot();
+    console.log("[cron] funnel snapshot complete", funnelResult);
+  } catch (e) {
+    console.error("[cron] funnel snapshot error", e);
+  }
+
   console.log("[cron] daily sync complete", results);
-  return NextResponse.json({ ok: true, synced: platforms.length, results });
+  return NextResponse.json({ ok: true, synced: platforms.length, results, funnelSnapshot: funnelResult });
 }

@@ -337,6 +337,40 @@ model CampaignChangeEvent {
 }
 
 // ---------------------------------------------------------------------------
+// Marketing Funnel — change notification system
+// ---------------------------------------------------------------------------
+
+// Last-known lifecycle stage per HubSpot contact (used to detect regressions)
+model FunnelContactSnapshot {
+  hubspotId  String   @id        // HubSpot contact/deal ID
+  objectType String              // "contact" | "deal"
+  name       String
+  email      String?
+  stage      String              // lifecycle stage value at last check
+  updatedAt  DateTime @updatedAt
+
+  @@index([stage])
+}
+
+// Regression events surfaced to the user as notifications
+model FunnelChangeNotification {
+  id          String   @id @default(cuid())
+  detectedAt  DateTime @default(now())
+  hubspotId   String
+  objectType  String              // "contact" | "deal"
+  objectName  String
+  fromStage   String              // stage label (e.g. "SQL")
+  toStage     String              // stage label (e.g. "MQL")
+  changedAt   DateTime?           // from HubSpot property history
+  changedBy   String?             // HubSpot user email or ID
+  profileUrl  String              // direct link to HubSpot record
+  dismissed   Boolean  @default(false)
+
+  @@index([dismissed])
+  @@index([detectedAt])
+}
+
+// ---------------------------------------------------------------------------
 // NextAuth.js required models
 // ---------------------------------------------------------------------------
 

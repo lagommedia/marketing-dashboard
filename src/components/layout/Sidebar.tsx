@@ -16,6 +16,7 @@ import {
   Newspaper,
   Share2,
   LogOut,
+  Filter,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -31,6 +32,12 @@ const NAV_ITEMS = [
     label: "Pacing",
     icon: Target,
     description: "vs. monthly targets",
+  },
+  {
+    href: "/funnel",
+    label: "Marketing Funnel",
+    icon: Filter,
+    description: "Stage counts & costs",
   },
   {
     href: "/seo",
