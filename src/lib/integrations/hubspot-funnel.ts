@@ -3,14 +3,16 @@
  *
  * Funnel stages (top → bottom):
  *   Leads      → all contacts created in range
- *   MQLs       → lifecycle >= marketingqualifiedlead
- *   SQLs       → lifecycle >= salesqualifiedlead (includes SAL 114184284)
- *   SQOs       → lifecycle >= opportunity
- *   SQDs       → lifecycle >= 161312014 (Sales Qualified Deal, custom stage)
+ *   MQLs       → contacts created in range, currently at MQL stage
+ *   SQLs       → contacts created in range, currently at SAL or SQL stage
+ *   SQOs       → contacts created in range, currently at opportunity stage
+ *   SQDs       → contacts created in range, currently at SQD stage (custom: 161312014)
  *   Closed Won → deals with dealstage = closedwon in closedate range
  *
- * HubSpot search IN-filter causes 400s on this account, so every multi-value
- * lifecycle filter is expressed as multiple filterGroups (OR semantics).
+ * Each count uses createdate + lifecyclestage EQ filters. Per-stage lifecycle
+ * date properties (hs_lifecyclestage_*_date) are not indexed for search on this
+ * account. HubSpot IN-filter also causes 400s, so multi-value stage filters use
+ * multiple filterGroups (OR semantics, max 5 per HubSpot limit).
  */
 
 import { prisma } from "@/lib/db";
@@ -30,12 +32,6 @@ const LIFECYCLE = {
   sqd:         "161312014",   // Sales Qualified Deal
   customer:    "customer",
 } as const;
-
-// "At or above" sets — each is used for filtering contacts by their current stage
-const MQL_PLUS  = [LIFECYCLE.mql, LIFECYCLE.sal, LIFECYCLE.sql, LIFECYCLE.opportunity, LIFECYCLE.sqd, LIFECYCLE.customer];
-const SQL_PLUS  = [LIFECYCLE.sal, LIFECYCLE.sql, LIFECYCLE.opportunity, LIFECYCLE.sqd, LIFECYCLE.customer];
-const SQO_PLUS  = [LIFECYCLE.opportunity, LIFECYCLE.sqd, LIFECYCLE.customer];
-const SQD_PLUS  = [LIFECYCLE.sqd, LIFECYCLE.customer];
 
 const CLOSED_WON_STAGE = "closedwon";
 
@@ -85,40 +81,45 @@ async function hsGet(token: string, path: string): Promise<any> {
 }
 
 // ---------------------------------------------------------------------------
-// Per-stage date properties
-// ---------------------------------------------------------------------------
-// Each funnel stage is counted by when a contact REACHED that stage, not when
-// they were created. HubSpot sets these date properties automatically when a
-// contact's lifecycle stage changes. Custom stages (SQD = 161312014) don't get
-// a dedicated date property, so we fall back to createdate + current stage filter.
-
-const STAGE_DATE_PROP: Record<string, string> = {
-  leads:     "createdate",
-  mqls:      "hs_lifecyclestage_marketingqualifiedlead_date",
-  sqls:      "hs_lifecyclestage_salesqualifiedlead_date",
-  sqos:      "hs_lifecyclestage_opportunity_date",
-  sqds:      "createdate",  // custom stage — no standard date property
-};
-
-// ---------------------------------------------------------------------------
-// Count helper
+// Count helpers
 // ---------------------------------------------------------------------------
 
-/** Count contacts (or deals) whose date property falls in range, with optional extra filters. */
-async function countRecords(
+/**
+ * Count contacts created in the date range currently at the given lifecycle stages.
+ * Uses one filterGroup per stage value (OR semantics) — max 5 per HubSpot limit.
+ * Pass null stageValues to count all contacts regardless of stage.
+ */
+async function countContactsByStage(
   token: string,
-  object: "contacts" | "deals",
-  dateProp: string,
   fromTs: number,
   toTs: number,
-  extraFilters: object[] = [],
+  stageValues: string[] | null,
 ): Promise<number> {
-  const res = await hsFetch(token, `/crm/v3/objects/${object}/search`, {
+  const dateFilters = [
+    { propertyName: "createdate", operator: "GTE", value: String(fromTs) },
+    { propertyName: "createdate", operator: "LTE", value: String(toTs)   },
+  ];
+
+  const filterGroups = stageValues
+    ? stageValues.map(v => ({ filters: [...dateFilters, { propertyName: "lifecyclestage", operator: "EQ", value: v }] }))
+    : [{ filters: dateFilters }];
+
+  const res = await hsFetch(token, "/crm/v3/objects/contacts/search", {
+    filterGroups,
+    properties: [],
+    limit: 1,
+  });
+  return res.total ?? 0;
+}
+
+/** Count deals closed won in the date range. */
+async function countClosedWon(token: string, fromTs: number, toTs: number): Promise<number> {
+  const res = await hsFetch(token, "/crm/v3/objects/deals/search", {
     filterGroups: [{
       filters: [
-        { propertyName: dateProp, operator: "GTE", value: String(fromTs) },
-        { propertyName: dateProp, operator: "LTE", value: String(toTs)   },
-        ...extraFilters,
+        { propertyName: "closedate",  operator: "GTE", value: String(fromTs)   },
+        { propertyName: "closedate",  operator: "LTE", value: String(toTs)     },
+        { propertyName: "dealstage",  operator: "EQ",  value: CLOSED_WON_STAGE },
       ],
     }],
     properties: [],
@@ -148,14 +149,15 @@ export async function getFunnelCounts(from: Date, to: Date): Promise<FunnelCount
   const toTs   = to.getTime();
 
   // Run sequentially — HubSpot CRM search is capped at 5 req/s; parallel bursts hit 429s.
-  // Each stage filters by when a contact REACHED that stage (not createdate).
+  // Each stage filters by createdate in range + current lifecyclestage EQ the target stage.
+  // MQL/SQL/SQO/SQD show contacts created in the period who are currently at that exact stage.
   const gap = () => new Promise(r => setTimeout(r, 220));
-  const leads     = await countRecords(token, "contacts", "createdate",                                              fromTs, toTs); await gap();
-  const mqls      = await countRecords(token, "contacts", "hs_lifecyclestage_marketingqualifiedlead_date",           fromTs, toTs); await gap();
-  const sqls      = await countRecords(token, "contacts", "hs_lifecyclestage_salesqualifiedlead_date",               fromTs, toTs); await gap();
-  const sqos      = await countRecords(token, "contacts", "hs_lifecyclestage_opportunity_date",                      fromTs, toTs); await gap();
-  const sqds      = await countRecords(token, "contacts", "createdate", fromTs, toTs, [{ propertyName: "lifecyclestage", operator: "EQ", value: LIFECYCLE.sqd }]); await gap();
-  const closedWon = await countRecords(token, "deals",    "closedate",  fromTs, toTs, [{ propertyName: "dealstage",      operator: "EQ", value: CLOSED_WON_STAGE }]);
+  const leads     = await countContactsByStage(token, fromTs, toTs, null); await gap();
+  const mqls      = await countContactsByStage(token, fromTs, toTs, [LIFECYCLE.mql]); await gap();
+  const sqls      = await countContactsByStage(token, fromTs, toTs, [LIFECYCLE.sal, LIFECYCLE.sql]); await gap();
+  const sqos      = await countContactsByStage(token, fromTs, toTs, [LIFECYCLE.opportunity]); await gap();
+  const sqds      = await countContactsByStage(token, fromTs, toTs, [LIFECYCLE.sqd]); await gap();
+  const closedWon = await countClosedWon(token, fromTs, toTs);
 
   return { leads, mqls, sqls, sqos, sqds, closedWon };
 }
@@ -219,24 +221,22 @@ export async function getFunnelStageRecords(
     return results;
   }
 
-  // Contacts — filter by when the contact REACHED each stage (not createdate)
-  const dateProp =
-    stage === "leads" ? "createdate" :
-    stage === "mqls"  ? "hs_lifecyclestage_marketingqualifiedlead_date" :
-    stage === "sqls"  ? "hs_lifecyclestage_salesqualifiedlead_date" :
-    stage === "sqos"  ? "hs_lifecyclestage_opportunity_date" :
-                        "createdate"; // sqds — custom stage, no standard date property
+  // Contacts — createdate in range + exact lifecyclestage EQ filter per stage
+  const dateFilters = [
+    { propertyName: "createdate", operator: "GTE", value: String(fromTs) },
+    { propertyName: "createdate", operator: "LTE", value: String(toTs)   },
+  ];
 
-  const extraFilters: object[] =
-    stage === "sqds" ? [{ propertyName: "lifecyclestage", operator: "EQ", value: LIFECYCLE.sqd }] : [];
+  const stageFilters: string[] =
+    stage === "mqls" ? [LIFECYCLE.mql] :
+    stage === "sqls" ? [LIFECYCLE.sal, LIFECYCLE.sql] :
+    stage === "sqos" ? [LIFECYCLE.opportunity] :
+    stage === "sqds" ? [LIFECYCLE.sqd] :
+    []; // leads — no stage filter
 
-  const filterGroups = [{
-    filters: [
-      { propertyName: dateProp, operator: "GTE", value: String(fromTs) },
-      { propertyName: dateProp, operator: "LTE", value: String(toTs)   },
-      ...extraFilters,
-    ],
-  }];
+  const filterGroups = stageFilters.length > 0
+    ? stageFilters.map(v => ({ filters: [...dateFilters, { propertyName: "lifecyclestage", operator: "EQ", value: v }] }))
+    : [{ filters: dateFilters }];
 
   const results: FunnelRecord[] = [];
   let after: string | undefined;
@@ -244,7 +244,7 @@ export async function getFunnelStageRecords(
     const body: Record<string, unknown> = {
       filterGroups,
       properties: ["firstname", "lastname", "email", "lifecyclestage"],
-      sorts: [{ propertyName: dateProp, direction: "DESCENDING" }],
+      sorts: [{ propertyName: "createdate", direction: "DESCENDING" }],
       limit: 100,
     };
     if (after) body.after = after;
