@@ -88,18 +88,31 @@ async function hsGet(token: string, path: string): Promise<any> {
 // Count helpers (use limit=1, read response.total)
 // ---------------------------------------------------------------------------
 
-/** Count contacts with createdate in range AND lifecyclestage in one of the values */
+/**
+ * Count contacts with createdate in range AND lifecyclestage in one of the values.
+ * When neqValue is set, uses a single NEQ filter instead of multiple EQ filterGroups
+ * (HubSpot caps filterGroups at 5 — MQL+ has 6 stages, so we use NEQ "lead" there).
+ */
 async function countContacts(
-  token: string, fromTs: number, toTs: number, lifecycleValues: string[] | null
+  token: string, fromTs: number, toTs: number,
+  lifecycleValues: string[] | null,
+  neqValue?: string,
 ): Promise<number> {
   const dateFilters = [
     { propertyName: "createdate", operator: "GTE", value: String(fromTs) },
     { propertyName: "createdate", operator: "LTE", value: String(toTs)   },
   ];
 
-  const filterGroups = lifecycleValues
-    ? lifecycleValues.map(v => ({ filters: [...dateFilters, { propertyName: "lifecyclestage", operator: "EQ", value: v }] }))
-    : [{ filters: dateFilters }];
+  let filterGroups: { filters: object[] }[];
+  if (neqValue) {
+    // Single filterGroup: date range AND lifecyclestage != neqValue
+    filterGroups = [{ filters: [...dateFilters, { propertyName: "lifecyclestage", operator: "NEQ", value: neqValue }] }];
+  } else if (lifecycleValues) {
+    // One filterGroup per stage value (OR semantics) — max 5 values to stay under HubSpot limit
+    filterGroups = lifecycleValues.map(v => ({ filters: [...dateFilters, { propertyName: "lifecyclestage", operator: "EQ", value: v }] }));
+  } else {
+    filterGroups = [{ filters: dateFilters }];
+  }
 
   const res = await hsFetch(token, "/crm/v3/objects/contacts/search", {
     filterGroups,
@@ -147,7 +160,8 @@ export async function getFunnelCounts(from: Date, to: Date): Promise<FunnelCount
 
   const [leads, mqls, sqls, sqos, sqds, closedWon] = await Promise.all([
     countContacts(token, fromTs, toTs, null),
-    countContacts(token, fromTs, toTs, MQL_PLUS),
+    // MQL_PLUS has 6 stages (> HubSpot's 5 filterGroup limit) — use NEQ "lead" instead
+    countContacts(token, fromTs, toTs, null, "lead"),
     countContacts(token, fromTs, toTs, SQL_PLUS),
     countContacts(token, fromTs, toTs, SQO_PLUS),
     countContacts(token, fromTs, toTs, SQD_PLUS),
@@ -223,14 +237,18 @@ export async function getFunnelStageRecords(
   }
 
   // Contacts
+  // MQL+ has 6 stages — exceeds HubSpot's 5-filterGroup cap, so use NEQ "lead" instead
+  const isMqlPlus = stage === "mqls";
   const lifecycleValues =
     stage === "leads" ? null :
-    stage === "mqls"  ? MQL_PLUS  :
+    stage === "mqls"  ? null      : // handled via NEQ below
     stage === "sqls"  ? SQL_PLUS  :
     stage === "sqos"  ? SQO_PLUS  :
                         SQD_PLUS;   // sqds
 
-  const filterGroups = lifecycleValues
+  const filterGroups = isMqlPlus
+    ? [{ filters: [...dateFilters, { propertyName: "lifecyclestage", operator: "NEQ", value: "lead" }] }]
+    : lifecycleValues
     ? lifecycleValues.map(v => ({ filters: [...dateFilters, { propertyName: "lifecyclestage", operator: "EQ", value: v }] }))
     : [{ filters: dateFilters }];
 
@@ -280,10 +298,9 @@ async function fetchAllMqlPlusContacts(token: string): Promise<ContactStageRow[]
   let after: string | undefined;
 
   do {
+    // MQL+ has 6 stages — exceeds HubSpot's 5-filterGroup cap; NEQ "lead" is equivalent
     const body: Record<string, unknown> = {
-      filterGroups: MQL_PLUS.map(v => ({
-        filters: [{ propertyName: "lifecyclestage", operator: "EQ", value: v }],
-      })),
+      filterGroups: [{ filters: [{ propertyName: "lifecyclestage", operator: "NEQ", value: "lead" }] }],
       properties: ["firstname", "lastname", "email", "lifecyclestage"],
       limit: 100,
     };
