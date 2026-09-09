@@ -306,10 +306,6 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
       .finally(() => setLoading(false));
   }, [from, to]);
 
-  const maxCount = counts
-    ? Math.max(counts.leads, counts.mqls, counts.sqls, counts.sqos, counts.sqds, counts.closedWon, 1)
-    : 1;
-
   const conversionPairs: [Stage, Stage][] = [
     ["leads", "mqls"],
     ["mqls",  "sqls"],
@@ -339,11 +335,11 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
       {/* Funnel */}
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
         {/* Column headings */}
-        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-4 px-6 pt-4 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-400 border-b border-slate-100">
-          <span>Stage</span>
-          <span className="text-right w-20">Count</span>
-          <span className="text-right w-24">Conversion</span>
-          <span className="text-right w-28">Cost Per</span>
+        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-0 px-4 pt-4 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-400 border-b border-slate-100">
+          <span className="px-4">Stage</span>
+          <span className="text-right w-24 px-4">Count</span>
+          <span className="text-right w-28 px-4">Conversion</span>
+          <span className="text-right w-32 px-4">Cost Per</span>
         </div>
 
         {loading && (
@@ -357,77 +353,83 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
           </div>
         )}
 
-        {counts && STAGES.map((stage, i) => {
-          const count    = getCount(counts, stage.key);
-          const barWidth = maxCount > 0 ? Math.max((count / maxCount) * 100, 2) : 2;
+        {counts && (() => {
+          const leadsCount = Math.max(counts.leads, 1);
+          return STAGES.map((stage, i) => {
+            const count    = getCount(counts, stage.key);
+            // Scale bar relative to leads; minimum 6% so tiny bars stay visible
+            const barPct   = Math.max((count / leadsCount) * 100, 6);
 
-          // Conversion rate vs previous stage
-          const prevStage  = i > 0 ? STAGES[i - 1] : null;
-          const prevCount  = prevStage ? getCount(counts, prevStage.key) : null;
-          const conversion = prevCount != null ? fmtPct(count, prevCount) : "—";
+            const prevCount  = i > 0 ? getCount(counts, STAGES[i - 1].key) : null;
+            const conversion = prevCount != null ? fmtPct(count, prevCount) : "—";
+            const costPer    = estimatedSpend != null && count > 0
+              ? fmtCurrency(estimatedSpend / count)
+              : "—";
 
-          // Cost per
-          const costPer = estimatedSpend != null && count > 0
-            ? fmtCurrency(estimatedSpend / count)
-            : "—";
-
-          return (
-            <button
-              key={stage.key}
-              onClick={() => setOpenDrawer(stage.key)}
-              className="w-full grid grid-cols-[1fr_auto_auto_auto] gap-4 items-center px-6 py-3 hover:bg-slate-50 transition-colors border-b border-slate-100 last:border-0 text-left group"
-            >
-              {/* Bar + label */}
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="flex-1 flex items-center gap-2 min-w-0">
-                  <div className="relative flex-1 max-w-xs h-7 flex items-center">
-                    {/* Background track */}
-                    <div className="absolute inset-0 rounded bg-slate-100" />
-                    {/* Fill */}
+            return (
+              <button
+                key={stage.key}
+                onClick={() => setOpenDrawer(stage.key)}
+                className="w-full grid grid-cols-[1fr_auto_auto_auto] gap-0 items-stretch hover:bg-slate-50/80 transition-colors border-b border-slate-100 last:border-0 text-left group"
+              >
+                {/* Funnel bar (centered, proportional) */}
+                <div className="py-2 px-4 flex items-center">
+                  <div className="relative flex-1 h-9">
+                    {/* Centered fill */}
                     <div
-                      className={cn("absolute inset-y-0 left-0 rounded transition-all duration-500", stage.barColor)}
-                      style={{ width: `${barWidth}%` }}
+                      className={cn(
+                        "absolute inset-y-0 rounded-sm transition-all duration-700",
+                        stage.barColor,
+                      )}
+                      style={{
+                        left:  `${(100 - barPct) / 2}%`,
+                        right: `${(100 - barPct) / 2}%`,
+                      }}
                     />
-                    {/* Label inside bar */}
-                    <span className={cn("relative z-10 px-2 text-xs font-semibold", stage.color)}>
-                      {stage.label}
-                    </span>
+                    {/* Label inside fill */}
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <span className="text-white text-xs font-semibold drop-shadow-sm px-2 truncate">
+                        {stage.label}
+                      </span>
+                    </div>
                   </div>
+                  <ChevronRight className="ml-2 w-3.5 h-3.5 text-slate-300 group-hover:text-slate-500 shrink-0 transition-colors" />
                 </div>
-                <ChevronRight className="w-3.5 h-3.5 text-slate-300 group-hover:text-slate-500 shrink-0 transition-colors" />
-              </div>
 
-              {/* Count */}
-              <span className="text-sm font-semibold text-slate-800 text-right w-20 tabular-nums">
-                {count.toLocaleString()}
-              </span>
+                {/* Count */}
+                <div className="flex items-center justify-end w-24 px-4">
+                  <span className="text-sm font-semibold text-slate-800 tabular-nums">
+                    {count.toLocaleString()}
+                  </span>
+                </div>
 
-              {/* Conversion */}
-              <div className="text-right w-24">
-                {i === 0 ? (
-                  <span className="text-xs text-slate-300">—</span>
-                ) : (
+                {/* Conversion */}
+                <div className="flex items-center justify-end w-28 px-4">
+                  {i === 0 ? (
+                    <span className="text-xs text-slate-300">—</span>
+                  ) : (
+                    <span className={cn(
+                      "text-xs font-medium",
+                      conversion === "—" ? "text-slate-300" : "text-slate-600"
+                    )}>
+                      {conversion}
+                    </span>
+                  )}
+                </div>
+
+                {/* Cost per */}
+                <div className="flex items-center justify-end w-32 px-4">
                   <span className={cn(
                     "text-xs font-medium",
-                    conversion === "—" ? "text-slate-300" : "text-slate-600"
+                    costPer === "—" ? "text-slate-300" : "text-slate-600"
                   )}>
-                    {conversion}
+                    {costPer}
                   </span>
-                )}
-              </div>
-
-              {/* Cost per */}
-              <div className="text-right w-28">
-                <span className={cn(
-                  "text-xs font-medium",
-                  costPer === "—" ? "text-slate-300" : "text-slate-600"
-                )}>
-                  {costPer}
-                </span>
-              </div>
-            </button>
-          );
-        })}
+                </div>
+              </button>
+            );
+          });
+        })()}
       </div>
 
       {/* Conversion rate summary row */}

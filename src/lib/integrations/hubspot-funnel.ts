@@ -85,51 +85,40 @@ async function hsGet(token: string, path: string): Promise<any> {
 }
 
 // ---------------------------------------------------------------------------
-// Count helpers (use limit=1, read response.total)
+// Per-stage date properties
+// ---------------------------------------------------------------------------
+// Each funnel stage is counted by when a contact REACHED that stage, not when
+// they were created. HubSpot sets these date properties automatically when a
+// contact's lifecycle stage changes. Custom stages (SQD = 161312014) don't get
+// a dedicated date property, so we fall back to createdate + current stage filter.
+
+const STAGE_DATE_PROP: Record<string, string> = {
+  leads:     "createdate",
+  mqls:      "hs_lifecyclestage_marketingqualifiedlead_date",
+  sqls:      "hs_lifecyclestage_salesqualifiedlead_date",
+  sqos:      "hs_lifecyclestage_opportunity_date",
+  sqds:      "createdate",  // custom stage — no standard date property
+};
+
+// ---------------------------------------------------------------------------
+// Count helper
 // ---------------------------------------------------------------------------
 
-/**
- * Count contacts with createdate in range AND lifecyclestage in one of the values.
- * When neqValue is set, uses a single NEQ filter instead of multiple EQ filterGroups
- * (HubSpot caps filterGroups at 5 — MQL+ has 6 stages, so we use NEQ "lead" there).
- */
-async function countContacts(
-  token: string, fromTs: number, toTs: number,
-  lifecycleValues: string[] | null,
-  neqValue?: string,
+/** Count contacts (or deals) whose date property falls in range, with optional extra filters. */
+async function countRecords(
+  token: string,
+  object: "contacts" | "deals",
+  dateProp: string,
+  fromTs: number,
+  toTs: number,
+  extraFilters: object[] = [],
 ): Promise<number> {
-  const dateFilters = [
-    { propertyName: "createdate", operator: "GTE", value: String(fromTs) },
-    { propertyName: "createdate", operator: "LTE", value: String(toTs)   },
-  ];
-
-  let filterGroups: { filters: object[] }[];
-  if (neqValue) {
-    // Single filterGroup: date range AND lifecyclestage != neqValue
-    filterGroups = [{ filters: [...dateFilters, { propertyName: "lifecyclestage", operator: "NEQ", value: neqValue }] }];
-  } else if (lifecycleValues) {
-    // One filterGroup per stage value (OR semantics) — max 5 values to stay under HubSpot limit
-    filterGroups = lifecycleValues.map(v => ({ filters: [...dateFilters, { propertyName: "lifecyclestage", operator: "EQ", value: v }] }));
-  } else {
-    filterGroups = [{ filters: dateFilters }];
-  }
-
-  const res = await hsFetch(token, "/crm/v3/objects/contacts/search", {
-    filterGroups,
-    properties: [],
-    limit: 1,
-  });
-  return res.total ?? 0;
-}
-
-/** Count deals closed won in the date range */
-async function countClosedWon(token: string, fromTs: number, toTs: number): Promise<number> {
-  const res = await hsFetch(token, "/crm/v3/objects/deals/search", {
+  const res = await hsFetch(token, `/crm/v3/objects/${object}/search`, {
     filterGroups: [{
       filters: [
-        { propertyName: "closedate",  operator: "GTE", value: String(fromTs)   },
-        { propertyName: "closedate",  operator: "LTE", value: String(toTs)     },
-        { propertyName: "dealstage",  operator: "EQ",  value: CLOSED_WON_STAGE },
+        { propertyName: dateProp, operator: "GTE", value: String(fromTs) },
+        { propertyName: dateProp, operator: "LTE", value: String(toTs)   },
+        ...extraFilters,
       ],
     }],
     properties: [],
@@ -158,14 +147,15 @@ export async function getFunnelCounts(from: Date, to: Date): Promise<FunnelCount
   const fromTs = from.getTime();
   const toTs   = to.getTime();
 
-  // Run sequentially — HubSpot CRM search is capped at 5 req/s; parallel bursts hit 429s
+  // Run sequentially — HubSpot CRM search is capped at 5 req/s; parallel bursts hit 429s.
+  // Each stage filters by when a contact REACHED that stage (not createdate).
   const gap = () => new Promise(r => setTimeout(r, 220));
-  const leads     = await countContacts(token, fromTs, toTs, null);          await gap();
-  const mqls      = await countContacts(token, fromTs, toTs, null, "lead");  await gap();
-  const sqls      = await countContacts(token, fromTs, toTs, SQL_PLUS);      await gap();
-  const sqos      = await countContacts(token, fromTs, toTs, SQO_PLUS);      await gap();
-  const sqds      = await countContacts(token, fromTs, toTs, SQD_PLUS);      await gap();
-  const closedWon = await countClosedWon(token, fromTs, toTs);
+  const leads     = await countRecords(token, "contacts", "createdate",                                              fromTs, toTs); await gap();
+  const mqls      = await countRecords(token, "contacts", "hs_lifecyclestage_marketingqualifiedlead_date",           fromTs, toTs); await gap();
+  const sqls      = await countRecords(token, "contacts", "hs_lifecyclestage_salesqualifiedlead_date",               fromTs, toTs); await gap();
+  const sqos      = await countRecords(token, "contacts", "hs_lifecyclestage_opportunity_date",                      fromTs, toTs); await gap();
+  const sqds      = await countRecords(token, "contacts", "createdate", fromTs, toTs, [{ propertyName: "lifecyclestage", operator: "EQ", value: LIFECYCLE.sqd }]); await gap();
+  const closedWon = await countRecords(token, "deals",    "closedate",  fromTs, toTs, [{ propertyName: "dealstage",      operator: "EQ", value: CLOSED_WON_STAGE }]);
 
   return { leads, mqls, sqls, sqos, sqds, closedWon };
 }
@@ -195,13 +185,8 @@ export async function getFunnelStageRecords(
   const fromTs   = from.getTime();
   const toTs     = to.getTime();
 
-  const dateFilters = [
-    { propertyName: "createdate", operator: "GTE", value: String(fromTs) },
-    { propertyName: "createdate", operator: "LTE", value: String(toTs)   },
-  ];
-
+  // Closed won = deals
   if (stage === "closedwon") {
-    // Deals
     const results: FunnelRecord[] = [];
     let after: string | undefined;
     do {
@@ -218,7 +203,6 @@ export async function getFunnelStageRecords(
         limit: 100,
       };
       if (after) body.after = after;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const res = await hsFetch(token, "/crm/v3/objects/deals/search", body);
       for (const d of res.results ?? []) {
         const p = d.properties ?? {};
@@ -235,21 +219,24 @@ export async function getFunnelStageRecords(
     return results;
   }
 
-  // Contacts
-  // MQL+ has 6 stages — exceeds HubSpot's 5-filterGroup cap, so use NEQ "lead" instead
-  const isMqlPlus = stage === "mqls";
-  const lifecycleValues =
-    stage === "leads" ? null :
-    stage === "mqls"  ? null      : // handled via NEQ below
-    stage === "sqls"  ? SQL_PLUS  :
-    stage === "sqos"  ? SQO_PLUS  :
-                        SQD_PLUS;   // sqds
+  // Contacts — filter by when the contact REACHED each stage (not createdate)
+  const dateProp =
+    stage === "leads" ? "createdate" :
+    stage === "mqls"  ? "hs_lifecyclestage_marketingqualifiedlead_date" :
+    stage === "sqls"  ? "hs_lifecyclestage_salesqualifiedlead_date" :
+    stage === "sqos"  ? "hs_lifecyclestage_opportunity_date" :
+                        "createdate"; // sqds — custom stage, no standard date property
 
-  const filterGroups = isMqlPlus
-    ? [{ filters: [...dateFilters, { propertyName: "lifecyclestage", operator: "NEQ", value: "lead" }] }]
-    : lifecycleValues
-    ? lifecycleValues.map(v => ({ filters: [...dateFilters, { propertyName: "lifecyclestage", operator: "EQ", value: v }] }))
-    : [{ filters: dateFilters }];
+  const extraFilters: object[] =
+    stage === "sqds" ? [{ propertyName: "lifecyclestage", operator: "EQ", value: LIFECYCLE.sqd }] : [];
+
+  const filterGroups = [{
+    filters: [
+      { propertyName: dateProp, operator: "GTE", value: String(fromTs) },
+      { propertyName: dateProp, operator: "LTE", value: String(toTs)   },
+      ...extraFilters,
+    ],
+  }];
 
   const results: FunnelRecord[] = [];
   let after: string | undefined;
@@ -257,11 +244,10 @@ export async function getFunnelStageRecords(
     const body: Record<string, unknown> = {
       filterGroups,
       properties: ["firstname", "lastname", "email", "lifecyclestage"],
-      sorts: [{ propertyName: "createdate", direction: "DESCENDING" }],
+      sorts: [{ propertyName: dateProp, direction: "DESCENDING" }],
       limit: 100,
     };
     if (after) body.after = after;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const res = await hsFetch(token, "/crm/v3/objects/contacts/search", body);
     for (const c of res.results ?? []) {
       const p = c.properties ?? {};
