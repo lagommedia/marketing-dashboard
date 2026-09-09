@@ -172,27 +172,53 @@ async function getConnectedCount() {
 
 // ---------------------------------------------------------------------------
 // Estimated Marketing Spend
-// Formula: Marketing Gross Costs + Shared Allocation × % of Period Elapsed
-// Source: ReferenceSheetMonth cache (populated by Google Sheets sync)
+// Primary source: PacingTarget.targetSpend (marketing_org) × % quarter elapsed
+// Fallback: ReferenceSheetMonth gross costs + shared allocation × % elapsed
 // ---------------------------------------------------------------------------
 
 const SHORT_MONTHS_PAGE = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-async function getEstimatedMarketingSpend(from: Date, to: Date): Promise<number | null> {
-  // Always use the full quarter's months so crossing a month boundary mid-quarter
-  // doesn't cause a step-jump in the estimate. pctElapsed handles the "how much
-  // have we spent so far" portion — the cost base should always be the full quarter.
-  const q = Math.floor(from.getMonth() / 3);
-  const qLastMonth = new Date(from.getFullYear(), q * 3 + 2, 1); // last month of quarter
+async function getEstimatedMarketingSpend(
+  from: Date,
+  to: Date,
+): Promise<{ value: number | null; subLabel: string }> {
+  const q    = Math.floor(from.getMonth() / 3);
+  const year = from.getFullYear();
+
+  const qStart  = new Date(year, q * 3,     1);
+  const qEnd    = new Date(year, q * 3 + 3, 0);
+  const totalMs = qEnd.getTime() - qStart.getTime() + 86_400_000;
+
+  // Cap asOf at min(today, end of selected `to` day) so historical ranges work.
+  const toEndOfDay = new Date(to.getTime() + 86_400_000);
+  const asOf       = new Date(Math.min(new Date().getTime(), toEndOfDay.getTime()));
+  const pct        = Math.min(Math.max(asOf.getTime() - qStart.getTime(), 0), totalMs) / totalMs;
+
+  // Prefer manually-entered Gross Expenses from the Pacing page.
+  const period = `${year}-Q${q + 1}`;
+  const pacingTarget = await prisma.pacingTarget.findUnique({
+    where:  { period_channel: { period, channel: "marketing_org" } },
+    select: { targetSpend: true },
+  });
+
+  if (pacingTarget?.targetSpend != null) {
+    return {
+      value:    pacingTarget.targetSpend * pct,
+      subLabel: "Gross Expenses × % quarter elapsed",
+    };
+  }
+
+  // Fallback: sum Google Sheets reference data for the quarter.
+  const qLastMonth = new Date(year, q * 3 + 2, 1);
   const months: string[] = [];
-  const cur = new Date(from.getFullYear(), q * 3, 1); // first month of quarter
+  const cur = new Date(year, q * 3, 1);
   while (cur <= qLastMonth) {
     months.push(`${SHORT_MONTHS_PAGE[cur.getMonth()]} ${cur.getFullYear()}`);
     cur.setMonth(cur.getMonth() + 1);
   }
 
   const cached = await getCachedSheetMonths(months);
-  if (!cached) return null;
+  if (!cached) return { value: null, subLabel: "Run a Google Sheets sync" };
 
   let grossCosts = 0, sharedAllocation = 0;
   let lastDataMonth: string | null = null;
@@ -204,28 +230,24 @@ async function getEstimatedMarketingSpend(from: Date, to: Date): Promise<number 
       if (row.grossCosts > 0 || row.sharedAllocation > 0) lastDataMonth = m;
     }
   }
-  if (grossCosts === 0 && sharedAllocation === 0) return null;
+  if (grossCosts === 0 && sharedAllocation === 0) {
+    return { value: null, subLabel: "Run a Google Sheets sync" };
+  }
 
-  // Cap elapsed at min(today, first-day-of-next-month-after-last-data) so:
-  //   - Past quarters resolve to 100% (first of next month > qEnd)
-  //   - Current quarter is capped at today so WIP/future months don't inflate %
+  // Cap sheets pct further by last data month so future months don't inflate %.
   let lastDataDate = new Date();
   if (lastDataMonth) {
     const [mon, yr] = lastDataMonth.split(" ");
     const mIdx = SHORT_MONTHS_PAGE.indexOf(mon);
-    lastDataDate = new Date(Number(yr), mIdx + 1, 1); // first day of NEXT month
+    lastDataDate = new Date(Number(yr), mIdx + 1, 1);
   }
-  // Also cap at the selected `to` date so historical ranges (e.g. "July only")
-  // show the spend proportional to that period, not the spend through today.
-  const toEndOfDay = new Date(to.getTime() + 86_400_000); // include full last day
-  const asOf = new Date(Math.min(new Date().getTime(), lastDataDate.getTime(), toEndOfDay.getTime()));
+  const sheetsAsOf = new Date(Math.min(asOf.getTime(), lastDataDate.getTime()));
+  const sheetsPct  = Math.min(Math.max(sheetsAsOf.getTime() - qStart.getTime(), 0), totalMs) / totalMs;
 
-  const qStart  = new Date(from.getFullYear(), q * 3,     1);
-  const qEnd    = new Date(from.getFullYear(), q * 3 + 3, 0);
-  const totalMs = qEnd.getTime() - qStart.getTime() + 86_400_000;
-  const pct     = Math.min(Math.max(asOf.getTime() - qStart.getTime(), 0), totalMs) / totalMs;
-
-  return (grossCosts + sharedAllocation) * pct;
+  return {
+    value:    (grossCosts + sharedAllocation) * sheetsPct,
+    subLabel: "Marketing Opex + Shared Costs + Headcount",
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -564,13 +586,15 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const toDate = parseDate(toStr, DEFAULT_TO);
 
   const rawSparkPeriods = computeSparkPeriods(fromStr, toStr);
-  const [metrics, connectedCount, pacing, effSparklines, estimatedSpend] = await Promise.all([
+  const [metrics, connectedCount, pacing, effSparklines, estimatedSpendResult] = await Promise.all([
     getMetrics(channel, fromDate, toDate),
     getConnectedCount(),
     getQtdPacing(channel),
     getEfficiencySparklines(channel, rawSparkPeriods),
     getEstimatedMarketingSpend(fromDate, toDate),
   ]);
+  const estimatedSpend = estimatedSpendResult.value;
+  const estimatedSpendLabel = estimatedSpendResult.subLabel;
 
   const funnelData = [
     { name: "Leads",      value: metrics.leads      ?? 0, color: "#a5b4fc" },
@@ -641,7 +665,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
           to={toStr}
           channel={channel}
           format="currency"
-          subValue={estimatedSpend == null ? "Run a Google Sheets sync" : "Marketing Opex + Shared Costs + Headcount"}
+          subValue={estimatedSpendLabel}
         />
       </div>
 
