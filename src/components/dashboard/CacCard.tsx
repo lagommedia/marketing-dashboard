@@ -13,13 +13,12 @@ interface Props {
 }
 
 interface CacResult {
-  cac:              number | null;
-  grossCosts?:      number;
-  sharedAllocation?: number;
-  pctElapsed?:      number;
-  denominator?:     number;
-  closedWon?:       number;
-  reason?:          string;
+  cac:           number | null;
+  grossExpenses?: number;
+  pctElapsed?:   number;
+  denominator?:  number;
+  closedWon?:    number;
+  reason?:       string;
 }
 
 function fmt(v: number): string {
@@ -66,12 +65,11 @@ export function CacCard({ from, to, closedWon, sparkData }: Props) {
           <Info className="w-3.5 h-3.5 text-slate-300 cursor-help" />
           <div className="absolute right-0 top-5 z-20 hidden group-hover:block w-64 bg-slate-900 text-white text-[11px] rounded-lg p-3 leading-relaxed shadow-xl">
             <p className="font-semibold mb-1">CAC Formula</p>
-            <p className="text-slate-300">(Marketing Gross Costs + Shared Allocation) × % Elapsed ÷ Closed Won</p>
+            <p className="text-slate-300">(Gross Expenses × % of Quarter Elapsed) ÷ Closed Won</p>
             {result?.denominator != null && (
               <div className="mt-2 pt-2 border-t border-slate-700 space-y-0.5 text-slate-400">
-                <p>Gross costs: {fmt(result.grossCosts ?? 0)}</p>
-                <p>Shared alloc: {fmt(result.sharedAllocation ?? 0)}</p>
-                <p>Period elapsed: {Math.round((result.pctElapsed ?? 0) * 100)}%</p>
+                <p>Gross expenses: {fmt(result.grossExpenses ?? 0)}</p>
+                <p>Quarter elapsed: {Math.round((result.pctElapsed ?? 0) * 100)}%</p>
                 <p>Total cost: {fmt(result.denominator)}</p>
                 <p>Closed won: {result.closedWon} customers</p>
               </div>
@@ -102,7 +100,7 @@ export function CacCard({ from, to, closedWon, sparkData }: Props) {
           ? `per customer acquired`
           : result?.reason
             ? <span className="text-amber-500">{result.reason}</span>
-            : "Connect Google Sheets to calculate"}
+            : "Set Gross Expenses on the Pacing page to calculate"}
       </p>
 
       {/* Sparkline */}
