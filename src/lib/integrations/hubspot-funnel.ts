@@ -158,15 +158,14 @@ export async function getFunnelCounts(from: Date, to: Date): Promise<FunnelCount
   const fromTs = from.getTime();
   const toTs   = to.getTime();
 
-  const [leads, mqls, sqls, sqos, sqds, closedWon] = await Promise.all([
-    countContacts(token, fromTs, toTs, null),
-    // MQL_PLUS has 6 stages (> HubSpot's 5 filterGroup limit) — use NEQ "lead" instead
-    countContacts(token, fromTs, toTs, null, "lead"),
-    countContacts(token, fromTs, toTs, SQL_PLUS),
-    countContacts(token, fromTs, toTs, SQO_PLUS),
-    countContacts(token, fromTs, toTs, SQD_PLUS),
-    countClosedWon(token, fromTs, toTs),
-  ]);
+  // Run sequentially — HubSpot CRM search is capped at 5 req/s; parallel bursts hit 429s
+  const gap = () => new Promise(r => setTimeout(r, 220));
+  const leads     = await countContacts(token, fromTs, toTs, null);          await gap();
+  const mqls      = await countContacts(token, fromTs, toTs, null, "lead");  await gap();
+  const sqls      = await countContacts(token, fromTs, toTs, SQL_PLUS);      await gap();
+  const sqos      = await countContacts(token, fromTs, toTs, SQO_PLUS);      await gap();
+  const sqds      = await countContacts(token, fromTs, toTs, SQD_PLUS);      await gap();
+  const closedWon = await countClosedWon(token, fromTs, toTs);
 
   return { leads, mqls, sqls, sqos, sqds, closedWon };
 }
