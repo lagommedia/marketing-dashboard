@@ -12,18 +12,19 @@ export interface MetricPace {
 }
 
 interface Props {
-  label:     string;
-  value:     string;
-  subValue?: string;
-  trend?:    number | null;
-  highlight?: boolean;
-  className?: string;
-  pace?:     MetricPace | null;
-  onClick?:  () => void;
-  footer?:   React.ReactNode;
+  label:       string;
+  value:       string;
+  subValue?:   string;
+  trend?:      number | null;
+  highlight?:  boolean;
+  className?:  string;
+  pace?:       MetricPace | null;
+  onClick?:    () => void;
+  footer?:     React.ReactNode;
+  infoPopover?: React.ReactNode;
 }
 
-export function MetricCard({ label, value, subValue, trend, highlight, className, pace, onClick, footer }: Props) {
+export function MetricCard({ label, value, subValue, trend, highlight, className, pace, onClick, footer, infoPopover }: Props) {
   return (
     <div
       onClick={onClick}
@@ -34,7 +35,10 @@ export function MetricCard({ label, value, subValue, trend, highlight, className
         className
       )}
     >
-      <p className="text-xs font-medium text-slate-500 uppercase tracking-wide truncate">{label}</p>
+      <div className="flex items-center gap-1">
+        <p className="text-xs font-medium text-slate-500 uppercase tracking-wide truncate flex-1">{label}</p>
+        {infoPopover}
+      </div>
       <p className={cn("text-2xl font-bold mt-1", highlight ? "text-indigo-700" : "text-slate-900")}>
         {value}
       </p>

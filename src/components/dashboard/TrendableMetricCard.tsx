@@ -4,8 +4,11 @@ import { useState } from "react";
 import { MetricCard } from "@/components/dashboard/MetricCard";
 import { MetricTrendModal } from "@/components/dashboard/MetricTrendModal";
 import { MiniSparkline } from "@/components/dashboard/MiniSparkline";
+import { FunnelContactsPopover } from "@/components/dashboard/FunnelContactsPopover";
 import type { MetricPace } from "@/components/dashboard/MetricCard";
 import type { SparkPoint } from "@/components/dashboard/MiniSparkline";
+
+const FUNNEL_POPOVER_METRICS = new Set(["mqls", "sqos", "closedWon"]);
 
 interface Props {
   // Card display
@@ -31,6 +34,9 @@ export function TrendableMetricCard({
 }: Props) {
   const [open, setOpen] = useState(false);
 
+  const popoverMetric = metric === "closedWon" ? "closedwon" : metric as "mqls" | "sqos";
+  const showPopover = FUNNEL_POPOVER_METRICS.has(metric);
+
   return (
     <>
       <MetricCard
@@ -41,6 +47,13 @@ export function TrendableMetricCard({
         pace={pace}
         onClick={() => setOpen(true)}
         footer={sparkData ? <MiniSparkline data={sparkData} format={format} /> : undefined}
+        infoPopover={showPopover ? (
+          <FunnelContactsPopover
+            metric={popoverMetric as "mqls" | "sqos" | "closedwon"}
+            from={from}
+            to={to}
+          />
+        ) : undefined}
       />
       <MetricTrendModal
         open={open}
