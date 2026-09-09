@@ -1,44 +1,47 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCachedSheetMonths, normMonth } from "@/lib/sheets-cache";
+import { prisma } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
-const SHORT_MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-
 /**
- * GET /api/ltv?from=YYYY-MM-DD&to=YYYY-MM-DD
+ * GET /api/ltv?from=YYYY-MM-DD
  *
- * Returns the pre-computed LTV for the last month in the selected range,
- * read directly from the Reference Sheet cache (row 69 in the sheet).
- *
- * Returns:
- *   { ltv, targetMonth }
- * or
- *   { ltv: null, reason: "..." }
+ * LTV = (Annual ARPU × Gross Margin %) ÷ Annual Churn Rate
+ * All inputs come from PacingTarget for the quarter containing `from`.
  */
 export async function GET(req: NextRequest) {
   try {
-    const sp    = req.nextUrl.searchParams;
-    const toStr = sp.get("to");
-
-    if (!toStr) {
-      return NextResponse.json({ ltv: null, reason: "to is required" });
+    const fromStr = req.nextUrl.searchParams.get("from");
+    if (!fromStr) {
+      return NextResponse.json({ ltv: null, reason: "from is required" });
     }
 
-    const to          = new Date(toStr + "T00:00:00");
-    const targetMonth = `${SHORT_MONTHS[to.getMonth()]} ${to.getFullYear()}`;
+    const from   = new Date(fromStr + "T00:00:00Z");
+    const q      = Math.floor(from.getMonth() / 3);
+    const period = `${from.getFullYear()}-Q${q + 1}`;
 
-    const cached = await getCachedSheetMonths([targetMonth]);
-    if (!cached) {
-      return NextResponse.json({ ltv: null, reason: "Run a Google Sheets sync to populate LTV data" });
+    const target = await prisma.pacingTarget.findUnique({
+      where:  { period_channel: { period, channel: "marketing_org" } },
+      select: { arpu: true, grossMargin: true, arrChurnPct: true },
+    });
+
+    if (!target) {
+      return NextResponse.json({
+        ltv: null,
+        reason: `No assumptions set for ${period} — add them on the Pacing page.`,
+      });
     }
 
-    const row = cached.get(normMonth(targetMonth));
-    if (!row || row.ltv <= 0) {
-      return NextResponse.json({ ltv: null, reason: `LTV is zero for ${targetMonth} — check the Reference Sheet` });
-    }
+    const { arpu, grossMargin, arrChurnPct } = target;
 
-    return NextResponse.json({ ltv: row.ltv, targetMonth });
+    if (arpu == null)        return NextResponse.json({ ltv: null, reason: "ARPU not set — add it on the Pacing page." });
+    if (grossMargin == null) return NextResponse.json({ ltv: null, reason: "Gross Margin % not set — add it on the Pacing page." });
+    if (arrChurnPct == null || arrChurnPct <= 0)
+      return NextResponse.json({ ltv: null, reason: "ARR Churn % not set — add it on the Pacing page." });
+
+    const ltv = (arpu * grossMargin) / arrChurnPct;
+
+    return NextResponse.json({ ltv, arpu, grossMargin, annualChurnRate: arrChurnPct, period });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ ltv: null, reason: msg });

@@ -10,6 +10,7 @@ interface ExistingTarget {
   targetSpend?:    number | null;
   targetClosedWon?: number | null;
   arpu?:           number | null;
+  grossMargin?:    number | null;  // stored as decimal e.g. 0.75
   arrChurnPct?:    number | null;  // stored as decimal e.g. 0.05
   arrChurnAmt?:    number | null;
 }
@@ -39,6 +40,8 @@ const FIELDS: Field[] = [
     hint: "New customers this quarter" },
   { key: "arpu",           label: "Estimated ARPU",   placeholder: "12000",   prefix: "$",
     hint: "Average revenue per account (annual)" },
+  { key: "grossMargin",    label: "Gross Margin %",   placeholder: "75",      suffix: "%",
+    hint: "Gross margin on revenue", pctMode: true },
   { key: "arrChurnPct",    label: "ARR Churn %",      placeholder: "5",       suffix: "%",
     hint: "Total ARR churn rate (annual)", pctMode: true },
   { key: "arrChurnAmt",    label: "ARR Churn $",      placeholder: "50000",   prefix: "$",

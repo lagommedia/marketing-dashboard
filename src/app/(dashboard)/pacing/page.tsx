@@ -67,6 +67,7 @@ export default async function PacingPage() {
   const grossExpenses  = target?.targetSpend ?? null;
   const revenueTarget  = target?.targetRevenue ?? null;
   const arpu           = target?.arpu ?? null;
+  const grossMargin    = target?.grossMargin ?? null;   // e.g. 0.75 = 75%
   const arrChurnPct    = target?.arrChurnPct ?? null;   // e.g. 0.05 = 5%
   const actualRevenue  = actuals.revenue ?? null;
   const closedWon      = actuals.closedWon ?? null;
@@ -76,10 +77,9 @@ export default async function PacingPage() {
     ? grossExpenses / closedWon
     : null;
 
-  // LTV = ARPU / monthly churn rate  (annual churn / 12)
-  const monthlyChurn = arrChurnPct != null && arrChurnPct > 0 ? arrChurnPct / 12 : null;
-  const ltv = arpu != null && monthlyChurn != null && monthlyChurn > 0
-    ? arpu / monthlyChurn
+  // LTV = (Annual ARPU × Gross Margin %) / Annual Churn Rate
+  const ltv = arpu != null && grossMargin != null && arrChurnPct != null && arrChurnPct > 0
+    ? (arpu * grossMargin) / arrChurnPct
     : null;
 
   // LTV:CAC
@@ -124,7 +124,7 @@ export default async function PacingPage() {
           </div>
           <div className="flex items-center gap-3">
             <span className="text-xs text-slate-500">{pct}% through {shortLabel}</span>
-            <OrgAssumptionsForm period={period} existing={target} />
+            <OrgAssumptionsForm period={period} existing={target ?? null} />
           </div>
         </div>
 
@@ -134,6 +134,7 @@ export default async function PacingPage() {
           <AssumptionTile label="Gross Expenses"     value={grossExpenses}  format="currency"
             hint="Headcount + Tools + Advertising" />
           <AssumptionTile label="Estimated ARPU"     value={arpu}           format="currency" />
+          <AssumptionTile label="Gross Margin %"     value={grossMargin != null ? grossMargin * 100 : null} format="percent" />
           <AssumptionTile label="ARR Churn %"        value={arrChurnPct != null ? arrChurnPct * 100 : null} format="percent" />
           <AssumptionTile label="ARR Churn $"        value={target?.arrChurnAmt ?? null} format="currency" />
         </div>

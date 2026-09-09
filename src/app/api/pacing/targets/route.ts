@@ -43,6 +43,7 @@ export async function POST(req: NextRequest) {
       "targetRevenue",
       "targetSpend",
       "arpu",
+      "grossMargin",
       "arrChurnPct",
       "arrChurnAmt",
     ];

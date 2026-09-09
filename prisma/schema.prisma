@@ -105,6 +105,7 @@ model PacingTarget {
 
   // Org-wide assumption fields (used when channel = "marketing_org")
   arpu        Float?  // Estimated ARPU ($)
+  grossMargin Float?  // Gross Margin % (decimal, e.g. 0.75 = 75%)
   arrChurnPct Float?  // Total ARR Churn % (decimal, e.g. 0.05 = 5%)
   arrChurnAmt Float?  // Total ARR Churn ($)
 

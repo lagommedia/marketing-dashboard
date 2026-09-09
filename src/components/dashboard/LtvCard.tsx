@@ -15,10 +15,8 @@ interface LtvResult {
   ltv:              number | null;
   arpu?:            number;
   grossMargin?:     number;
-  churnRate?:       number;   // monthly
-  annualChurnRate?: number;   // × 12
-  targetMonth?:     string;
-  labels?:          { arpu: string; margin: string; churn: string };
+  annualChurnRate?: number;
+  period?:          string;
   reason?:          string;
 }
 
@@ -67,15 +65,13 @@ export function LtvCard({ from, to, sparkData }: Props) {
           <Info className="w-3.5 h-3.5 text-slate-300 cursor-help" />
           <div className="absolute right-0 top-5 z-20 hidden group-hover:block w-64 bg-slate-900 text-white text-[11px] rounded-lg p-3 leading-relaxed shadow-xl">
             <p className="font-semibold mb-1">LTV Formula</p>
-            <p className="text-slate-300">(Annual ARPU × Gross Margin %) ÷ (Monthly Churn × 12)</p>
-            {result?.targetMonth && (
-              <p className="mt-1 text-slate-500">Snapshot: {result.targetMonth}</p>
-            )}
+            <p className="text-slate-300">(Annual ARPU × Gross Margin %) ÷ Annual Churn Rate</p>
             {result?.arpu != null && (
               <div className="mt-2 pt-2 border-t border-slate-700 space-y-0.5 text-slate-400">
-                <p>{result.labels?.arpu ?? "ARPU"} (annual): {fmtCurrency(result.arpu)}</p>
-                <p>{result.labels?.margin ?? "Gross Margin"}: {fmtPct(result.grossMargin ?? 0)}</p>
-                <p>{result.labels?.churn ?? "Churn Rate"}: {fmtPct(result.churnRate ?? 0)}/mo → {fmtPct(result.annualChurnRate ?? 0)}/yr</p>
+                <p>ARPU (annual): {fmtCurrency(result.arpu)}</p>
+                <p>Gross Margin: {fmtPct(result.grossMargin ?? 0)}</p>
+                <p>Annual Churn: {fmtPct(result.annualChurnRate ?? 0)}</p>
+                {result.period && <p className="text-slate-500">{result.period}</p>}
               </div>
             )}
           </div>
@@ -104,7 +100,7 @@ export function LtvCard({ from, to, sparkData }: Props) {
           ? "per customer lifetime"
           : result?.reason
             ? <span className="text-amber-500">{result.reason}</span>
-            : "Connect Google Sheets to calculate"}
+            : "Set ARPU, Gross Margin %, and Churn % on the Pacing page"}
       </p>
 
       {/* Sparkline */}
