@@ -137,11 +137,34 @@ ${JSON.stringify(campaignRolling, null, 2)}
     searchLostISBudget: typeof r.searchLostISBudget === "number" ? parseFloat((r.searchLostISBudget * 100).toFixed(1)) : null,
   }));
 
-  const systemPrompt = `You are a Paid Media AI analyst for a B2B SaaS company. You have full visibility into the user's Google Ads and HubSpot performance data below. The three active campaigns are: Performance Max (PMax, no IS metrics), S_Non-Brand (Search), and S_Brand (Search).
+  // Determine if the most recent data period is within the 48-hour conversion lag window.
+  // Rows are newest-first; each row has a startDate (ISO string). For weekly view the period
+  // ends 7 days after startDate; for daily it ends 1 day after.
+  const nowMs = Date.now();
+  const periodDays = rollingView === "daily" ? 1 : 7;
+  const mostRecentRow = rows[0] as Record<string, unknown> | undefined;
+  const mostRecentStartDate = mostRecentRow?.startDate as string | undefined;
+  let conversionDataIncomplete = false;
+  let mostRecentPeriodLabel = "";
+  if (mostRecentStartDate) {
+    const periodEnd = new Date(mostRecentStartDate);
+    periodEnd.setDate(periodEnd.getDate() + periodDays);
+    const hoursElapsed = (nowMs - periodEnd.getTime()) / (1000 * 60 * 60);
+    conversionDataIncomplete = hoursElapsed < 48;
+    mostRecentPeriodLabel = mostRecentRow?.label as string ?? mostRecentStartDate;
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  const conversionLagWarning = conversionDataIncomplete
+    ? `\n## ⚠️ CONVERSION DATA INCOMPLETE\nThe most recent period ("${mostRecentPeriodLabel}") ended less than 48 hours ago. Google Ads reports conversions with a 48h+ delay, and pipeline/Closed Won deal data has an average 14-day lag. For this period:\n- Lead your analysis with TOP-OF-FUNNEL metrics only: impressions, clicks, CTR, CPC\n- Explicitly state that conversion/pipeline data is not yet complete and should not be used to draw conclusions\n- Do NOT give alarming verdicts based on conversion drops — they are artefacts of the reporting lag, not real performance changes\n- Frame bottom-funnel metrics as "preliminary — expect this to update significantly over the next 48h–14 days"\n`
+    : "";
+
+  const systemPrompt = `You are a Paid Media AI analyst for a B2B SaaS company. You have full visibility into the user's Google Ads and HubSpot performance data below. The three active campaigns are: Performance Max (PMax, no IS metrics), S_Non-Brand (Search), and S_Brand (Search). Today's date is ${today}.
 ${summaryText}${campaignBreakdownText}
 ## Aggregate Rolling Averages Table (all campaigns combined, ${rollingView} view — most recent period first)
 ${tableText}
-${campaignRollingText}${funnelText}
+${campaignRollingText}${funnelText}${conversionLagWarning}
 ## Underlying row data for chart generation (newest first, raw numbers)
 ${JSON.stringify(chartRows.slice(0, 8), null, 2)}
 
@@ -154,6 +177,9 @@ ${JSON.stringify(chartRows.slice(0, 8), null, 2)}
 - Never recommend increasing budget if Lost IS (Rank) > 50%
 - Always compare current vs prior periods and vs 12-period average
 - Use **bold** for all key numbers
+- PERFORMANCE MAX ANOMALIES: Never flag PMax week-to-week variance as an anomaly or cause for alarm. Google controls PMax auction/placement decisions — its volatility is expected and normal. Exclude PMax data entirely from any anomaly detection or alarming language. Only assess PMax on longer-term trends (4+ period average), not single-period swings.
+- CONVERSION LAG: Google Ads conversion data has a 48h+ reporting delay. Pipeline and Closed Won data has a 14-day average lag from ad click to deal close. Always factor this in when assessing recent periods.
+- DEAL CLOSE LAG: Never flag low Closed Won counts for any period ending within the last 14 days — the pipeline has not had time to mature.
 
 ## Response Format
 Respond ONLY with a valid JSON object, no other text before or after. Schema:
