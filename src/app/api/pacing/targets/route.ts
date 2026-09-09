@@ -42,6 +42,9 @@ export async function POST(req: NextRequest) {
       "targetClosedWon",
       "targetRevenue",
       "targetSpend",
+      "arpu",
+      "arrChurnPct",
+      "arrChurnAmt",
     ];
     const data: Record<string, number | null> = {};
     for (const key of numericFields) {

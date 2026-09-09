@@ -92,16 +92,21 @@ model MetricSnapshot {
 // Internal pacing model — targets per channel per period
 model PacingTarget {
   id      String @id @default(cuid())
-  period  String // "2024-04" | "2024-Q2"
-  channel String // paid_media | organic | referral | all
+  period  String // "2024-Q2" | "2026-Q3" etc.
+  channel String // paid_media | organic | referral | marketing_org
 
   targetMqls        Float?
   targetSqos        Float?
   targetPipeline    Float?
   targetClosedWon   Float?
   targetRevenue     Float?
-  targetSpend       Float?
-  sharedAllocation  Float?   // Quarterly overhead budget prorated by % elapsed for CAC
+  targetSpend       Float?   // Gross Expenses (headcount + tools + advertising) for marketing_org
+  sharedAllocation  Float?
+
+  // Org-wide assumption fields (used when channel = "marketing_org")
+  arpu        Float?  // Estimated ARPU ($)
+  arrChurnPct Float?  // Total ARR Churn % (decimal, e.g. 0.05 = 5%)
+  arrChurnAmt Float?  // Total ARR Churn ($)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
