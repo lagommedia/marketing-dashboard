@@ -13,12 +13,11 @@ interface Props {
 }
 
 interface GtmResult {
-  gtmEfficiency:   number | null;
-  grossCosts?:     number;
-  sharedAllocation?: number;
-  denominator?:    number;
-  pctElapsed?:     number;
-  reason?:         string;
+  gtmEfficiency: number | null;
+  grossExpenses?: number;
+  denominator?:  number;
+  pctElapsed?:   number;
+  reason?:       string;
 }
 
 function fmt(v: number): string {
@@ -70,12 +69,11 @@ export function GtmEfficiencyCard({ from, to, revenue, sparkData }: Props) {
           <Info className="w-3.5 h-3.5 text-slate-300 cursor-help" />
           <div className="absolute right-0 top-5 z-20 hidden group-hover:block w-64 bg-slate-900 text-white text-[11px] rounded-lg p-3 leading-relaxed shadow-xl">
             <p className="font-semibold mb-1">GTM Efficiency Formula</p>
-            <p className="text-slate-300">Revenue ÷ ((Marketing Gross Costs + Shared Allocation) × % of Period Elapsed)</p>
+            <p className="text-slate-300">Revenue ÷ (Gross Expenses × % of Quarter Elapsed)</p>
             {result?.denominator != null && (
               <div className="mt-2 pt-2 border-t border-slate-700 space-y-0.5 text-slate-400">
-                <p>Gross costs: {fmt(result.grossCosts ?? 0)}</p>
-                <p>Shared alloc: {fmt(result.sharedAllocation ?? 0)}</p>
-                <p>Period elapsed: {Math.round((result.pctElapsed ?? 0) * 100)}%</p>
+                <p>Gross expenses: {fmt(result.grossExpenses ?? 0)}</p>
+                <p>Quarter elapsed: {Math.round((result.pctElapsed ?? 0) * 100)}%</p>
                 <p>Denominator: {fmt(result.denominator)}</p>
               </div>
             )}
@@ -114,7 +112,7 @@ export function GtmEfficiencyCard({ from, to, revenue, sparkData }: Props) {
           ? `$${efficiency.toFixed(2)} revenue per $1 of marketing cost`
           : result?.reason
             ? <span className="text-amber-500">{result.reason}</span>
-            : "Connect Google Sheets to calculate"}
+            : "Set Gross Expenses on the Pacing page to calculate"}
       </p>
 
       {/* Sparkline */}
