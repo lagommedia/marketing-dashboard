@@ -124,13 +124,24 @@ const MEETING_TYPES_REFERRAL: string[] = [
  * Completed meetings of these types → channel determined by associated deal's
  * deal_source / deal_source_detail_1 (same two-tier logic as revenue).
  * Falls back to "organic" when no deal is linked.
+ * Covers inbound, outbound, and partnerships demos — all need deal attribution.
  */
 const MEETING_TYPES_INBOUND: string[] = [
+  // Inbound
   "Zeni Overview - Inbound",
   "Zeni Overview - Inbound Partnerships",
   "Partner: Inbound Consultation",
+  "Partner: Consultation",
   "Inbound Follow Up",
   "Inbound Product Tour",
+  // Outbound
+  "Zeni Overview - Outbound BDR",
+  "Zeni Overview - Outbound AE",
+  "Zeni Overview - Enterprise Outbound BDR",
+  "Zeni Overview - AE Self Set BDR Spiff",
+  // Partnerships
+  "Zeni Overview - Partnerships",
+  "Zeni Overview - Partnerships AE Self Set",
 ];
 
 // ---------------------------------------------------------------------------
