@@ -10,7 +10,7 @@ interface Contact {
 
 const LABEL: Record<string, string> = {
   mqls:      "MQL Contacts",
-  sqos:      "SQO Deals",
+  sqos:      "SQO Meetings",
   closedwon: "Closed Won Deals",
 };
 

@@ -7,8 +7,33 @@ export const dynamic = "force-dynamic";
 const BASE = "https://api.hubapi.com";
 
 const LIFECYCLE_MQL_STAGES = ["marketingqualifiedlead", "salesqualifiedlead", "opportunity", "customer"];
-const ACTIVE_PIPELINE_STAGES = ["qualifiedtobuy", "decisionmakerboughtin", "6181928", "179383700"];
 const CLOSED_WON_STAGE = "closedwon";
+
+// All meeting types that count as SQOs (must stay in sync with hubspot.ts constants)
+const SQO_MEETING_TYPES = [
+  // Events → organic
+  "Zeni Overview - Events",
+  "Zeni Overview - Events BDR",
+  "Zeni Overview - Events AE",
+  "Zeni Overview - Events Partnerships",
+  // Referral
+  "Zeni Overview - Customer Referral",
+  "Zeni Overview - Employee Referral",
+  "Zeni Overview - Inbound VC Referral",
+  // Inbound / Outbound / Partnerships (channel from deal attribution)
+  "Zeni Overview - Inbound",
+  "Zeni Overview - Inbound Partnerships",
+  "Partner: Inbound Consultation",
+  "Partner: Consultation",
+  "Inbound Follow Up",
+  "Inbound Product Tour",
+  "Zeni Overview - Outbound BDR",
+  "Zeni Overview - Outbound AE",
+  "Zeni Overview - Enterprise Outbound BDR",
+  "Zeni Overview - AE Self Set BDR Spiff",
+  "Zeni Overview - Partnerships",
+  "Zeni Overview - Partnerships AE Self Set",
+];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function hsFetch(token: string, path: string, body: unknown): Promise<any> {
@@ -71,28 +96,73 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ contacts });
     }
 
-    // ── SQOs: deals in active pipeline stages created in range ──────────────
+    // ── SQOs: completed demo meetings in range → show associated contacts ─────
     if (metric === "sqos") {
-      const res = await hsFetch(token, "/crm/v3/objects/deals/search", {
-        filterGroups: ACTIVE_PIPELINE_STAGES.map(stage => ({
+      // 1. Fetch completed meetings of any SQO type in the date range
+      const meetingRes = await hsFetch(token, "/crm/v3/objects/meetings/search", {
+        filterGroups: [{
           filters: [
-            { propertyName: "createdate", operator: "GTE", value: String(fromTs) },
-            { propertyName: "createdate", operator: "LTE", value: String(toTs)   },
-            { propertyName: "dealstage",  operator: "EQ",  value: stage          },
+            { propertyName: "hs_timestamp",      operator: "GTE", value: String(fromTs)    },
+            { propertyName: "hs_timestamp",      operator: "LTE", value: String(toTs)      },
+            { propertyName: "hs_meeting_outcome", operator: "EQ",  value: "COMPLETED"      },
+            { propertyName: "hs_activity_type",   operator: "IN",  values: SQO_MEETING_TYPES },
           ],
-        })),
-        properties: ["dealname", "amount", "dealstage"],
-        sorts: [{ propertyName: "createdate", direction: "ASCENDING" }],
+        }],
+        properties: ["hs_activity_type", "hs_timestamp"],
+        sorts: [{ propertyName: "hs_timestamp", direction: "ASCENDING" }],
         limit: 100,
       });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const contacts = (res.results ?? []).map((d: any) => {
-        const p = d.properties ?? {};
-        return {
-          name: p.dealname || "Unnamed Deal",
-          url: `https://app.hubspot.com/contacts/${portalId}/deal/${d.id}`,
-        };
+      const meetings: any[] = meetingRes.results ?? [];
+      if (meetings.length === 0) return NextResponse.json({ contacts: [] });
+
+      const meetingIds: string[] = meetings.map((m: { id: string }) => m.id);
+
+      // 2. Batch-read meeting → contact associations
+      const assocRes = await hsFetch(
+        token,
+        "/crm/v3/associations/meetings/contacts/batch/read",
+        { inputs: meetingIds.map((id) => ({ id })) }
+      );
+
+      // Build meetingId → first contactId map
+      const meetingToContact = new Map<string, string>();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      for (const item of assocRes.results ?? [] as any[]) {
+        const toIds: string[] = (item.to ?? []).map((t: { id: string }) => t.id);
+        if (toIds.length > 0) meetingToContact.set(String(item.from.id), toIds[0]);
+      }
+
+      const uniqueContactIds = [...new Set(meetingToContact.values())];
+
+      // 3. Batch-read contact names
+      const contactMap = new Map<string, { name: string }>();
+      if (uniqueContactIds.length > 0) {
+        const contactRes = await hsFetch(token, "/crm/v3/objects/contacts/batch/read", {
+          inputs:     uniqueContactIds.map((id) => ({ id })),
+          properties: ["firstname", "lastname", "email"],
+        });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        for (const c of contactRes.results ?? [] as any[]) {
+          const p = c.properties ?? {};
+          const name = [p.firstname, p.lastname].filter(Boolean).join(" ") || p.email || "Unknown";
+          contactMap.set(String(c.id), { name });
+        }
+      }
+
+      // 4. Build output — one entry per meeting
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const contacts = meetings.map((m: any) => {
+        const contactId = meetingToContact.get(m.id);
+        const contact   = contactId ? contactMap.get(contactId) : undefined;
+        const name      = contact?.name ?? "(No contact linked)";
+        const type      = m.properties?.hs_activity_type ?? "";
+        const label     = type ? `${name} · ${type}` : name;
+        const url       = contactId
+          ? `https://app.hubspot.com/contacts/${portalId}/contact/${contactId}`
+          : `https://app.hubspot.com/contacts/${portalId}/objects/0-47/views/all/list`;
+        return { name: label, url };
       });
 
       return NextResponse.json({ contacts });
