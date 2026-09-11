@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { RefreshCw, TrendingUp, MousePointerClick, Eye, Crosshair, ChevronDown, ChevronUp, Star, Search, Bot, Globe, Plus, Pencil, Trash2, Play, ExternalLink, BarChart2 } from "lucide-react";
+import { RefreshCw, TrendingUp, MousePointerClick, Eye, Crosshair, ChevronDown, ChevronUp, Star, Search, Bot, Globe, Plus, Pencil, Trash2, Play, ExternalLink, BarChart2, Sparkles, Users, FileText } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type Channel = "seo" | "aeo" | "geo";
@@ -555,6 +555,8 @@ export function SeoClient() {
   const [geoResults, setGeoResults]           = useState<GeoPromptResult[]>([]);
   const [geoLoading, setGeoLoading]           = useState(false);
   const [geoRunning, setGeoRunning]           = useState<string | null>(null); // promptId being run
+  const [geoAnalyzing, setGeoAnalyzing]       = useState<string | null>(null);
+  const [geoAnalysis, setGeoAnalysis]         = useState<Record<string, { competitors: string[]; citedPages: string[]; synopsis: string; zeniMentioned: boolean }>>({});
   const [geoPromptOpen, setGeoPromptOpen]     = useState(false);
   const [geoEditId, setGeoEditId]             = useState<string | null>(null);
   const [geoText, setGeoText]                 = useState("");
@@ -635,6 +637,17 @@ export function SeoClient() {
       await loadGeoResults();
     } finally {
       setGeoRunning(null);
+    }
+  }
+
+  async function runGeoAnalyze(id: string) {
+    setGeoAnalyzing(id);
+    try {
+      const res = await fetch(`/api/geo/analyze?id=${id}`, { method: "POST" });
+      const data = await res.json();
+      if (res.ok) setGeoAnalysis(prev => ({ ...prev, [id]: data }));
+    } finally {
+      setGeoAnalyzing(null);
     }
   }
 
@@ -1241,6 +1254,15 @@ export function SeoClient() {
                             {isRunning ? "Running…" : "Run 10×"}
                           </button>
                           <button
+                            onClick={() => runGeoAnalyze(result.id)}
+                            disabled={geoAnalyzing === result.id || engines.length === 0}
+                            title="Analyze who's appearing, what pages are cited, and why"
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-violet-50 text-violet-600 text-xs font-medium hover:bg-violet-100 disabled:opacity-40"
+                          >
+                            <Sparkles className={cn("w-3 h-3", geoAnalyzing === result.id && "animate-pulse")} />
+                            {geoAnalyzing === result.id ? "Analyzing…" : "Analyze"}
+                          </button>
+                          <button
                             onClick={() => openGeoEdit(result as GeoPrompt)}
                             className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-50"
                           ><Pencil className="w-3.5 h-3.5" /></button>
@@ -1320,6 +1342,68 @@ export function SeoClient() {
                           </div>
                         </div>
                       )}
+
+                      {/* Post-scan analysis */}
+                      {geoAnalysis[result.id] && (() => {
+                        const a = geoAnalysis[result.id];
+                        return (
+                          <div className="mt-4 rounded-lg border border-violet-100 bg-violet-50 p-4 space-y-3">
+                            <div className="flex items-center gap-2">
+                              <Sparkles className="w-3.5 h-3.5 text-violet-500 shrink-0" />
+                              <p className="text-[10px] font-semibold text-violet-700 uppercase tracking-wide">GPT Analysis</p>
+                              <span className={cn(
+                                "ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded",
+                                a.zeniMentioned ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
+                              )}>
+                                Zeni {a.zeniMentioned ? "mentioned" : "not mentioned"}
+                              </span>
+                            </div>
+
+                            {a.synopsis && (
+                              <p className="text-xs text-slate-700 leading-relaxed">{a.synopsis}</p>
+                            )}
+
+                            {a.competitors.length > 0 && (
+                              <div>
+                                <div className="flex items-center gap-1 mb-1.5">
+                                  <Users className="w-3 h-3 text-violet-400" />
+                                  <p className="text-[10px] font-semibold text-violet-600 uppercase tracking-wide">Who&apos;s appearing</p>
+                                </div>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {a.competitors.map(c => (
+                                    <span key={c} className="text-[10px] bg-white border border-violet-200 text-slate-700 px-2 py-0.5 rounded-full">
+                                      {c}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {a.citedPages.length > 0 && (
+                              <div>
+                                <div className="flex items-center gap-1 mb-1.5">
+                                  <FileText className="w-3 h-3 text-violet-400" />
+                                  <p className="text-[10px] font-semibold text-violet-600 uppercase tracking-wide">Pages being cited</p>
+                                </div>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {a.citedPages.slice(0, 10).map(url => (
+                                    <a
+                                      key={url}
+                                      href={url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="flex items-center gap-1 text-[10px] text-violet-600 bg-white border border-violet-200 px-2 py-0.5 rounded-full hover:bg-violet-100 truncate max-w-xs"
+                                    >
+                                      <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                                      {url.replace("https://", "").replace(/\/$/, "").slice(0, 50)}
+                                    </a>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })}
