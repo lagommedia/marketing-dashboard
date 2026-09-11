@@ -38,10 +38,12 @@ export async function POST(req: NextRequest) {
   const uniqueCitedUrls = [...new Set(citedUrls)];
 
   if (responseTexts.length === 0) {
+    // Snapshots exist but predate the responseText field — user needs to re-run the prompt
     return NextResponse.json({
-      competitors: [],
-      citedPages:  uniqueCitedUrls,
-      synopsis:    "No response text available yet — run the prompt first.",
+      competitorDetails: [],
+      citedPages:        uniqueCitedUrls,
+      zeniMentioned:     false,
+      synopsis:          "No GPT response text stored yet. Run the prompt (\"Run 10×\") once more to capture response text, then click Analyze.",
     });
   }
 
@@ -98,16 +100,23 @@ Rules:
       }),
     });
 
-    if (!res.ok) throw new Error(`OpenAI ${res.status}`);
+    if (!res.ok) throw new Error(`OpenAI ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const json = await res.json();
     const raw  = json.choices?.[0]?.message?.content ?? "{}";
+
+    // Strip markdown code fences GPT sometimes wraps JSON in
+    const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
 
     let parsed: {
       competitorDetails?: Array<{ company: string; citedUrl: string | null; why: string; whatZeniCanDo: string }>;
       zeniMentioned?: boolean;
       synopsis?: string;
     } = {};
-    try { parsed = JSON.parse(raw); } catch { /* malformed — use defaults */ }
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch (parseErr) {
+      console.error("[geo/analyze] JSON parse failed. Raw:", raw.slice(0, 500), parseErr);
+    }
 
     const payload = {
       competitorDetails: parsed.competitorDetails ?? [],
