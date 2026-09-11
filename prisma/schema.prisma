@@ -275,11 +275,13 @@ model AeoPillarScore {
 
 // User-managed GEO prompts — the exact questions fired at AI engines.
 model GeoPrompt {
-  id        String   @id @default(cuid())
-  text      String   // The question to fire at AI engines
-  notes     String?  // Why we care / what we're testing
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String   @id @default(cuid())
+  text         String   // The question to fire at AI engines
+  notes        String?  // Why we care / what we're testing
+  analysisJson String?  // JSON: last saved GPT competitive analysis result
+  analyzedAt   DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }
 
 // AI engine mention tracking — fires queries against OpenAI / Gemini,

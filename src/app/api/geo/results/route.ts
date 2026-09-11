@@ -76,6 +76,8 @@ export async function GET() {
       allCitedUrls,
       lastRun,
       gscImpressions90d: estimateGscImpressions(prompt.text),
+      analysisJson: prompt.analysisJson ?? null,
+      analyzedAt:   prompt.analyzedAt?.toISOString() ?? null,
     };
   });
 

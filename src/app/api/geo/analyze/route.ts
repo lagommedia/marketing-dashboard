@@ -109,14 +109,22 @@ Rules:
     } = {};
     try { parsed = JSON.parse(raw); } catch { /* malformed — use defaults */ }
 
-    return NextResponse.json({
+    const payload = {
       competitorDetails: parsed.competitorDetails ?? [],
       zeniMentioned:     parsed.zeniMentioned     ?? false,
       citedPages:        uniqueCitedUrls,
       synopsis:          parsed.synopsis           ?? "Analysis unavailable.",
       promptText:        prompt.text,
       citedUrlMap,
+    };
+
+    // Persist so the analysis survives page refreshes
+    await prisma.geoPrompt.update({
+      where: { id: promptId },
+      data:  { analysisJson: JSON.stringify(payload), analyzedAt: new Date() },
     });
+
+    return NextResponse.json(payload);
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Analysis failed" }, { status: 500 });
   }

@@ -81,6 +81,8 @@ interface GeoPromptResult {
   allCitedUrls:      string[];
   lastRun:           string | null;
   gscImpressions90d: number;
+  analysisJson:      string | null;
+  analyzedAt:        string | null;
 }
 
 interface GeoPrompt {
@@ -594,7 +596,18 @@ export function SeoClient() {
     try {
       const res = await fetch("/api/geo/results");
       const json = await res.json();
-      setGeoResults(json.results ?? []);
+      const results: GeoPromptResult[] = json.results ?? [];
+      setGeoResults(results);
+      // Seed persisted analysis into state so it's visible immediately on load
+      setGeoAnalysis(prev => {
+        const next = { ...prev };
+        for (const r of results) {
+          if (r.analysisJson && !next[r.id]) {
+            try { next[r.id] = JSON.parse(r.analysisJson); } catch { /* skip malformed */ }
+          }
+        }
+        return next;
+      });
     } finally {
       setGeoLoading(false);
     }
@@ -1261,11 +1274,11 @@ export function SeoClient() {
                           <button
                             onClick={() => runGeoAnalyze(result.id)}
                             disabled={geoAnalyzing === result.id || engines.length === 0}
-                            title="Analyze who's appearing, what pages are cited, and why"
+                            title={geoAnalysis[result.id] ? "Re-run analysis with latest responses" : "Analyze who's appearing, what pages are cited, and why"}
                             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-violet-50 text-violet-600 text-xs font-medium hover:bg-violet-100 disabled:opacity-40"
                           >
                             <Sparkles className={cn("w-3 h-3", geoAnalyzing === result.id && "animate-pulse")} />
-                            {geoAnalyzing === result.id ? "Analyzing…" : "Analyze"}
+                            {geoAnalyzing === result.id ? "Analyzing…" : geoAnalysis[result.id] ? "Re-analyze" : "Analyze"}
                           </button>
                           <button
                             onClick={() => openGeoEdit(result as GeoPrompt)}
@@ -1354,9 +1367,14 @@ export function SeoClient() {
                         return (
                           <div className="mt-4 rounded-lg border border-violet-100 bg-violet-50 p-4 space-y-3">
                             {/* Header */}
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <Sparkles className="w-3.5 h-3.5 text-violet-500 shrink-0" />
                               <p className="text-[10px] font-semibold text-violet-700 uppercase tracking-wide">GPT Competitive Analysis</p>
+                              {result.analyzedAt && (
+                                <span className="text-[10px] text-violet-400">
+                                  {new Date(result.analyzedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                                </span>
+                              )}
                               <span className={cn(
                                 "ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded",
                                 a.zeniMentioned ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
