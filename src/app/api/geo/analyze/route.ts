@@ -55,37 +55,41 @@ export async function POST(req: NextRequest) {
     return acc;
   }, {});
 
-  const analysisPrompt = `You are a competitive intelligence analyst. A user asked AI assistants: "${prompt.text}"
+  const analysisPrompt = `You are a competitive intelligence analyst reviewing how AI search engines respond to the query: "${prompt.text}"
 
 Here are the most recent AI responses:
 ---
 ${combinedText}
 ---
 
-The cited URLs from AI web search grounding are:
+The URLs cited by AI web search grounding:
 ${uniqueCitedUrls.slice(0, 20).join("\n") || "(none)"}
 
-Analyze which companies appear in the AI responses and return a JSON object with exactly this structure:
+Your job is NOT to give prescriptive advice — it is to surface patterns. What content, channels, and topics are consistently working for the companies showing up? What does the AI's worldview look like for this query? Return a JSON object with exactly this structure:
 
 {
   "competitorDetails": [
     {
       "company": "Company or product name",
       "citedUrl": "The specific URL from the cited list that matches this company, or null if none",
-      "why": "1-2 sentences: WHY is this company being surfaced by GPT for this query? What gives it authority here?",
-      "whatZeniCanDo": "1-2 sentences: What specific action or positioning could Zeni take to compete with or displace this result?"
+      "why": "1-2 sentences: WHY does GPT surface this company for this query? What specific authority signal, content type, or positioning earns them this spot?"
+    }
+  ],
+  "themes": [
+    {
+      "theme": "Short theme label (e.g. 'Third-party review sites dominate citations')",
+      "description": "2-3 sentences describing the pattern across competitors: what content formats, distribution channels, topic angles, or authority signals are consistently showing up. Be specific about what's working and where the gaps are that Zeni could fill."
     }
   ],
   "zeniMentioned": true or false,
-  "synopsis": "2-3 sentences summarizing the competitive landscape and Zeni's position"
+  "synopsis": "2-3 sentences: what landscape does GPT describe for this query, and what does Zeni's absence (or presence) tell us about its current visibility?"
 }
 
 Rules:
-- Include only companies/products OTHER than Zeni (unless Zeni was not mentioned — then note that in synopsis)
-- Order by prominence in the responses (most frequently or prominently mentioned first)
-- Keep "why" specific to THIS query, not generic — explain the actual reason GPT surfaces them for this question
-- Keep "whatZeniCanDo" actionable and concrete — a specific content, SEO, or positioning move
-- citedUrl must be one of the cited URLs provided above, or null
+- competitorDetails: only companies OTHER than Zeni, ordered by prominence
+- citedUrl must be one of the cited URLs listed above, or null
+- themes: 3-5 patterns you observe across ALL the competitors together — content formats, page types, topic clusters, distribution channels, authority signals. This is where the strategic insight lives.
+- Keep everything descriptive and observational, not prescriptive ("here's what's happening" not "Zeni should do X")
 - Return ONLY valid JSON. No markdown, no explanation outside the JSON.`;
 
   try {
@@ -108,7 +112,8 @@ Rules:
     const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
 
     let parsed: {
-      competitorDetails?: Array<{ company: string; citedUrl: string | null; why: string; whatZeniCanDo: string }>;
+      competitorDetails?: Array<{ company: string; citedUrl: string | null; why: string }>;
+      themes?: Array<{ theme: string; description: string }>;
       zeniMentioned?: boolean;
       synopsis?: string;
     } = {};
@@ -120,6 +125,7 @@ Rules:
 
     const payload = {
       competitorDetails: parsed.competitorDetails ?? [],
+      themes:            parsed.themes            ?? [],
       zeniMentioned:     parsed.zeniMentioned     ?? false,
       citedPages:        uniqueCitedUrls,
       synopsis:          parsed.synopsis           ?? "Analysis unavailable.",
