@@ -556,7 +556,12 @@ export function SeoClient() {
   const [geoLoading, setGeoLoading]           = useState(false);
   const [geoRunning, setGeoRunning]           = useState<string | null>(null); // promptId being run
   const [geoAnalyzing, setGeoAnalyzing]       = useState<string | null>(null);
-  const [geoAnalysis, setGeoAnalysis]         = useState<Record<string, { competitors: string[]; citedPages: string[]; synopsis: string; zeniMentioned: boolean }>>({});
+  const [geoAnalysis, setGeoAnalysis]         = useState<Record<string, {
+    competitorDetails: Array<{ company: string; citedUrl: string | null; why: string; whatZeniCanDo: string }>;
+    citedPages: string[];
+    synopsis: string;
+    zeniMentioned: boolean;
+  }>>({});
   const [geoPromptOpen, setGeoPromptOpen]     = useState(false);
   const [geoEditId, setGeoEditId]             = useState<string | null>(null);
   const [geoText, setGeoText]                 = useState("");
@@ -1348,9 +1353,10 @@ export function SeoClient() {
                         const a = geoAnalysis[result.id];
                         return (
                           <div className="mt-4 rounded-lg border border-violet-100 bg-violet-50 p-4 space-y-3">
+                            {/* Header */}
                             <div className="flex items-center gap-2">
                               <Sparkles className="w-3.5 h-3.5 text-violet-500 shrink-0" />
-                              <p className="text-[10px] font-semibold text-violet-700 uppercase tracking-wide">GPT Analysis</p>
+                              <p className="text-[10px] font-semibold text-violet-700 uppercase tracking-wide">GPT Competitive Analysis</p>
                               <span className={cn(
                                 "ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded",
                                 a.zeniMentioned ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
@@ -1359,46 +1365,50 @@ export function SeoClient() {
                               </span>
                             </div>
 
+                            {/* Synopsis */}
                             {a.synopsis && (
                               <p className="text-xs text-slate-700 leading-relaxed">{a.synopsis}</p>
                             )}
 
-                            {a.competitors.length > 0 && (
-                              <div>
-                                <div className="flex items-center gap-1 mb-1.5">
-                                  <Users className="w-3 h-3 text-violet-400" />
-                                  <p className="text-[10px] font-semibold text-violet-600 uppercase tracking-wide">Who&apos;s appearing</p>
-                                </div>
-                                <div className="flex flex-wrap gap-1.5">
-                                  {a.competitors.map(c => (
-                                    <span key={c} className="text-[10px] bg-white border border-violet-200 text-slate-700 px-2 py-0.5 rounded-full">
-                                      {c}
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {a.citedPages.length > 0 && (
-                              <div>
-                                <div className="flex items-center gap-1 mb-1.5">
-                                  <FileText className="w-3 h-3 text-violet-400" />
-                                  <p className="text-[10px] font-semibold text-violet-600 uppercase tracking-wide">Pages being cited</p>
-                                </div>
-                                <div className="flex flex-wrap gap-1.5">
-                                  {a.citedPages.slice(0, 10).map(url => (
-                                    <a
-                                      key={url}
-                                      href={url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="flex items-center gap-1 text-[10px] text-violet-600 bg-white border border-violet-200 px-2 py-0.5 rounded-full hover:bg-violet-100 truncate max-w-xs"
-                                    >
-                                      <ExternalLink className="w-2.5 h-2.5 shrink-0" />
-                                      {url.replace("https://", "").replace(/\/$/, "").slice(0, 50)}
-                                    </a>
-                                  ))}
-                                </div>
+                            {/* Competitor table */}
+                            {a.competitorDetails.length > 0 && (
+                              <div className="overflow-x-auto">
+                                <table className="w-full text-xs border-collapse">
+                                  <thead>
+                                    <tr className="text-left">
+                                      <th className="pb-2 pr-3 text-[10px] font-semibold text-violet-600 uppercase tracking-wide whitespace-nowrap">Company</th>
+                                      <th className="pb-2 pr-3 text-[10px] font-semibold text-violet-600 uppercase tracking-wide whitespace-nowrap">Page</th>
+                                      <th className="pb-2 pr-3 text-[10px] font-semibold text-violet-600 uppercase tracking-wide">Why they appear</th>
+                                      <th className="pb-2 text-[10px] font-semibold text-violet-600 uppercase tracking-wide">What Zeni can do</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-violet-100">
+                                    {a.competitorDetails.map((row, i) => (
+                                      <tr key={i} className="align-top">
+                                        <td className="py-2.5 pr-3 font-semibold text-slate-800 whitespace-nowrap">{row.company}</td>
+                                        <td className="py-2.5 pr-3">
+                                          {row.citedUrl ? (
+                                            <a
+                                              href={row.citedUrl}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="flex items-center gap-1 text-indigo-600 hover:underline"
+                                            >
+                                              <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                                              <span className="truncate max-w-[140px]">
+                                                {row.citedUrl.replace("https://", "").replace(/\/$/, "").slice(0, 40)}
+                                              </span>
+                                            </a>
+                                          ) : (
+                                            <span className="text-slate-400">—</span>
+                                          )}
+                                        </td>
+                                        <td className="py-2.5 pr-3 text-slate-600 leading-relaxed">{row.why}</td>
+                                        <td className="py-2.5 text-slate-700 leading-relaxed">{row.whatZeniCanDo}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
                               </div>
                             )}
                           </div>

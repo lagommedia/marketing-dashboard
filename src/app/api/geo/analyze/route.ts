@@ -47,30 +47,52 @@ export async function POST(req: NextRequest) {
 
   const combinedText = responseTexts.slice(-5).join("\n\n---\n\n"); // last 5 responses
 
-  const analysisPrompt = `You are analyzing AI engine responses to the following research question:
-"${prompt.text}"
+  // Build a URL→domain map for matching competitors to cited pages
+  const citedUrlMap = uniqueCitedUrls.reduce<Record<string, string>>((acc, url) => {
+    try { acc[new URL(url).hostname.replace("www.", "")] = url; } catch { /* skip */ }
+    return acc;
+  }, {});
 
-Here are the most recent responses from OpenAI's GPT:
+  const analysisPrompt = `You are a competitive intelligence analyst. A user asked AI assistants: "${prompt.text}"
+
+Here are the most recent AI responses:
 ---
 ${combinedText}
 ---
 
-Please analyze these responses and return a JSON object with exactly these fields:
+The cited URLs from AI web search grounding are:
+${uniqueCitedUrls.slice(0, 20).join("\n") || "(none)"}
+
+Analyze which companies appear in the AI responses and return a JSON object with exactly this structure:
+
 {
-  "competitors": ["list of company/product names mentioned in the responses OTHER than Zeni — ordered by frequency"],
-  "zeniMentioned": true/false,
-  "synopsis": "2-3 sentence plain-English explanation of: (1) what landscape GPT describes, (2) whether and how Zeni appears, (3) what the top competing products are and why they're being surfaced"
+  "competitorDetails": [
+    {
+      "company": "Company or product name",
+      "citedUrl": "The specific URL from the cited list that matches this company, or null if none",
+      "why": "1-2 sentences: WHY is this company being surfaced by GPT for this query? What gives it authority here?",
+      "whatZeniCanDo": "1-2 sentences: What specific action or positioning could Zeni take to compete with or displace this result?"
+    }
+  ],
+  "zeniMentioned": true or false,
+  "synopsis": "2-3 sentences summarizing the competitive landscape and Zeni's position"
 }
 
-Return ONLY valid JSON. No markdown, no explanation.`;
+Rules:
+- Include only companies/products OTHER than Zeni (unless Zeni was not mentioned — then note that in synopsis)
+- Order by prominence in the responses (most frequently or prominently mentioned first)
+- Keep "why" specific to THIS query, not generic — explain the actual reason GPT surfaces them for this question
+- Keep "whatZeniCanDo" actionable and concrete — a specific content, SEO, or positioning move
+- citedUrl must be one of the cited URLs provided above, or null
+- Return ONLY valid JSON. No markdown, no explanation outside the JSON.`;
 
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${openaiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
-        max_tokens: 600,
+        model: "gpt-4o",
+        max_tokens: 1500,
         temperature: 0,
         messages: [{ role: "user", content: analysisPrompt }],
       }),
@@ -80,15 +102,20 @@ Return ONLY valid JSON. No markdown, no explanation.`;
     const json = await res.json();
     const raw  = json.choices?.[0]?.message?.content ?? "{}";
 
-    let parsed: { competitors?: string[]; zeniMentioned?: boolean; synopsis?: string } = {};
+    let parsed: {
+      competitorDetails?: Array<{ company: string; citedUrl: string | null; why: string; whatZeniCanDo: string }>;
+      zeniMentioned?: boolean;
+      synopsis?: string;
+    } = {};
     try { parsed = JSON.parse(raw); } catch { /* malformed — use defaults */ }
 
     return NextResponse.json({
-      competitors:   parsed.competitors   ?? [],
-      zeniMentioned: parsed.zeniMentioned ?? false,
-      citedPages:    uniqueCitedUrls,
-      synopsis:      parsed.synopsis      ?? "Analysis unavailable.",
-      promptText:    prompt.text,
+      competitorDetails: parsed.competitorDetails ?? [],
+      zeniMentioned:     parsed.zeniMentioned     ?? false,
+      citedPages:        uniqueCitedUrls,
+      synopsis:          parsed.synopsis           ?? "Analysis unavailable.",
+      promptText:        prompt.text,
+      citedUrlMap,
     });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Analysis failed" }, { status: 500 });
