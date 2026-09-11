@@ -13,6 +13,7 @@ import { prisma } from "@/lib/db";
 import { runSync } from "@/lib/sync/engine";
 import { delay } from "@/lib/sync/utils";
 import { syncFunnelSnapshot } from "@/lib/integrations/hubspot-funnel";
+import { runHubspotAudit } from "@/lib/integrations/hubspot-audit";
 import type { Platform } from "@/types";
 
 const BETWEEN_PLATFORMS_DELAY_MS = 3000; // 3 seconds between each platform
@@ -65,6 +66,16 @@ export async function GET(req: NextRequest) {
     console.error("[cron] funnel snapshot error", e);
   }
 
+  // Run HubSpot audit (detect attribution changes, closed deals, ARR shifts, etc.)
+  let auditResult = null;
+  try {
+    console.log("[cron] running hubspot audit…");
+    auditResult = await runHubspotAudit(25); // 25-hour lookback covers any timezone drift
+    console.log("[cron] hubspot audit complete", auditResult?.alerts);
+  } catch (e) {
+    console.error("[cron] hubspot audit error", e);
+  }
+
   console.log("[cron] daily sync complete", results);
-  return NextResponse.json({ ok: true, synced: platforms.length, results, funnelSnapshot: funnelResult });
+  return NextResponse.json({ ok: true, synced: platforms.length, results, funnelSnapshot: funnelResult, audit: auditResult });
 }

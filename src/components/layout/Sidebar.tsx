@@ -17,6 +17,7 @@ import {
   Share2,
   LogOut,
   Filter,
+  Bell,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -74,6 +75,12 @@ const NAV_ITEMS = [
     label: "AI Analyst",
     icon: Sparkles,
     description: "Company AI breakdown",
+  },
+  {
+    href: "/alerts",
+    label: "HubSpot Alerts",
+    icon: Bell,
+    description: "Daily audit & anomalies",
   },
   {
     href: "/integrations",

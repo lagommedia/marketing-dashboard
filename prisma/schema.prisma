@@ -338,6 +338,46 @@ model CampaignChangeEvent {
 }
 
 // ---------------------------------------------------------------------------
+// HubSpot Daily Audit Alerts
+// ---------------------------------------------------------------------------
+
+model HubspotAuditAlert {
+  id          String   @id @default(cuid())
+  detectedAt  DateTime @default(now())
+  // sqo_attribution | sqd_closed_lost | negative_arr | workflow_unenroll | inbound_outbound_worked
+  alertType   String
+
+  // Primary subject
+  contactId    String?
+  contactName  String?
+  contactUrl   String?
+  companyId    String?
+  companyName  String?
+  dealId       String?
+  dealName     String?
+  dealUrl      String?
+
+  // What changed
+  fromValue    String?   // previous value
+  toValue      String?   // new value
+  changeReason String?   // e.g. closed_lost_reason, workflow name
+
+  // Who changed it (HubSpot user at Zeni)
+  changedByUserId String?
+  changedByName   String?
+  changedAt       DateTime?
+
+  // Alert-specific extra data (JSON)
+  metadata    String?
+
+  dismissed   Boolean  @default(false)
+
+  @@index([alertType, detectedAt])
+  @@index([dismissed, detectedAt])
+  @@index([detectedAt])
+}
+
+// ---------------------------------------------------------------------------
 // Marketing Funnel — change notification system
 // ---------------------------------------------------------------------------
 
