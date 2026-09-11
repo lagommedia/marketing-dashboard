@@ -175,11 +175,14 @@ export async function getFunnelCounts(from: Date, to: Date): Promise<FunnelCount
   const toTs   = to.getTime();
 
   // Run sequentially — HubSpot CRM search is capped at 5 req/s; parallel bursts hit 429s.
-  // Each stage filters by createdate in range + current lifecyclestage EQ the target stage.
-  // MQL/SQL/SQO/SQD show contacts created in the period who are currently at that exact stage.
+  // MQL = contacts who reached MQL or any higher stage (same as the daily sync backfill's MQL_OR_ABOVE).
+  // Contacts progress past MQL to SQL/SQO/SQD/customer, so "exactly MQL" severely undercounts.
+  // Split into two calls to stay within HubSpot's 5-filterGroups-per-request limit.
   const gap = () => new Promise(r => setTimeout(r, 220));
   const leads     = await countContactsByStage(token, fromTs, toTs, null); await gap();
-  const mqls      = await countContactsByStage(token, fromTs, toTs, [LIFECYCLE.mql]); await gap();
+  const mqlsLow   = await countContactsByStage(token, fromTs, toTs, [LIFECYCLE.mql, LIFECYCLE.sal, LIFECYCLE.sql]); await gap();
+  const mqlsHigh  = await countContactsByStage(token, fromTs, toTs, [LIFECYCLE.opportunity, LIFECYCLE.sqd, LIFECYCLE.customer]); await gap();
+  const mqls      = mqlsLow + mqlsHigh;
   const sqls      = await countContactsByStage(token, fromTs, toTs, [LIFECYCLE.sal, LIFECYCLE.sql]); await gap();
   const sqos      = await countSqoMeetings(token, fromTs, toTs); await gap();
   const sqds      = await countContactsByStage(token, fromTs, toTs, [LIFECYCLE.sqd]); await gap();
