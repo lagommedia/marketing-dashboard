@@ -519,7 +519,7 @@ function PillarCard({ pillar }: { pillar: PillarData }) {
 const CHANNEL_OPTIONS: { id: Channel; label: string; icon: React.ElementType; description: string }[] = [
   { id: "seo", label: "SEO", icon: Search, description: "Search Engine Optimization — organic search visibility via Google Search Console" },
   { id: "aeo", label: "AEO", icon: Bot, description: "Answer Engine Optimization — featured snippets, People Also Ask, AI Overviews" },
-  { id: "geo", label: "GEO", icon: Globe, description: "Generative Engine Optimization — brand mentions in ChatGPT, Perplexity, Gemini" },
+  { id: "geo", label: "GEO", icon: Globe, description: "Generative Engine Optimization — brand mention tracking via OpenAI GPT" },
 ];
 
 function fmtSec(sec: number | null | undefined): string {
@@ -550,12 +550,6 @@ export function SeoClient() {
   const [aeoSyncMsg, setAeoSyncMsg]         = useState<string | null>(null);
   const [aeoRefreshing, setAeoRefreshing]   = useState(false);
 
-  // AI Visibility (Layer 0) state
-  const [aiVisibility, setAiVisibility]         = useState<AiVisibilityData | null>(null);
-  const [aiVisibilityLoading, setAiVisibilityLoading] = useState(false);
-  const [aiMentionSyncing, setAiMentionSyncing] = useState(false);
-  const [aiMentionSyncMsg, setAiMentionSyncMsg] = useState<string | null>(null);
-  const [aiMentionCooldownUntil, setAiMentionCooldownUntil] = useState<Date | null>(null);
 
   // GEO prompt tracker state
   const [geoResults, setGeoResults]           = useState<GeoPromptResult[]>([]);
@@ -585,16 +579,6 @@ export function SeoClient() {
       setAeoReadiness(json.pillars ?? null);
     } finally {
       setAeoReadinessLoading(false);
-    }
-  }, []);
-
-  const loadAiVisibility = useCallback(async () => {
-    setAiVisibilityLoading(true);
-    try {
-      const res = await fetch("/api/seo/ai-visibility");
-      setAiVisibility(await res.json());
-    } finally {
-      setAiVisibilityLoading(false);
     }
   }, []);
 
@@ -682,12 +666,11 @@ export function SeoClient() {
     if (channel === "aeo") {
       if (!aeoOverview)   loadAeoOverview();
       if (!aeoReadiness)  loadAeoReadiness();
-      if (!aiVisibility)  loadAiVisibility();
     }
     if (channel === "geo") {
       loadGeoResults();
     }
-  }, [channel, aeoOverview, aeoReadiness, aiVisibility, loadAeoOverview, loadAeoReadiness, loadAiVisibility, loadGeoResults]);
+  }, [channel, aeoOverview, aeoReadiness, loadAeoOverview, loadAeoReadiness, loadGeoResults]);
 
   async function handleSync() {
     setSyncing(true);
@@ -743,27 +726,6 @@ export function SeoClient() {
       await loadAeoOverview();
     } finally {
       setAeoSyncing(false);
-    }
-  }
-
-  async function handleAiMentionSync() {
-    setAiMentionSyncing(true);
-    setAiMentionSyncMsg(null);
-    try {
-      const res  = await fetch("/api/integrations/ai-mention-sync", { method: "POST" });
-      const body = await res.json();
-      if (!res.ok) { setAiMentionSyncMsg(`Sync failed: ${body.error ?? res.statusText}`); return; }
-      if (body.cooldown) {
-        setAiMentionCooldownUntil(new Date(body.nextAvailableAt));
-        setAiMentionSyncMsg(body.message);
-        return;
-      }
-      setAiMentionCooldownUntil(null);
-      const skipped = (body.skipped as string[] ?? []);
-      setAiMentionSyncMsg(`Synced ${body.rows ?? 0} queries.${skipped.length ? ` (missing: ${skipped.join(", ")})` : ""}`);
-      await loadAiVisibility();
-    } finally {
-      setAiMentionSyncing(false);
     }
   }
 
@@ -1009,124 +971,6 @@ export function SeoClient() {
       {channel === "aeo" && (
         <div className="space-y-8">
 
-          {/* ── Layer 0: AI Search Visibility (OpenAI + Gemini mention tracking) ── */}
-          <div>
-            <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
-              <div>
-                <h2 className="text-sm font-semibold text-slate-700">AI Search Visibility</h2>
-                <p className="text-xs text-slate-400 mt-0.5">Does Zeni appear when buyers ask AI engines about your keyword pillars? · Source: OpenAI + Gemini</p>
-              </div>
-              <div className="flex items-center gap-3 flex-wrap">
-                {aiVisibility?.lastSyncedAt && (
-                  <span className="text-xs text-slate-400">Last synced {new Date(aiVisibility.lastSyncedAt).toLocaleDateString()}</span>
-                )}
-                {aiMentionSyncMsg && <span className="text-xs text-slate-500">{aiMentionSyncMsg}</span>}
-                <button
-                  onClick={handleAiMentionSync}
-                  disabled={aiMentionSyncing || (aiMentionCooldownUntil != null && aiMentionCooldownUntil > new Date())}
-                  title={aiMentionCooldownUntil && aiMentionCooldownUntil > new Date() ? `Cooldown active — next sync available at ${aiMentionCooldownUntil.toLocaleTimeString()}` : undefined}
-                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  <RefreshCw className={cn("w-3.5 h-3.5", aiMentionSyncing && "animate-spin")} />
-                  {aiMentionSyncing ? "Querying AI engines…"
-                    : aiMentionCooldownUntil && aiMentionCooldownUntil > new Date() ? `Next sync ${aiMentionCooldownUntil.toLocaleTimeString()}`
-                    : "Sync AI Visibility"}
-                </button>
-              </div>
-            </div>
-
-            {aiVisibilityLoading && <div className="text-sm text-slate-400 py-8 text-center">Loading…</div>}
-
-            {!aiVisibilityLoading && !aiVisibility?.hasData && (
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-8 text-center text-slate-400">
-                <p className="font-medium text-sm">No AI visibility data yet</p>
-                <p className="text-xs mt-1">Add <code className="bg-slate-100 px-1 rounded">OPENAI_API_KEY</code> and/or <code className="bg-slate-100 px-1 rounded">GEMINI_API_KEY</code> to <code className="bg-slate-100 px-1 rounded">.env.local</code>, then click "Sync AI Visibility".</p>
-              </div>
-            )}
-
-            {!aiVisibilityLoading && aiVisibility?.hasData && (
-              <>
-                {/* Top stat row */}
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                  {/* Visibility score */}
-                  <div className="bg-white rounded-xl border border-slate-200 p-5 col-span-2 lg:col-span-1 flex flex-col items-center justify-center text-center">
-                    <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-1">AI Visibility</p>
-                    <p className={cn(
-                      "text-4xl font-bold",
-                      (aiVisibility.visibilityScore ?? 0) >= 60 ? "text-emerald-600" :
-                      (aiVisibility.visibilityScore ?? 0) >= 30 ? "text-amber-500" : "text-rose-500"
-                    )}>{aiVisibility.visibilityScore}</p>
-                    <p className="text-xs text-slate-400 mt-1">/ 100</p>
-                  </div>
-
-                  {/* Per-engine breakdown */}
-                  {Object.entries(aiVisibility.engines).map(([engine, stats]) => (
-                    <div key={engine} className="bg-white rounded-xl border border-slate-200 p-5">
-                      <div className="flex items-center gap-2 mb-3">
-                        {engine === "openai" ? (
-                          <span className="text-xs font-bold bg-slate-900 text-white px-2 py-0.5 rounded">GPT</span>
-                        ) : (
-                          <span className="text-xs font-bold bg-blue-600 text-white px-2 py-0.5 rounded">Gemini</span>
-                        )}
-                        <span className="text-xs text-slate-400 uppercase tracking-wide">{engine === "openai" ? "OpenAI" : "Google"}</span>
-                      </div>
-                      <p className="text-2xl font-bold text-slate-900">{stats.mentions}</p>
-                      <p className="text-xs text-slate-400 mt-0.5">mentions out of {stats.totalQueries} queries</p>
-                      {stats.citedPages.length > 0 && (
-                        <p className="text-xs text-indigo-600 mt-1">{stats.citedPages.length} cited page{stats.citedPages.length > 1 ? "s" : ""}</p>
-                      )}
-                    </div>
-                  ))}
-
-                  {/* Total cited pages */}
-                  <div className="bg-white rounded-xl border border-slate-200 p-5">
-                    <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-2">Cited Pages</p>
-                    <p className="text-2xl font-bold text-slate-900">{aiVisibility.allCitedPages.length}</p>
-                    <p className="text-xs text-slate-400 mt-0.5">Unique zeni.ai URLs cited</p>
-                  </div>
-                </div>
-
-                {/* Per-pillar grid */}
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                  {aiVisibility.byPillar.map(pillar => {
-                    const engines = Object.entries(pillar.engines);
-                    const mentionCount = engines.filter(([, v]) => v).length;
-                    const total = engines.length;
-                    return (
-                      <div key={pillar.pillarId} className={cn(
-                        "rounded-xl border p-4",
-                        mentionCount === total ? "border-emerald-200 bg-emerald-50" :
-                        mentionCount > 0       ? "border-amber-200 bg-amber-50" :
-                                                 "border-slate-200 bg-white"
-                      )}>
-                        <p className={cn("text-xs font-semibold mb-2 truncate",
-                          mentionCount === total ? "text-emerald-800" :
-                          mentionCount > 0       ? "text-amber-800" : "text-slate-700"
-                        )}>{pillar.label}</p>
-                        <div className="flex flex-wrap gap-1 mb-2">
-                          {engines.map(([engine, mentioned]) => (
-                            <span key={engine} className={cn(
-                              "text-[10px] font-semibold px-1.5 py-0.5 rounded",
-                              mentioned ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-400"
-                            )}>
-                              {mentioned ? "✓" : "✗"} {engine === "openai" ? "GPT" : "Gemini"}
-                            </span>
-                          ))}
-                        </div>
-                        {pillar.citedUrls.length > 0 && (
-                          <p className="text-[10px] text-indigo-500 truncate">{pillar.citedUrls[0].replace("https://", "")}</p>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* Divider */}
-          <div className="border-t border-slate-100" />
-
           {/* ── Layer 2: AEO Content Readiness Score ── */}
           <div>
             <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
@@ -1244,7 +1088,7 @@ export function SeoClient() {
 
           {/* ── Summary stat row ── */}
           {geoResults.length > 0 && (() => {
-            const allEngines = [...new Set(geoResults.flatMap(r => Object.keys(r.byEngine)))];
+            const allEngines = [...new Set(geoResults.flatMap(r => Object.keys(r.byEngine)))].filter(e => e === "openai");
             const totalCited = new Set(geoResults.flatMap(r => r.allCitedUrls)).size;
             return (
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1276,7 +1120,7 @@ export function SeoClient() {
                 <div className="bg-white rounded-xl border border-slate-200 p-5">
                   <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-2">Cited Pages</p>
                   <p className="text-3xl font-bold text-slate-900">{totalCited}</p>
-                  <p className="text-xs text-slate-400 mt-0.5">Unique zeni.ai URLs cited by Gemini</p>
+                  <p className="text-xs text-slate-400 mt-0.5">Unique zeni.ai URLs cited</p>
                 </div>
               </div>
             );
@@ -1329,7 +1173,7 @@ export function SeoClient() {
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h2 className="text-sm font-semibold text-slate-700">GEO Prompt Tracker</h2>
-                <p className="text-xs text-slate-400 mt-0.5">Each prompt is run 10× against OpenAI and Gemini — results show mention rate + citation sources</p>
+                <p className="text-xs text-slate-400 mt-0.5">Each prompt is run 10× against OpenAI — results show mention rate + citation sources</p>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -1363,7 +1207,7 @@ export function SeoClient() {
             {!geoLoading && geoResults.length > 0 && (
               <div className="space-y-4">
                 {geoResults.map(result => {
-                  const engines = Object.entries(result.byEngine);
+                  const engines = Object.entries(result.byEngine).filter(([engine]) => engine === "openai");
                   const isRunning = geoRunning === result.id;
                   return (
                     <div key={result.id} className="bg-white rounded-xl border border-slate-200 p-5">
@@ -1390,7 +1234,7 @@ export function SeoClient() {
                           <button
                             onClick={() => runGeoPrompt(result.id)}
                             disabled={isRunning || geoRunning !== null}
-                            title="Run 10× against OpenAI + Gemini"
+                            title="Run 10× against OpenAI"
                             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-indigo-50 text-indigo-600 text-xs font-medium hover:bg-indigo-100 disabled:opacity-40"
                           >
                             <Play className={cn("w-3 h-3", isRunning && "animate-pulse")} />
