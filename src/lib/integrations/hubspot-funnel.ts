@@ -35,6 +35,15 @@ const LIFECYCLE = {
 
 const CLOSED_WON_STAGE = "closedwon";
 
+const SQO_MEETING_TYPES = [
+  "Zeni Overview - Events", "Zeni Overview - Events BDR", "Zeni Overview - Events AE", "Zeni Overview - Events Partnerships",
+  "Zeni Overview - Customer Referral", "Zeni Overview - Employee Referral", "Zeni Overview - Inbound VC Referral",
+  "Zeni Overview - Inbound", "Zeni Overview - Inbound Partnerships", "Partner: Inbound Consultation", "Partner: Consultation",
+  "Inbound Follow Up", "Inbound Product Tour",
+  "Zeni Overview - Outbound BDR", "Zeni Overview - Outbound AE", "Zeni Overview - Enterprise Outbound BDR",
+  "Zeni Overview - AE Self Set BDR Spiff", "Zeni Overview - Partnerships", "Zeni Overview - Partnerships AE Self Set",
+];
+
 /** Human-readable label for each stage value */
 export const STAGE_LABEL: Record<string, string> = {
   "lead":                    "Lead",
@@ -128,6 +137,23 @@ async function countClosedWon(token: string, fromTs: number, toTs: number): Prom
   return res.total ?? 0;
 }
 
+/** Count completed SQO meetings (demo meetings) in the date range. */
+async function countSqoMeetings(token: string, fromTs: number, toTs: number): Promise<number> {
+  const res = await hsFetch(token, "/crm/v3/objects/meetings/search", {
+    filterGroups: [{
+      filters: [
+        { propertyName: "hs_timestamp",      operator: "GTE", value: String(fromTs)      },
+        { propertyName: "hs_timestamp",      operator: "LTE", value: String(toTs)        },
+        { propertyName: "hs_meeting_outcome", operator: "EQ",  value: "COMPLETED"        },
+        { propertyName: "hs_activity_type",   operator: "IN",  values: SQO_MEETING_TYPES },
+      ],
+    }],
+    properties: [],
+    limit: 1,
+  });
+  return res.total ?? 0;
+}
+
 // ---------------------------------------------------------------------------
 // Public API — funnel counts
 // ---------------------------------------------------------------------------
@@ -155,7 +181,7 @@ export async function getFunnelCounts(from: Date, to: Date): Promise<FunnelCount
   const leads     = await countContactsByStage(token, fromTs, toTs, null); await gap();
   const mqls      = await countContactsByStage(token, fromTs, toTs, [LIFECYCLE.mql]); await gap();
   const sqls      = await countContactsByStage(token, fromTs, toTs, [LIFECYCLE.sal, LIFECYCLE.sql]); await gap();
-  const sqos      = await countContactsByStage(token, fromTs, toTs, [LIFECYCLE.opportunity]); await gap();
+  const sqos      = await countSqoMeetings(token, fromTs, toTs); await gap();
   const sqds      = await countContactsByStage(token, fromTs, toTs, [LIFECYCLE.sqd]); await gap();
   const closedWon = await countClosedWon(token, fromTs, toTs);
 
@@ -221,6 +247,75 @@ export async function getFunnelStageRecords(
     return results;
   }
 
+  // SQOs — fetch completed demo meetings in range, resolve their associated contacts
+  if (stage === "sqos") {
+    const meetingResults: FunnelRecord[] = [];
+    let after: string | undefined;
+    do {
+      const body: Record<string, unknown> = {
+        filterGroups: [{
+          filters: [
+            { propertyName: "hs_timestamp",      operator: "GTE", value: String(fromTs)      },
+            { propertyName: "hs_timestamp",      operator: "LTE", value: String(toTs)        },
+            { propertyName: "hs_meeting_outcome", operator: "EQ",  value: "COMPLETED"        },
+            { propertyName: "hs_activity_type",   operator: "IN",  values: SQO_MEETING_TYPES },
+          ],
+        }],
+        properties: ["hs_activity_type"],
+        sorts: [{ propertyName: "hs_timestamp", direction: "DESCENDING" }],
+        limit: 100,
+      };
+      if (after) body.after = after;
+      const res = await hsFetch(token, "/crm/v3/objects/meetings/search", body);
+      const meetings = res.results ?? [];
+
+      if (meetings.length > 0) {
+        // Batch-read meeting → contact associations
+        const assocRes = await hsFetch(token, "/crm/v3/associations/meetings/contacts/batch/read",
+          { inputs: meetings.map((m: { id: string }) => ({ id: m.id })) }
+        );
+        const meetingToContact = new Map<string, string>();
+        for (const item of assocRes.results ?? []) {
+          const toIds = (item.to ?? []).map((t: { id: string }) => t.id);
+          if (toIds.length > 0) meetingToContact.set(String(item.from.id), toIds[0]);
+        }
+
+        const uniqueContactIds = [...new Set(meetingToContact.values())];
+        const contactMap = new Map<string, string>();
+        if (uniqueContactIds.length > 0) {
+          const contactRes = await hsFetch(token, "/crm/v3/objects/contacts/batch/read", {
+            inputs: uniqueContactIds.map((id) => ({ id })),
+            properties: ["firstname", "lastname", "email"],
+          });
+          for (const c of contactRes.results ?? []) {
+            const p = c.properties ?? {};
+            const name = [p.firstname, p.lastname].filter(Boolean).join(" ") || p.email || "Unknown";
+            contactMap.set(String(c.id), name);
+          }
+        }
+
+        for (const m of meetings) {
+          const contactId = meetingToContact.get(m.id);
+          const name = contactId ? (contactMap.get(contactId) ?? "Unknown") : "(No contact linked)";
+          const type = m.properties?.hs_activity_type ?? "";
+          meetingResults.push({
+            id:    m.id,
+            name,
+            url:   contactId
+              ? `https://app.hubspot.com/contacts/${portalId}/contact/${contactId}`
+              : `https://app.hubspot.com/contacts/${portalId}/objects/0-47/views/all/list`,
+            extra: type || undefined,
+          });
+        }
+      }
+
+      after = res.paging?.next?.after;
+      if (after) await new Promise(r => setTimeout(r, 250));
+    } while (after && meetingResults.length < 500);
+
+    return meetingResults;
+  }
+
   // Contacts — createdate in range + exact lifecyclestage EQ filter per stage
   const dateFilters = [
     { propertyName: "createdate", operator: "GTE", value: String(fromTs) },
@@ -230,7 +325,6 @@ export async function getFunnelStageRecords(
   const stageFilters: string[] =
     stage === "mqls" ? [LIFECYCLE.mql] :
     stage === "sqls" ? [LIFECYCLE.sal, LIFECYCLE.sql] :
-    stage === "sqos" ? [LIFECYCLE.opportunity] :
     stage === "sqds" ? [LIFECYCLE.sqd] :
     []; // leads — no stage filter
 
