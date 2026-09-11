@@ -294,6 +294,7 @@ model AiMentionSnapshot {
   runCount     Int      @default(1)      // total times this query has been run
   mentionCount Int      @default(0)      // how many runs included a Zeni mention
   citedUrls    String?  // JSON: string[] — unique zeni.ai URLs cited across all runs
+  responseText String?  // Last response text (first 1500 chars) from the AI engine
   syncedAt     DateTime @default(now())
 
   @@unique([engine, query])
