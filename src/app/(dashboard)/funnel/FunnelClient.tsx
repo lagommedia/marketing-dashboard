@@ -11,9 +11,7 @@ import { cn } from "@/lib/utils";
 interface FunnelCounts {
   leads:     number;
   mqls:      number;
-  sqls:      number;
   sqos:      number;
-  sqds:      number;
   closedWon: number;
 }
 
@@ -35,14 +33,12 @@ interface Notification {
   profileUrl: string;
 }
 
-type Stage = "leads" | "mqls" | "sqls" | "sqos" | "sqds" | "closedwon";
+type Stage = "leads" | "mqls" | "sqos" | "closedwon";
 
 const STAGES: { key: Stage; label: string; color: string; bg: string; barColor: string }[] = [
   { key: "leads",     label: "Leads",      color: "text-slate-700",  bg: "bg-slate-100",   barColor: "bg-slate-400"  },
   { key: "mqls",      label: "MQLs",       color: "text-blue-700",   bg: "bg-blue-50",     barColor: "bg-blue-400"   },
-  { key: "sqls",      label: "SQLs",       color: "text-indigo-700", bg: "bg-indigo-50",   barColor: "bg-indigo-500" },
   { key: "sqos",      label: "SQOs",       color: "text-violet-700", bg: "bg-violet-50",   barColor: "bg-violet-500" },
-  { key: "sqds",      label: "SQDs",       color: "text-purple-700", bg: "bg-purple-50",   barColor: "bg-purple-500" },
   { key: "closedwon", label: "Closed Won", color: "text-emerald-700",bg: "bg-emerald-50",  barColor: "bg-emerald-500"},
 ];
 
@@ -59,9 +55,7 @@ function fmtPct(a: number, b: number) {
 function getCount(counts: FunnelCounts, stage: Stage): number {
   return stage === "leads"     ? counts.leads     :
          stage === "mqls"      ? counts.mqls      :
-         stage === "sqls"      ? counts.sqls      :
          stage === "sqos"      ? counts.sqos      :
-         stage === "sqds"      ? counts.sqds      :
                                  counts.closedWon;
 }
 
@@ -307,11 +301,9 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
   }, [from, to]);
 
   const conversionPairs: [Stage, Stage][] = [
-    ["leads", "mqls"],
-    ["mqls",  "sqls"],
-    ["sqls",  "sqos"],
-    ["sqos",  "sqds"],
-    ["sqds",  "closedwon"],
+    ["leads",  "mqls"],
+    ["mqls",   "sqos"],
+    ["sqos",   "closedwon"],
   ];
 
   return (
