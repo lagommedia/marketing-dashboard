@@ -102,10 +102,13 @@ export async function syncLinkedinOrganic(days = 30): Promise<{ recordsCount: nu
     count++;
   }
 
-  await prisma.integration.update({
-    where: { platform: row.platform as string },
-    data:  { lastSyncedAt: new Date() },
-  });
+  const updateRow = organicRow ?? adsRow;
+  if (updateRow) {
+    await prisma.integration.update({
+      where: { platform: updateRow.platform as string },
+      data:  { lastSyncedAt: new Date() },
+    });
+  }
 
   return { recordsCount: count };
 }

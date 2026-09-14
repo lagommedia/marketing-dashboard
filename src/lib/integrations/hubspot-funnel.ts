@@ -36,12 +36,12 @@ const LIFECYCLE = {
 const CLOSED_WON_STAGE = "closedwon";
 
 const SQO_MEETING_TYPES = [
+  // Events
   "Zeni Overview - Events", "Zeni Overview - Events BDR", "Zeni Overview - Events AE", "Zeni Overview - Events Partnerships",
+  // Referral
   "Zeni Overview - Customer Referral", "Zeni Overview - Employee Referral", "Zeni Overview - Inbound VC Referral",
-  "Zeni Overview - Inbound", "Zeni Overview - Inbound Partnerships", "Partner: Inbound Consultation", "Partner: Consultation",
-  "Inbound Follow Up", "Inbound Product Tour",
-  "Zeni Overview - Outbound BDR", "Zeni Overview - Outbound AE", "Zeni Overview - Enterprise Outbound BDR",
-  "Zeni Overview - AE Self Set BDR Spiff", "Zeni Overview - Partnerships", "Zeni Overview - Partnerships AE Self Set",
+  // Inbound
+  "Zeni Overview - Inbound", "Zeni Overview - Inbound Partnerships", "Partner: Inbound Consultation",
 ];
 
 /** Human-readable label for each stage value */

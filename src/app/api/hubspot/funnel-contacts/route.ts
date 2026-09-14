@@ -9,9 +9,9 @@ const BASE = "https://api.hubapi.com";
 const LIFECYCLE_MQL_STAGES = ["marketingqualifiedlead", "salesqualifiedlead", "opportunity", "customer"];
 const CLOSED_WON_STAGE = "closedwon";
 
-// All meeting types that count as SQOs (must stay in sync with hubspot.ts constants)
+// All meeting types that count as SQOs — must stay in sync with hubspot.ts constants
 const SQO_MEETING_TYPES = [
-  // Events → organic
+  // Events
   "Zeni Overview - Events",
   "Zeni Overview - Events BDR",
   "Zeni Overview - Events AE",
@@ -20,19 +20,10 @@ const SQO_MEETING_TYPES = [
   "Zeni Overview - Customer Referral",
   "Zeni Overview - Employee Referral",
   "Zeni Overview - Inbound VC Referral",
-  // Inbound / Outbound / Partnerships (channel from deal attribution)
+  // Inbound
   "Zeni Overview - Inbound",
   "Zeni Overview - Inbound Partnerships",
   "Partner: Inbound Consultation",
-  "Partner: Consultation",
-  "Inbound Follow Up",
-  "Inbound Product Tour",
-  "Zeni Overview - Outbound BDR",
-  "Zeni Overview - Outbound AE",
-  "Zeni Overview - Enterprise Outbound BDR",
-  "Zeni Overview - AE Self Set BDR Spiff",
-  "Zeni Overview - Partnerships",
-  "Zeni Overview - Partnerships AE Self Set",
 ];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
