@@ -60,16 +60,32 @@ export async function syncLinkedinOrganic(days = 30): Promise<{ recordsCount: nu
   }
 
   let count = 0;
+  let shareStatsWarning: string | null = null;
   const today = new Date();
   const from  = new Date(today);
   from.setDate(from.getDate() - days);
 
   // ── Daily page share statistics (impressions, clicks, engagement) ─────────
-  const shareStats = await withRetry(
-    () => fetchDailyShareStats(token, orgUrn!, from, today),
-    { label: "linkedin:share-stats" }
-  );
-  await delay(DELAY_MS);
+  // Requires Community Management API Standard Tier. If the app is on Dev Tier
+  // or lacks the product, LinkedIn returns 403 — we catch it and sync followers only.
+  let shareStats: ShareStatDay[] = [];
+  try {
+    shareStats = await withRetry(
+      () => fetchDailyShareStats(token, orgUrn!, from, today),
+      { label: "linkedin:share-stats" }
+    );
+    await delay(DELAY_MS);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("403")) {
+      shareStatsWarning =
+        "Page impressions/reach/engagement require Community Management API Standard Tier. " +
+        "Request an upgrade in your LinkedIn Developer App to unlock full analytics. " +
+        "Follower count will still sync.";
+    } else {
+      throw err;
+    }
+  }
 
   // ── Current follower count ────────────────────────────────────────────────
   const followerCount = await withRetry(
@@ -77,29 +93,43 @@ export async function syncLinkedinOrganic(days = 30): Promise<{ recordsCount: nu
     { label: "linkedin:followers" }
   ).catch(() => 0);
 
-  // Upsert one row per day — put follower count on today only (API only gives total)
-  for (const stat of shareStats) {
-    const isToday = stat.date.toDateString() === today.toDateString();
+  if (shareStats.length > 0) {
+    // Full data: upsert one row per day with all metrics
+    for (const stat of shareStats) {
+      const isToday = stat.date.toDateString() === today.toDateString();
+      await prisma.socialOrganicSnapshot.upsert({
+        where:  { platform_date: { platform: "linkedin", date: stat.date } },
+        create: {
+          platform:    "linkedin",
+          date:        stat.date,
+          followers:   isToday ? followerCount : 0,
+          impressions: stat.impressions,
+          reach:       stat.uniqueImpressions,
+          engagements: stat.engagements,
+          clicks:      stat.clicks,
+        },
+        update: {
+          followers:   isToday ? followerCount : undefined,
+          impressions: stat.impressions,
+          reach:       stat.uniqueImpressions,
+          engagements: stat.engagements,
+          clicks:      stat.clicks,
+        },
+      });
+      count++;
+    }
+  } else if (followerCount > 0) {
+    // Partial data: write today's follower count only
     await prisma.socialOrganicSnapshot.upsert({
-      where:  { platform_date: { platform: "linkedin", date: stat.date } },
-      create: {
-        platform:    "linkedin",
-        date:        stat.date,
-        followers:   isToday ? followerCount : 0,
-        impressions: stat.impressions,
-        reach:       stat.uniqueImpressions,
-        engagements: stat.engagements,
-        clicks:      stat.clicks,
-      },
-      update: {
-        followers:   isToday ? followerCount : undefined,
-        impressions: stat.impressions,
-        reach:       stat.uniqueImpressions,
-        engagements: stat.engagements,
-        clicks:      stat.clicks,
-      },
+      where:  { platform_date: { platform: "linkedin", date: today } },
+      create: { platform: "linkedin", date: today, followers: followerCount, impressions: 0, reach: 0, engagements: 0, clicks: 0 },
+      update: { followers: followerCount },
     });
     count++;
+  }
+
+  if (shareStatsWarning) {
+    throw new Error(shareStatsWarning);
   }
 
   const updateRow = organicRow ?? adsRow;
