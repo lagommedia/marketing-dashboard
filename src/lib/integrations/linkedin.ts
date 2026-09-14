@@ -19,7 +19,7 @@ import { decrypt } from "@/lib/encryption";
 import { withRetry, delay } from "@/lib/sync/utils";
 
 const API_BASE    = "https://api.linkedin.com";
-const LI_VERSION  = "202506"; // LinkedIn API versioning via header
+const LI_VERSION  = "202603"; // LinkedIn API versioning via header
 const DELAY_MS    = 500;
 
 // ---------------------------------------------------------------------------
