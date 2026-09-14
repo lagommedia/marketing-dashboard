@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { decrypt } from "@/lib/encryption";
 
-const SCOPES = ["openid", "profile", "r_organization_admin", "rw_organization_admin"].join(" ");
+const SCOPES = ["openid", "profile", "r_organization_social", "r_organization_admin", "rw_organization_admin"].join(" ");
 
 export async function GET(_req: NextRequest) {
   const row = await prisma.integration.findUnique({ where: { platform: "linkedin_organic" } });
