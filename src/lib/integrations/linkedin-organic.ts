@@ -155,7 +155,9 @@ async function fetchDailyShareStats(
     "timeIntervals.timeRange.end":       String(to.getTime()),
   });
 
-  const res  = await liGet(token, `/rest/organizationalEntityShareStatistics?${params}`);
+  // Use v2 API — the /rest/ equivalent requires LinkedIn Partner API tier which
+  // is gated behind a paid program. The v2 API predates this restriction.
+  const res  = await liGetV2(token, `/v2/organizationalEntityShareStatistics?${params}`);
   const json = await res.json();
 
   const rows: ShareStatDay[] = [];
@@ -182,14 +184,30 @@ async function fetchDailyShareStats(
 
 async function fetchFollowerCount(token: string, orgUrn: string): Promise<number> {
   const encoded = encodeURIComponent(orgUrn);
-  const res  = await liGet(token, `/rest/networkSizes/${encoded}?edgeType=COMPANY_FOLLOWED_BY_MEMBER`);
+  const res  = await liGetV2(token, `/v2/networkSizes/${encoded}?edgeType=COMPANY_FOLLOWED_BY_MEMBER`);
   const json = await res.json();
   return Number(json.firstDegreeSize ?? 0);
 }
 
 // ---------------------------------------------------------------------------
-// HTTP helper
+// HTTP helpers
 // ---------------------------------------------------------------------------
+
+/** v2 API — predates the LinkedIn Partner API tier restriction */
+async function liGetV2(token: string, path: string): Promise<Response> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: {
+      Authorization:               `Bearer ${token}`,
+      "X-Restli-Protocol-Version": "2.0.0",
+    },
+  });
+  if (res.status === 429) throw new Error("429 LinkedIn rate limit — will retry");
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`LinkedIn ${res.status}: ${text.slice(0, 200)}`);
+  }
+  return res;
+}
 
 async function liGet(token: string, path: string): Promise<Response> {
   const res = await fetch(`${API_BASE}${path}`, {
