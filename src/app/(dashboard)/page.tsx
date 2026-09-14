@@ -675,6 +675,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
           channel={channel}
           format="currency"
           subValue={estimatedSpendLabel}
+          noClick
         />
       </div>
 

@@ -26,11 +26,13 @@ interface Props {
   format:      "currency" | "number";
   /** Show stacked Paid Media / Organic / Referral breakdown in the trend chart */
   breakdown?:  boolean;
+  /** Disable the trend modal click interaction entirely */
+  noClick?:    boolean;
 }
 
 export function TrendableMetricCard({
   label, value, subValue, highlight, pace, sparkData,
-  metric, from, to, channel, format, breakdown,
+  metric, from, to, channel, format, breakdown, noClick,
 }: Props) {
   const [open, setOpen] = useState(false);
 
@@ -42,10 +44,10 @@ export function TrendableMetricCard({
       <MetricCard
         label={label}
         value={value}
-        subValue={subValue ?? "click to see trend"}
+        subValue={noClick ? subValue : (subValue ?? "click to see trend")}
         highlight={highlight}
         pace={pace}
-        onClick={() => setOpen(true)}
+        onClick={noClick ? undefined : () => setOpen(true)}
         footer={sparkData ? <MiniSparkline data={sparkData} format={format} /> : undefined}
         infoPopover={showPopover ? (
           <FunnelContactsPopover
