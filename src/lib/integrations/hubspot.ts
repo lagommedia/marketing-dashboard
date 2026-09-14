@@ -103,9 +103,10 @@ const DEAL_DIRECT_VALUE = "Direct Traffic"; // → 50/50 paid/organic
 // ---------------------------------------------------------------------------
 // Meeting type constants (SQO attribution via hs_activity_type)
 // Only COMPLETED meetings with these types count as SQOs.
+// Validated against CEO HubSpot dashboard (Inbound SQOs + Referral SQOs charts).
 // ---------------------------------------------------------------------------
 
-/** Completed meetings of these types → Organic SQOs */
+/** Completed meetings of these types → Organic SQOs (events-sourced channel) */
 const MEETING_TYPES_EVENTS: string[] = [
   "Zeni Overview - Events",
   "Zeni Overview - Events BDR",
@@ -124,24 +125,13 @@ const MEETING_TYPES_REFERRAL: string[] = [
  * Completed meetings of these types → channel determined by associated deal's
  * deal_source / deal_source_detail_1 (same two-tier logic as revenue).
  * Falls back to "organic" when no deal is linked.
- * Covers inbound, outbound, and partnerships demos — all need deal attribution.
+ * Only pure inbound first-touch meetings — outbound, events, and partnerships
+ * are excluded to match CEO dashboard definition of SQO.
  */
 const MEETING_TYPES_INBOUND: string[] = [
-  // Inbound
   "Zeni Overview - Inbound",
   "Zeni Overview - Inbound Partnerships",
   "Partner: Inbound Consultation",
-  "Partner: Consultation",
-  "Inbound Follow Up",
-  "Inbound Product Tour",
-  // Outbound
-  "Zeni Overview - Outbound BDR",
-  "Zeni Overview - Outbound AE",
-  "Zeni Overview - Enterprise Outbound BDR",
-  "Zeni Overview - AE Self Set BDR Spiff",
-  // Partnerships
-  "Zeni Overview - Partnerships",
-  "Zeni Overview - Partnerships AE Self Set",
 ];
 
 // ---------------------------------------------------------------------------
@@ -2666,7 +2656,7 @@ async function fetchSqoMeetings(
 ): Promise<SqoRecord[]> {
   const sqos: SqoRecord[] = [];
 
-  // Events → organic
+  // Events → organic (events-sourced channel; 0 this quarter but counted in other quarters)
   console.log("[sqo] fetching Events meetings…");
   const eventMeetings = await fetchMeetingsByType(token, fromTs, MEETING_TYPES_EVENTS);
   console.log(`[sqo]   Events: ${eventMeetings.length}`);
