@@ -21,36 +21,41 @@ const LI_VERSION = "202603";
 const DELAY_MS   = 500;
 
 export async function syncLinkedinOrganic(days = 30): Promise<{ recordsCount: number }> {
-  // Use the dedicated Community Management API app (linkedin_organic), falling back to
-  // the main LinkedIn integration if credentials haven't been migrated yet.
-  const row = await prisma.integration.findUnique({ where: { platform: "linkedin_organic" } })
-    ?? await prisma.integration.findUnique({ where: { platform: "linkedin" } });
-  if (!row?.accessToken) throw new Error("LinkedIn Organic not connected — save your Community Management API credentials and authorise in Integrations.");
-  const token = decrypt(row.accessToken);
+  // Token strategy: Marketing Developer Platform (ads) token has r_organization_social +
+  // r_organization_admin and is NOT subject to Community Management API Development Tier
+  // restrictions. Prefer it for API calls; fall back to the dedicated organic app token.
+  const adsRow     = await prisma.integration.findUnique({ where: { platform: "linkedin" } });
+  const organicRow = await prisma.integration.findUnique({ where: { platform: "linkedin_organic" } });
+
+  const tokenRow = (adsRow?.accessToken ? adsRow : null) ?? organicRow;
+  if (!tokenRow?.accessToken) throw new Error("LinkedIn not connected — connect LinkedIn Campaign Manager or LinkedIn Organic in Integrations.");
+  const token = decrypt(tokenRow.accessToken);
 
   // ── Discover org URN ──────────────────────────────────────────────────────
-  // Prefer manually saved URN in tokenSecret; fall back to API discovery.
-  // Discovery requires r_organization_admin (Community Management API product).
+  // Prefer manually saved URN (from either row's tokenSecret), then try API discovery.
   let orgUrn: string | null =
-    row.tokenSecret?.startsWith("urn:li:organization:") ? row.tokenSecret : null;
+    (organicRow?.tokenSecret?.startsWith("urn:li:organization:") ? organicRow.tokenSecret : null)
+    ?? (adsRow?.tokenSecret?.startsWith("urn:li:organization:") ? adsRow.tokenSecret : null);
 
   if (!orgUrn) {
     try {
       orgUrn = await withRetry(() => discoverOrgUrn(token), { label: "linkedin:org-discovery" });
     } catch {
-      // Discovery fails without Community Management API product — surface actionable message
+      // Discovery fails without r_organization_admin scope
     }
     if (!orgUrn) {
       throw new Error(
-        "LinkedIn requires the Community Management API product to auto-discover your Company Page. " +
-        "Either: (A) Add your Company Page ID in Integrations → Organic Social → LinkedIn, or " +
-        "(B) Request the Community Management API product in your LinkedIn Developer App, then re-authorize."
+        "Could not determine LinkedIn Company Page. " +
+        "Enter your Company Page numeric ID in Integrations → Organic Social → LinkedIn."
       );
     }
-    await prisma.integration.update({
-      where: { platform: row.platform as string },
-      data:  { tokenSecret: orgUrn },
-    });
+    const saveRow = organicRow ?? adsRow;
+    if (saveRow) {
+      await prisma.integration.update({
+        where: { platform: saveRow.platform as string },
+        data:  { tokenSecret: orgUrn },
+      });
+    }
     await delay(DELAY_MS);
   }
 
