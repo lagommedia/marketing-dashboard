@@ -17,7 +17,7 @@ import { decrypt } from "@/lib/encryption";
 import { withRetry, delay } from "@/lib/sync/utils";
 
 const API_BASE   = "https://api.linkedin.com";
-const LI_VERSION = "202508";
+const LI_VERSION = "202506";
 const DELAY_MS   = 500;
 
 export async function syncLinkedinOrganic(days = 30): Promise<{ recordsCount: number }> {
