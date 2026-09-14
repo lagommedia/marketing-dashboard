@@ -55,41 +55,44 @@ export async function POST(req: NextRequest) {
     return acc;
   }, {});
 
-  const analysisPrompt = `You are a competitive intelligence analyst reviewing how AI search engines respond to the query: "${prompt.text}"
+  const analysisPrompt = `You are a GEO (Generative Engine Optimization) specialist. An AI assistant was asked: "${prompt.text}"
 
-Here are the most recent AI responses:
+Here are the actual AI responses:
 ---
 ${combinedText}
 ---
 
-The URLs cited by AI web search grounding:
+URLs the AI cited via web search:
 ${uniqueCitedUrls.slice(0, 20).join("\n") || "(none)"}
 
-Your job is NOT to give prescriptive advice — it is to surface patterns. What content, channels, and topics are consistently working for the companies showing up? What does the AI's worldview look like for this query? Return a JSON object with exactly this structure:
+Zeni (zeni.ai) is an AI-powered bookkeeping and financial operations platform for startups and growing businesses.
+
+Return a JSON object with exactly this structure:
 
 {
   "competitorDetails": [
     {
       "company": "Company or product name",
-      "citedUrl": "The specific URL from the cited list that matches this company, or null if none",
-      "why": "1-2 sentences: WHY does GPT surface this company for this query? What specific authority signal, content type, or positioning earns them this spot?"
+      "citedUrl": "One of the cited URLs above that belongs to this company, or null",
+      "mentioned": "1-2 sentences: what did the AI actually say about this company? Quote or closely paraphrase the specific claim or feature the AI attributed to them."
     }
   ],
-  "themes": [
+  "actions": [
     {
-      "theme": "Short theme label (e.g. 'Third-party review sites dominate citations')",
-      "description": "2-3 sentences describing the pattern across competitors: what content formats, distribution channels, topic angles, or authority signals are consistently showing up. Be specific about what's working and where the gaps are that Zeni could fill."
+      "category": "Content" | "Schema" | "Internal Links" | "Directory / PR" | "Page Update",
+      "priority": "high" | "medium" | "low",
+      "task": "Specific, executable action. Name the exact page, schema type, directory, keyword, or section. E.g. 'Add an FAQ section to zeni.ai/bookkeeping answering Is AI bookkeeping safe? with a 60-word direct answer paragraph' or 'Submit Zeni to G2\\'s AI Accounting Software category — QuickBooks and Xero are currently listed there' or 'Add FAQPage + Article schema to the zeni.ai/blog/ai-bookkeeping post' or 'Internally link from zeni.ai/pricing to zeni.ai/security using anchor text AI bookkeeping security'."
     }
   ],
   "zeniMentioned": true or false,
-  "synopsis": "2-3 sentences: what landscape does GPT describe for this query, and what does Zeni's absence (or presence) tell us about its current visibility?"
+  "synopsis": "2-3 sentences: what does the AI say about this topic space, and what specifically is causing Zeni to be absent (or present)?"
 }
 
 Rules:
-- competitorDetails: only companies OTHER than Zeni, ordered by prominence
-- citedUrl must be one of the cited URLs listed above, or null
-- themes: 3-5 patterns you observe across ALL the competitors together — content formats, page types, topic clusters, distribution channels, authority signals. This is where the strategic insight lives.
-- Keep everything descriptive and observational, not prescriptive ("here's what's happening" not "Zeni should do X")
+- competitorDetails: only companies OTHER than Zeni; order by how prominently the AI mentioned them
+- citedUrl must be an exact URL from the list above or null — do not invent URLs
+- actions: 5-8 specific, immediately executable tasks Zeni's team can act on to appear for this query. Each task must name a real page, schema type, directory, or anchor text — no vague guidance like "create more content" or "improve SEO." Reference the cited URLs and competitor pages where relevant.
+- priority high = biggest gap or highest-leverage action; low = nice-to-have
 - Return ONLY valid JSON. No markdown, no explanation outside the JSON.`;
 
   try {
@@ -112,8 +115,8 @@ Rules:
     const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
 
     let parsed: {
-      competitorDetails?: Array<{ company: string; citedUrl: string | null; why: string }>;
-      themes?: Array<{ theme: string; description: string }>;
+      competitorDetails?: Array<{ company: string; citedUrl: string | null; mentioned: string }>;
+      actions?: Array<{ category: string; priority: string; task: string }>;
       zeniMentioned?: boolean;
       synopsis?: string;
     } = {};
@@ -125,7 +128,7 @@ Rules:
 
     const payload = {
       competitorDetails: parsed.competitorDetails ?? [],
-      themes:            parsed.themes            ?? [],
+      actions:           parsed.actions           ?? [],
       zeniMentioned:     parsed.zeniMentioned     ?? false,
       citedPages:        uniqueCitedUrls,
       synopsis:          parsed.synopsis           ?? "Analysis unavailable.",

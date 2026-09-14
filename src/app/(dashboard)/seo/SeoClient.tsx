@@ -559,8 +559,8 @@ export function SeoClient() {
   const [geoRunning, setGeoRunning]           = useState<string | null>(null); // promptId being run
   const [geoAnalyzing, setGeoAnalyzing]       = useState<string | null>(null);
   const [geoAnalysis, setGeoAnalysis]         = useState<Record<string, {
-    competitorDetails: Array<{ company: string; citedUrl: string | null; why: string }>;
-    themes: Array<{ theme: string; description: string }>;
+    competitorDetails: Array<{ company: string; citedUrl: string | null; mentioned: string }>;
+    actions: Array<{ category: string; priority: string; task: string }>;
     citedPages: string[];
     synopsis: string;
     zeniMentioned: boolean;
@@ -1395,9 +1395,9 @@ export function SeoClient() {
                                 <table className="w-full text-xs border-collapse">
                                   <thead>
                                     <tr className="text-left">
-                                      <th className="pb-2 pr-3 text-[10px] font-semibold text-violet-600 uppercase tracking-wide whitespace-nowrap">Company</th>
-                                      <th className="pb-2 pr-3 text-[10px] font-semibold text-violet-600 uppercase tracking-wide whitespace-nowrap">Page</th>
-                                      <th className="pb-2 text-[10px] font-semibold text-violet-600 uppercase tracking-wide">Why they appear</th>
+                                      <th className="pb-2 pr-3 text-[10px] font-semibold text-violet-600 uppercase tracking-wide whitespace-nowrap">Competitor</th>
+                                      <th className="pb-2 pr-3 text-[10px] font-semibold text-violet-600 uppercase tracking-wide whitespace-nowrap">Page cited</th>
+                                      <th className="pb-2 text-[10px] font-semibold text-violet-600 uppercase tracking-wide">What GPT said about them</th>
                                     </tr>
                                   </thead>
                                   <tbody className="divide-y divide-violet-100">
@@ -1421,7 +1421,7 @@ export function SeoClient() {
                                             <span className="text-slate-400">—</span>
                                           )}
                                         </td>
-                                        <td className="py-2.5 text-slate-600 leading-relaxed">{row.why}</td>
+                                        <td className="py-2.5 text-slate-600 leading-relaxed">{row.mentioned}</td>
                                       </tr>
                                     ))}
                                   </tbody>
@@ -1429,23 +1429,51 @@ export function SeoClient() {
                               </div>
                             )}
 
-                            {/* Common themes */}
-                            {a.themes && a.themes.length > 0 && (
-                              <div className="pt-1 space-y-2">
-                                <div className="flex items-center gap-1.5">
-                                  <FileText className="w-3 h-3 text-violet-400" />
-                                  <p className="text-[10px] font-semibold text-violet-600 uppercase tracking-wide">Common themes</p>
+                            {/* Action checklist */}
+                            {a.actions && a.actions.length > 0 && (() => {
+                              const priorityOrder = { high: 0, medium: 1, low: 2 };
+                              const sorted = [...a.actions].sort((x, y) =>
+                                (priorityOrder[x.priority as keyof typeof priorityOrder] ?? 1) -
+                                (priorityOrder[y.priority as keyof typeof priorityOrder] ?? 1)
+                              );
+                              const priorityStyle: Record<string, string> = {
+                                high:   "bg-rose-100 text-rose-700",
+                                medium: "bg-amber-100 text-amber-700",
+                                low:    "bg-slate-100 text-slate-500",
+                              };
+                              const categoryStyle: Record<string, string> = {
+                                "Content":          "bg-indigo-50 text-indigo-700 border-indigo-100",
+                                "Schema":           "bg-emerald-50 text-emerald-700 border-emerald-100",
+                                "Internal Links":   "bg-sky-50 text-sky-700 border-sky-100",
+                                "Directory / PR":   "bg-orange-50 text-orange-700 border-orange-100",
+                                "Page Update":      "bg-violet-50 text-violet-700 border-violet-100",
+                              };
+                              return (
+                                <div className="pt-1 space-y-2">
+                                  <div className="flex items-center gap-1.5">
+                                    <Users className="w-3 h-3 text-violet-400" />
+                                    <p className="text-[10px] font-semibold text-violet-600 uppercase tracking-wide">Action checklist for Zeni</p>
+                                  </div>
+                                  <div className="space-y-1.5">
+                                    {sorted.map((action, i) => {
+                                      const catClass = categoryStyle[action.category] ?? "bg-slate-50 text-slate-600 border-slate-100";
+                                      const priClass = priorityStyle[action.priority] ?? priorityStyle.medium;
+                                      return (
+                                        <div key={i} className="flex items-start gap-2.5 rounded-lg bg-white border border-violet-100 px-3 py-2.5">
+                                          <span className={cn("mt-0.5 shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide", priClass)}>
+                                            {action.priority}
+                                          </span>
+                                          <span className={cn("mt-0.5 shrink-0 text-[9px] font-semibold px-1.5 py-0.5 rounded border uppercase tracking-wide", catClass)}>
+                                            {action.category}
+                                          </span>
+                                          <p className="text-xs text-slate-700 leading-relaxed">{action.task}</p>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
                                 </div>
-                                <div className="space-y-2">
-                                  {a.themes.map((t, i) => (
-                                    <div key={i} className="rounded-lg bg-white border border-violet-100 px-3 py-2.5">
-                                      <p className="text-xs font-semibold text-slate-800 mb-0.5">{t.theme}</p>
-                                      <p className="text-xs text-slate-600 leading-relaxed">{t.description}</p>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
+                              );
+                            })()}
                           </div>
                         );
                       })()}
