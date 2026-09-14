@@ -29,7 +29,7 @@ const ORGANIC_SOCIAL = [
     oauthPath:   "/api/oauth/linkedin-organic",
     setupNote:   "Requires a separate LinkedIn Developer App with only the Community Management API product. The redirect URL is: " + (typeof window !== "undefined" ? window.location.origin : "") + "/api/oauth/linkedin-organic/callback",
     docsUrl:     "https://learn.microsoft.com/en-us/linkedin/marketing/integrations/community-management/organizations/share-statistics",
-    requiredScopes: "r_organization_admin, rw_organization_admin",
+    requiredScopes: "r_organization_social",
   },
   {
     id:          "facebook",
@@ -61,6 +61,8 @@ function OrganicSocialCard({
   const [clientSecret, setClientSecret] = useState("");
   const [savingCreds,  setSavingCreds]  = useState(false);
   const [credsSaved,   setCredsSaved]   = useState(status?.hasCredentials ?? false);
+  const [orgIdInput,   setOrgIdInput]   = useState("");
+  const [savingOrgId,  setSavingOrgId]  = useState(false);
   const connected = status?.connected ?? false;
 
   const hasOAuth = !!config.oauthPath;
@@ -77,6 +79,22 @@ function OrganicSocialCard({
       setSyncMsg(err instanceof Error ? err.message : "Sync failed");
     } finally {
       setSyncing(false);
+    }
+  }
+
+  async function handleSaveOrgId(e: React.FormEvent) {
+    e.preventDefault();
+    setSavingOrgId(true);
+    setSyncMsg(null);
+    try {
+      const res  = await fetch("/api/integrations/linkedin/org-id", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ orgId: orgIdInput }) });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Failed to save");
+      window.location.reload();
+    } catch (err) {
+      setSyncMsg(err instanceof Error ? err.message : "Failed to save Company Page ID");
+    } finally {
+      setSavingOrgId(false);
     }
   }
 
@@ -158,6 +176,29 @@ function OrganicSocialCard({
             Authorise with OAuth →
           </button>
           {!credsSaved && <p className="text-[11px] text-slate-400 text-center">Save credentials above to enable OAuth</p>}
+        </div>
+      )}
+
+      {/* Step 3: Company Page ID — shown after OAuth succeeds but before org URN is set */}
+      {connected && config.id === "linkedin_organic" && !orgUrn && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 space-y-2">
+          <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">Step 3 — Company Page ID</p>
+          <p className="text-xs text-amber-700">
+            Enter your LinkedIn Company Page numeric ID. Find it in your Admin Center URL:
+            <code className="bg-amber-100 px-1 rounded ml-1">linkedin.com/company/<strong>12345678</strong>/admin/</code>
+          </p>
+          <form onSubmit={handleSaveOrgId} className="flex gap-2">
+            <input type="text" value={orgIdInput} onChange={e => setOrgIdInput(e.target.value)} placeholder="e.g. 12345678" className="flex-1 text-xs rounded border border-amber-300 bg-white px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-amber-400" />
+            <button type="submit" disabled={!orgIdInput || savingOrgId} className={cn("px-3 py-1.5 rounded text-xs font-semibold transition-colors", orgIdInput && !savingOrgId ? "bg-amber-600 text-white hover:bg-amber-700" : "bg-amber-100 text-amber-400 cursor-not-allowed")}>
+              {savingOrgId ? "Saving…" : "Save"}
+            </button>
+          </form>
+        </div>
+      )}
+
+      {connected && config.id === "linkedin_organic" && orgUrn && (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-500">
+          <span className="font-medium text-slate-700">Company Page:</span> <code className="text-slate-600">{orgUrn}</code>
         </div>
       )}
 

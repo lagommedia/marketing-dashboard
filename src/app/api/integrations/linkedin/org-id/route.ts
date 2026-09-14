@@ -16,8 +16,13 @@ export async function POST(req: NextRequest) {
   }
 
   const urn = `urn:li:organization:${trimmed}`;
+
+  // Prefer the dedicated organic integration row; fall back to the ads row
+  const organicRow = await prisma.integration.findUnique({ where: { platform: "linkedin_organic" } });
+  const platform   = organicRow ? "linkedin_organic" : "linkedin";
+
   await prisma.integration.update({
-    where: { platform: "linkedin" },
+    where: { platform },
     data:  { tokenSecret: urn },
   });
 
