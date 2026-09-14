@@ -516,25 +516,19 @@ async function getQtdPacing(channel: Channel): Promise<PacingMap> {
         where: { period_channel: { period, channel: "marketing_org" } },
       }),
     ]);
-    if (channelRows.length > 0) {
-      tgt = {
-        targetMqls:      channelRows.reduce((s, r) => s + (r.targetMqls      ?? 0), 0) || null,
-        targetSqos:      channelRows.reduce((s, r) => s + (r.targetSqos      ?? 0), 0) || null,
-        targetPipeline:  channelRows.reduce((s, r) => s + (r.targetPipeline  ?? 0), 0) || null,
-        targetClosedWon: channelRows.reduce((s, r) => s + (r.targetClosedWon ?? 0), 0) || null,
-        targetRevenue:   channelRows.reduce((s, r) => s + (r.targetRevenue   ?? 0), 0) || null,
-        targetSpend:     channelRows.reduce((s, r) => s + (r.targetSpend     ?? 0), 0) || null,
-      };
-    } else if (orgRow) {
-      tgt = {
-        targetMqls:      orgRow.targetMqls,
-        targetSqos:      orgRow.targetSqos,
-        targetPipeline:  orgRow.targetPipeline,
-        targetClosedWon: orgRow.targetClosedWon,
-        targetRevenue:   orgRow.targetRevenue,
-        targetSpend:     orgRow.targetSpend,
-      };
-    }
+    // marketing_org is the authoritative total (set via the Pacing page).
+    // Per-channel rows supplement for metrics not set in marketing_org.
+    const chSum = (key: keyof typeof channelRows[0]) =>
+      channelRows.reduce((s, r) => s + ((r[key] as number | null) ?? 0), 0) || null;
+    const merged: Record<string, number | null> = {
+      targetMqls:      orgRow?.targetMqls      ?? (channelRows.length ? chSum("targetMqls")      : null),
+      targetSqos:      orgRow?.targetSqos      ?? (channelRows.length ? chSum("targetSqos")      : null),
+      targetPipeline:  orgRow?.targetPipeline  ?? (channelRows.length ? chSum("targetPipeline")  : null),
+      targetClosedWon: orgRow?.targetClosedWon ?? (channelRows.length ? chSum("targetClosedWon") : null),
+      targetRevenue:   orgRow?.targetRevenue   ?? (channelRows.length ? chSum("targetRevenue")   : null),
+      targetSpend:     orgRow?.targetSpend     ?? (channelRows.length ? chSum("targetSpend")     : null),
+    };
+    if (Object.values(merged).some(v => v !== null)) tgt = merged;
   } else {
     const row = await prisma.pacingTarget.findUnique({
       where: { period_channel: { period, channel } },
