@@ -503,21 +503,36 @@ async function getQtdPacing(channel: Channel): Promise<PacingMap> {
   });
   const actual = qtd._sum;
 
-  // Quarterly targets for this channel
+  // Quarterly targets for this channel.
+  // Primary: per-channel rows (paid_media / organic / referral summed for "all").
+  // Fallback: marketing_org row — populated by the Pacing page's "Set assumptions" form.
   let tgt: Record<string, number | null> | null = null;
   if (channel === "all") {
-    // Sum targets across the three marketing channels
-    const rows = await prisma.pacingTarget.findMany({
-      where: { period, channel: { in: ["paid_media", "organic", "referral"] } },
-    });
-    if (rows.length > 0) {
+    const [channelRows, orgRow] = await Promise.all([
+      prisma.pacingTarget.findMany({
+        where: { period, channel: { in: ["paid_media", "organic", "referral"] } },
+      }),
+      prisma.pacingTarget.findUnique({
+        where: { period_channel: { period, channel: "marketing_org" } },
+      }),
+    ]);
+    if (channelRows.length > 0) {
       tgt = {
-        targetMqls:      rows.reduce((s, r) => s + (r.targetMqls      ?? 0), 0) || null,
-        targetSqos:      rows.reduce((s, r) => s + (r.targetSqos      ?? 0), 0) || null,
-        targetPipeline:  rows.reduce((s, r) => s + (r.targetPipeline  ?? 0), 0) || null,
-        targetClosedWon: rows.reduce((s, r) => s + (r.targetClosedWon ?? 0), 0) || null,
-        targetRevenue:   rows.reduce((s, r) => s + (r.targetRevenue   ?? 0), 0) || null,
-        targetSpend:     rows.reduce((s, r) => s + (r.targetSpend     ?? 0), 0) || null,
+        targetMqls:      channelRows.reduce((s, r) => s + (r.targetMqls      ?? 0), 0) || null,
+        targetSqos:      channelRows.reduce((s, r) => s + (r.targetSqos      ?? 0), 0) || null,
+        targetPipeline:  channelRows.reduce((s, r) => s + (r.targetPipeline  ?? 0), 0) || null,
+        targetClosedWon: channelRows.reduce((s, r) => s + (r.targetClosedWon ?? 0), 0) || null,
+        targetRevenue:   channelRows.reduce((s, r) => s + (r.targetRevenue   ?? 0), 0) || null,
+        targetSpend:     channelRows.reduce((s, r) => s + (r.targetSpend     ?? 0), 0) || null,
+      };
+    } else if (orgRow) {
+      tgt = {
+        targetMqls:      orgRow.targetMqls,
+        targetSqos:      orgRow.targetSqos,
+        targetPipeline:  orgRow.targetPipeline,
+        targetClosedWon: orgRow.targetClosedWon,
+        targetRevenue:   orgRow.targetRevenue,
+        targetSpend:     orgRow.targetSpend,
       };
     }
   } else {
