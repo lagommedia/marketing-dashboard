@@ -508,6 +508,22 @@ function PaidMediaChatDrawer({ open, onClose, ctx, pendingQuestion, pendingAnnot
   const bottomRef  = React.useRef<HTMLDivElement>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
+  // Load persisted chat history on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("paid-media-chat-history");
+      if (saved) setMessages(JSON.parse(saved));
+    } catch { /* ignore */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Persist chat history whenever it changes
+  useEffect(() => {
+    try {
+      if (messages.length > 0) localStorage.setItem("paid-media-chat-history", JSON.stringify(messages));
+    } catch { /* ignore */ }
+  }, [messages]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
@@ -651,9 +667,18 @@ function PaidMediaChatDrawer({ open, onClose, ctx, pendingQuestion, pendingAnnot
             <p className="text-xs text-indigo-200">Powered by google-ads-analyzer</p>
           </div>
         </div>
-        <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/20 transition-colors">
-          <X className="w-4 h-4 text-white" />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => { setMessages([]); try { localStorage.removeItem("paid-media-chat-history"); } catch { /* ignore */ } }}
+            title="Clear chat history"
+            className="p-1.5 rounded-lg hover:bg-white/20 transition-colors"
+          >
+            <Trash2 className="w-4 h-4 text-white" />
+          </button>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/20 transition-colors">
+            <X className="w-4 h-4 text-white" />
+          </button>
+        </div>
       </div>
 
       {/* Messages */}
