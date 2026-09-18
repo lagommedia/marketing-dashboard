@@ -10,7 +10,7 @@ import { prisma } from "@/lib/db";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const [prompts, snapshots, gscRows] = await Promise.all([
+  const [prompts, snapshots, gscRows, runBatches] = await Promise.all([
     prisma.geoPrompt.findMany({ orderBy: { createdAt: "asc" } }),
     prisma.aiMentionSnapshot.findMany({
       where: { promptId: { not: null } },
@@ -20,6 +20,9 @@ export async function GET() {
     prisma.gscQuerySnapshot.findMany({
       where: { date: { gte: new Date(Date.now() - 90 * 86400_000) } },
       select: { query: true, impressions: true },
+    }),
+    prisma.geoRunBatch.findMany({
+      orderBy: { ranAt: "asc" },
     }),
   ]);
 
@@ -43,18 +46,35 @@ export async function GET() {
 
   // Attach snapshots to each prompt
   const results = prompts.map(prompt => {
-    const promptSnaps = snapshots.filter(s => s.promptId === prompt.id);
+    const promptSnaps   = snapshots.filter(s => s.promptId === prompt.id);
+    const promptBatches = runBatches.filter(b => b.promptId === prompt.id);
+
     const byEngine = Object.fromEntries(
-      promptSnaps.map(s => [
-        s.engine,
-        {
-          runCount:     s.runCount,
-          mentionCount: s.mentionCount,
-          rate:         s.runCount > 0 ? Math.round((s.mentionCount / s.runCount) * 100) : null,
-          lastRun:      s.syncedAt.toISOString(),
-          citedUrls:    (() => { try { return JSON.parse(s.citedUrls ?? "[]") as string[]; } catch { return []; } })(),
-        },
-      ])
+      promptSnaps.map(s => {
+        // Latest batch for this engine (most recent ranAt)
+        const engineBatches = promptBatches.filter(b => b.engine === s.engine);
+        const latestBatch   = engineBatches.length > 0
+          ? engineBatches[engineBatches.length - 1]
+          : null;
+
+        return [
+          s.engine,
+          {
+            // All-time totals (kept for backwards compat)
+            runCount:     s.runCount,
+            mentionCount: s.mentionCount,
+            rate:         s.runCount > 0 ? Math.round((s.mentionCount / s.runCount) * 100) : null,
+            lastRun:      s.syncedAt.toISOString(),
+            citedUrls:    (() => { try { return JSON.parse(s.citedUrls ?? "[]") as string[]; } catch { return []; } })(),
+            // Latest single batch
+            latestBatch: latestBatch ? {
+              runCount:     latestBatch.runCount,
+              mentionCount: latestBatch.mentionCount,
+              ranAt:        latestBatch.ranAt.toISOString(),
+            } : null,
+          },
+        ];
+      })
     );
 
     const allCitedUrls = [
@@ -67,6 +87,14 @@ export async function GET() {
       ? new Date(Math.max(...promptSnaps.map(s => s.syncedAt.getTime()))).toISOString()
       : null;
 
+    // Timeline: one data point per batch run for this prompt, across all engines
+    const runHistory = promptBatches.map(b => ({
+      date:         b.ranAt.toISOString(),
+      engine:       b.engine,
+      runCount:     b.runCount,
+      mentionCount: b.mentionCount,
+    }));
+
     return {
       id:           prompt.id,
       text:         prompt.text,
@@ -75,6 +103,7 @@ export async function GET() {
       byEngine,
       allCitedUrls,
       lastRun,
+      runHistory,
       gscImpressions90d: estimateGscImpressions(prompt.text),
       analysisJson: prompt.analysisJson ?? null,
       analyzedAt:   prompt.analyzedAt?.toISOString() ?? null,

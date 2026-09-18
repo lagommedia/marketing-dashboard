@@ -284,6 +284,20 @@ model GeoPrompt {
   updatedAt    DateTime @updatedAt
 }
 
+// Per-run-batch history for GeoPrompts — one row per "Run" click per prompt per engine.
+// Used to power the timeline chart and "latest run" badge in the GEO dashboard.
+model GeoRunBatch {
+  id           String   @id @default(cuid())
+  promptId     String   // FK → GeoPrompt.id
+  engine       String   // "openai"
+  runCount     Int      // number of runs in this batch (always 10 currently)
+  mentionCount Int      // how many of those runs included a Zeni mention
+  ranAt        DateTime @default(now())
+
+  @@index([promptId])
+  @@index([ranAt])
+}
+
 // AI engine mention tracking — fires queries against OpenAI / Gemini,
 // records aggregate mention rate across multiple runs.
 model AiMentionSnapshot {

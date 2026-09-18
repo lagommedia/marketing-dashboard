@@ -121,26 +121,38 @@ async function runPromptForOpenAI(
   // Store the most recent response snippet (last run)
   const latestResponse = responseSnippets[responseSnippets.length - 1] ?? null;
 
-  await prisma.aiMentionSnapshot.upsert({
-    where:  { engine_query: { engine: "openai", query } },
-    create: {
-      engine: "openai", query, promptId,
-      mentioned: lastMentioned,
-      runCount: runs, mentionCount: mentions,
-      citedUrls:    JSON.stringify(mergedUrls),
-      responseText: latestResponse,
-      syncedAt: new Date(),
-    },
-    update: {
-      promptId,
-      mentioned: lastMentioned,
-      runCount:     { increment: runs },
-      mentionCount: { increment: mentions },
-      citedUrls:    JSON.stringify(mergedUrls),
-      responseText: latestResponse,
-      syncedAt: new Date(),
-    },
-  });
+  await Promise.all([
+    // Cumulative snapshot (kept for backwards compat + pillar queries)
+    prisma.aiMentionSnapshot.upsert({
+      where:  { engine_query: { engine: "openai", query } },
+      create: {
+        engine: "openai", query, promptId,
+        mentioned: lastMentioned,
+        runCount: runs, mentionCount: mentions,
+        citedUrls:    JSON.stringify(mergedUrls),
+        responseText: latestResponse,
+        syncedAt: new Date(),
+      },
+      update: {
+        promptId,
+        mentioned: lastMentioned,
+        runCount:     { increment: runs },
+        mentionCount: { increment: mentions },
+        citedUrls:    JSON.stringify(mergedUrls),
+        responseText: latestResponse,
+        syncedAt: new Date(),
+      },
+    }),
+    // Per-batch record for the timeline chart and "latest run" badge
+    prisma.geoRunBatch.create({
+      data: {
+        promptId,
+        engine:       "openai",
+        runCount:     runs,
+        mentionCount: mentions,
+      },
+    }),
+  ]);
 }
 
 // ---------------------------------------------------------------------------

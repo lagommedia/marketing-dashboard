@@ -64,12 +64,20 @@ interface AiVisibilityData {
 // GEO types
 // ---------------------------------------------------------------------------
 
+interface GeoRunBatch {
+  date:         string;
+  engine:       string;
+  runCount:     number;
+  mentionCount: number;
+}
+
 interface GeoEngineResult {
   runCount:     number;
   mentionCount: number;
   rate:         number | null; // 0-100
   lastRun:      string;
   citedUrls:    string[];
+  latestBatch:  { runCount: number; mentionCount: number; ranAt: string } | null;
 }
 
 interface GeoPromptResult {
@@ -80,6 +88,7 @@ interface GeoPromptResult {
   byEngine:          Record<string, GeoEngineResult>;
   allCitedUrls:      string[];
   lastRun:           string | null;
+  runHistory:        GeoRunBatch[];
   gscImpressions90d: number;
   analysisJson:      string | null;
   analyzedAt:        string | null;
@@ -1327,10 +1336,23 @@ export function SeoClient() {
                                     style={{ width: `${rate}%` }}
                                   />
                                 </div>
-                                <p className={cn("text-[10px]",
-                                  color === "emerald" ? "text-emerald-600" :
-                                  color === "amber"   ? "text-amber-600" : "text-rose-600"
-                                )}>Zeni mentioned {stats.mentionCount}/{stats.runCount} runs</p>
+                                {/* Show latest batch; fall back to "no batch yet" note */}
+                                {stats.latestBatch ? (
+                                  <p className={cn("text-[10px]",
+                                    color === "emerald" ? "text-emerald-600" :
+                                    color === "amber"   ? "text-amber-600" : "text-rose-600"
+                                  )}>
+                                    Zeni mentioned {stats.latestBatch.mentionCount}/{stats.latestBatch.runCount} runs
+                                    <span className="ml-1 opacity-60">
+                                      · {new Date(stats.latestBatch.ranAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                                    </span>
+                                  </p>
+                                ) : (
+                                  <p className={cn("text-[10px]",
+                                    color === "emerald" ? "text-emerald-600" :
+                                    color === "amber"   ? "text-amber-600" : "text-rose-600"
+                                  )}>Zeni mentioned {stats.mentionCount}/{stats.runCount} runs</p>
+                                )}
                               </div>
                             );
                           })}
@@ -1340,6 +1362,44 @@ export function SeoClient() {
                           No runs yet — click &ldquo;Run 10×&rdquo; to fire this prompt against AI engines
                         </div>
                       )}
+
+                      {/* Timeline chart — shown once there are 2+ run batches */}
+                      {result.runHistory.length >= 2 && (() => {
+                        const pts = result.runHistory;
+                        const maxVal = Math.max(...pts.map(p => p.runCount), 1);
+                        const W = 100, H = 36, pad = 4;
+                        const xOf = (i: number) => pad + (i / (pts.length - 1)) * (W - pad * 2);
+                        const yOf = (v: number) => H - pad - ((v / maxVal) * (H - pad * 2));
+                        const polyline = pts.map((p, i) => `${xOf(i)},${yOf(p.mentionCount)}`).join(" ");
+                        const area = [
+                          `${xOf(0)},${H - pad}`,
+                          ...pts.map((p, i) => `${xOf(i)},${yOf(p.mentionCount)}`),
+                          `${xOf(pts.length - 1)},${H - pad}`,
+                        ].join(" ");
+                        return (
+                          <div className="mt-3 pt-3 border-t border-slate-100">
+                            <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-2">Mention history</p>
+                            <div className="relative" style={{ height: 80 }}>
+                              <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full" preserveAspectRatio="none">
+                                <polygon points={area} fill="rgba(99,102,241,0.08)" />
+                                <polyline points={polyline} fill="none" stroke="#6366f1" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                                {pts.map((p, i) => (
+                                  <circle key={i} cx={xOf(i)} cy={yOf(p.mentionCount)} r="1.5" fill="#6366f1" />
+                                ))}
+                              </svg>
+                              {/* Labels below chart */}
+                              <div className="flex justify-between mt-1">
+                                {pts.map((p, i) => (
+                                  <div key={i} className="flex flex-col items-center" style={{ width: `${100 / pts.length}%` }}>
+                                    <span className="text-[9px] text-slate-700 font-medium">{p.mentionCount}/{p.runCount}</span>
+                                    <span className="text-[8px] text-slate-400">{new Date(p.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
 
                       {/* Citation sources */}
                       {result.allCitedUrls.length > 0 && (
