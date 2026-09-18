@@ -3,8 +3,9 @@ import { prisma } from "@/lib/db";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
-  const from = searchParams.get("from");
-  const to   = searchParams.get("to");
+  const from    = searchParams.get("from");
+  const to      = searchParams.get("to");
+  const channel = (searchParams.get("channel") ?? "all") as "all" | "paid" | "organic";
 
   if (!from || !to) {
     return NextResponse.json({ error: "from and to are required" }, { status: 400 });
@@ -15,17 +16,52 @@ export async function GET(req: Request) {
     const toEnd    = new Date(to);
     toEnd.setHours(23, 59, 59, 999);
 
-    // Same query as the overview page: "all" channel = marketing-attributed totals
+    // ── Site visits ──────────────────────────────────────────────────────────
+    // Paid: Google Ads clicks (each click = one paid site visit)
+    // Organic: GA4 sessions (organic search channel)
+    let paidVisits    = 0;
+    let organicVisits = 0;
+
+    if (channel === "all" || channel === "paid") {
+      const paidRows = await prisma.campaignDailySpend.findMany({
+        where:  { date: { gte: fromDate, lte: toEnd } },
+        select: { clicks: true },
+      });
+      paidVisits = paidRows.reduce((s, r) => s + r.clicks, 0);
+    }
+
+    if (channel === "all" || channel === "organic") {
+      const gaRows = await prisma.gaOrganicSnapshot.findMany({
+        where:  { date: { gte: fromDate, lte: toEnd } },
+        select: { sessions: true },
+      });
+      organicVisits = gaRows.reduce((s, r) => s + r.sessions, 0);
+    }
+
+    const siteVisits = paidVisits + organicVisits;
+
+    // ── Funnel counts (channel-filtered) ─────────────────────────────────────
+    const channelFilter =
+      channel === "paid" ? [
+        { platform: "google_ads", channel: "paid_media" },
+        { platform: "manual",     channel: "paid_media" },
+      ] :
+      channel === "organic" ? [
+        { platform: "google_search_console", channel: "organic" },
+        { platform: "manual",                channel: "organic" },
+      ] : [
+        // "all" — same logic as before
+        { platform: "hubspot",               channel: "all"        },
+        { platform: "google_ads",            channel: "paid_media" },
+        { platform: "google_search_console", channel: "organic"    },
+        { platform: "manual",                channel: "paid_media" },
+        { platform: "manual",                channel: "organic"    },
+      ];
+
     const rows = await prisma.metricSnapshot.findMany({
       where: {
         date: { gte: fromDate, lte: toEnd },
-        OR: [
-          { platform: "hubspot",               channel: "all"        },
-          { platform: "google_ads",            channel: "paid_media" },
-          { platform: "google_search_console", channel: "organic"    },
-          { platform: "manual",                channel: "paid_media" },
-          { platform: "manual",                channel: "organic"    },
-        ],
+        OR:   channelFilter,
       },
     });
 
@@ -33,6 +69,9 @@ export async function GET(req: Request) {
       rows.reduce((acc, r) => acc + ((r[key] as number | null) ?? 0), 0);
 
     return NextResponse.json({
+      siteVisits,
+      paidVisits,
+      organicVisits,
       leads:     sum("leads"),
       mqls:      sum("mqls"),
       sqls:      0,
