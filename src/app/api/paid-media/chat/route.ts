@@ -5,6 +5,207 @@ import { decrypt } from "@/lib/encryption";
 
 export const dynamic = "force-dynamic";
 
+// ---------------------------------------------------------------------------
+// Server-side DB enrichment — pulls full datasets regardless of what the
+// frontend currently has on screen.
+// ---------------------------------------------------------------------------
+
+async function fetchEnrichedContext() {
+  const now   = new Date();
+  const d90   = new Date(now); d90.setDate(d90.getDate() - 90);
+  const d365  = new Date(now); d365.setDate(d365.getDate() - 365);
+  const d60   = new Date(now); d60.setDate(d60.getDate() - 60);
+
+  // Current quarter label, e.g. "Q3 2026"
+  const quarter = `Q${Math.ceil((now.getMonth() + 1) / 3)} ${now.getFullYear()}`;
+  const prevQ   = (() => {
+    const q = Math.ceil((now.getMonth() + 1) / 3);
+    return q === 1 ? `Q4 ${now.getFullYear() - 1}` : `Q${q - 1} ${now.getFullYear()}`;
+  })();
+
+  const [
+    campaignDaily,
+    metricSnaps,
+    pacingTargets,
+    changeEvents,
+    pipelineSnaps,
+  ] = await Promise.all([
+    // 90 days of daily spend per campaign
+    prisma.campaignDailySpend.findMany({
+      where: { date: { gte: d90 } },
+      orderBy: { date: "asc" },
+      select: {
+        campaignId: true, campaignName: true, date: true,
+        spend: true, clicks: true, impressions: true,
+        conversions: true, conversionValue: true,
+        ctr: true, cpc: true,
+        searchImprShare: true, searchTopIS: true, searchAbsTopIS: true,
+        searchLostISRank: true, searchLostISBudget: true,
+        invalidClicks: true,
+      },
+    }),
+    // 12 months of paid_media MetricSnapshot (leads → pipeline)
+    prisma.metricSnapshot.findMany({
+      where: {
+        date:    { gte: d365 },
+        channel: "paid_media",
+        OR: [
+          { platform: "hubspot" },
+          { platform: "google_ads" },
+          { platform: "manual" },
+        ],
+      },
+      orderBy: { date: "asc" },
+      select: {
+        date: true, platform: true, channel: true,
+        impressions: true, clicks: true, spend: true,
+        leads: true, mqls: true, sqos: true, closedWon: true,
+        pipeline: true, activePipeline: true, revenue: true,
+        cpc: true, cpl: true, cpMql: true, cpSqo: true,
+        ctr: true, leadToMql: true, mqlToSqo: true, sqoToClose: true,
+      },
+    }),
+    // Pacing targets for current quarter and channel
+    prisma.pacingTarget.findMany({
+      where: { period: { in: [quarter, prevQ] }, channel: "paid_media" },
+    }),
+    // Recent campaign change events (last 60 days, human-initiated only)
+    prisma.campaignChangeEvent.findMany({
+      where: { changedAt: { gte: d60 }, userEmail: { not: "" } },
+      orderBy: { changedAt: "desc" },
+      take: 30,
+      select: {
+        changedAt: true, changeResourceType: true, operation: true,
+        campaignName: true, description: true, expectedOutcome: true,
+      },
+    }),
+    // Pipeline by quarter and segment (last 4 quarters)
+    prisma.pipelineQuarterSnapshot.findMany({
+      orderBy: { quarter: "desc" },
+      take: 20,
+      select: {
+        quarter: true, segment: true,
+        amountAll: true, amountPaid: true,
+        amountOrganic: true, amountReferral: true,
+      },
+    }),
+  ]);
+
+  return { campaignDaily, metricSnaps, pacingTargets, changeEvents, pipelineSnaps, quarter, prevQ };
+}
+
+function formatEnrichedContext(ctx: Awaited<ReturnType<typeof fetchEnrichedContext>>): string {
+  const { campaignDaily, metricSnaps, pacingTargets, changeEvents, pipelineSnaps, quarter, prevQ } = ctx;
+
+  const fmt$ = (v: number | null | undefined) =>
+    v == null ? "—" : `$${v.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+  const fmtN  = (v: number | null | undefined, d = 0) => v == null ? "—" : v.toLocaleString("en-US", { maximumFractionDigits: d });
+  const fmtPct = (v: number | null | undefined) => v == null ? "—" : `${(v * 100).toFixed(1)}%`;
+
+  // ── Campaign daily: aggregate per campaign per week for readability ────────
+  const campaignWeekly: Record<string, Record<string, {
+    spend: number; clicks: number; impressions: number;
+    conversions: number; conversionValue: number;
+    searchImprShare: number | null; searchLostISRank: number | null; searchLostISBudget: number | null;
+    days: number;
+  }>> = {};
+
+  for (const row of campaignDaily) {
+    const name = row.campaignName ?? row.campaignId;
+    const weekStart = new Date(row.date);
+    weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+    const wk = weekStart.toISOString().slice(0, 10);
+    if (!campaignWeekly[name]) campaignWeekly[name] = {};
+    const e = campaignWeekly[name][wk] ?? {
+      spend: 0, clicks: 0, impressions: 0, conversions: 0, conversionValue: 0,
+      searchImprShare: null, searchLostISRank: null, searchLostISBudget: null, days: 0,
+    };
+    e.spend          += row.spend;
+    e.clicks         += row.clicks;
+    e.impressions    += row.impressions;
+    e.conversions    += row.conversions;
+    e.conversionValue += row.conversionValue;
+    if (row.searchImprShare   != null) e.searchImprShare   = ((e.searchImprShare   ?? 0) * e.days + row.searchImprShare)   / (e.days + 1);
+    if (row.searchLostISRank  != null) e.searchLostISRank  = ((e.searchLostISRank  ?? 0) * e.days + row.searchLostISRank)  / (e.days + 1);
+    if (row.searchLostISBudget != null) e.searchLostISBudget = ((e.searchLostISBudget ?? 0) * e.days + row.searchLostISBudget) / (e.days + 1);
+    e.days++;
+    campaignWeekly[name][wk] = e;
+  }
+
+  let campText = "\n## Google Ads — Weekly Campaign Performance (last 90 days, oldest first)\n";
+  for (const [name, weeks] of Object.entries(campaignWeekly)) {
+    campText += `\n### ${name}\n`;
+    campText += "Week | Spend | Impressions | Clicks | Conv | Conv Value | Search IS | Lost IS (Rank) | Lost IS (Budget)\n";
+    for (const [wk, d] of Object.entries(weeks).sort(([a], [b]) => a.localeCompare(b))) {
+      campText += `${wk} | ${fmt$(d.spend)} | ${fmtN(d.impressions)} | ${fmtN(d.clicks)} | ${fmtN(d.conversions, 1)} | ${fmt$(d.conversionValue)} | ${fmtPct(d.searchImprShare)} | ${fmtPct(d.searchLostISRank)} | ${fmtPct(d.searchLostISBudget)}\n`;
+    }
+  }
+
+  // ── MetricSnapshot: monthly roll-up for paid_media ────────────────────────
+  const monthlyMetrics: Record<string, {
+    spend: number; leads: number; mqls: number; sqos: number; closedWon: number;
+    pipeline: number; revenue: number; days: number;
+  }> = {};
+  for (const row of metricSnaps) {
+    const mo = row.date.toISOString().slice(0, 7);
+    const e = monthlyMetrics[mo] ?? { spend: 0, leads: 0, mqls: 0, sqos: 0, closedWon: 0, pipeline: 0, revenue: 0, days: 0 };
+    e.spend    += row.spend    ?? 0;
+    e.leads    += row.leads    ?? 0;
+    e.mqls     += row.mqls     ?? 0;
+    e.sqos     += row.sqos     ?? 0;
+    e.closedWon += row.closedWon ?? 0;
+    e.pipeline  += row.pipeline  ?? 0;
+    e.revenue   += row.revenue   ?? 0;
+    e.days++;
+    monthlyMetrics[mo] = e;
+  }
+  let metricText = "\n## Paid Media Funnel — Monthly Attribution (last 12 months, oldest first)\n";
+  metricText += "Month | Spend | Leads | MQLs | SQOs | Closed Won | Pipeline | Revenue | CPL | CPMql | CPSqo\n";
+  for (const [mo, d] of Object.entries(monthlyMetrics).sort(([a], [b]) => a.localeCompare(b))) {
+    const cpl  = d.leads    > 0 ? d.spend / d.leads    : null;
+    const cpMql = d.mqls    > 0 ? d.spend / d.mqls     : null;
+    const cpSqo = d.sqos    > 0 ? d.spend / d.sqos     : null;
+    metricText += `${mo} | ${fmt$(d.spend)} | ${fmtN(d.leads, 0)} | ${fmtN(d.mqls, 0)} | ${fmtN(d.sqos, 0)} | ${fmtN(d.closedWon, 0)} | ${fmt$(d.pipeline)} | ${fmt$(d.revenue)} | ${fmt$(cpl)} | ${fmt$(cpMql)} | ${fmt$(cpSqo)}\n`;
+  }
+
+  // ── Pacing targets ────────────────────────────────────────────────────────
+  let pacingText = "";
+  if (pacingTargets.length > 0) {
+    pacingText = "\n## Pacing Targets (paid_media channel)\n";
+    for (const t of pacingTargets) {
+      pacingText += `**${t.period}**: MQLs ${t.targetMqls ?? "—"} | SQOs ${t.targetSqos ?? "—"} | Pipeline ${fmt$(t.targetPipeline ?? undefined)} | Closed Won ${t.targetClosedWon ?? "—"} | Spend ${fmt$(t.targetSpend ?? undefined)}\n`;
+    }
+  }
+
+  // ── Change events ─────────────────────────────────────────────────────────
+  let changeText = "";
+  if (changeEvents.length > 0) {
+    changeText = "\n## Recent Google Ads Changes (last 60 days, most recent first)\n";
+    for (const e of changeEvents) {
+      const d = new Date(e.changedAt).toISOString().slice(0, 10);
+      changeText += `- **${d}** [${e.changeResourceType}/${e.operation}] ${e.campaignName ?? ""}: ${e.description ?? "no description"}${e.expectedOutcome ? ` → Expected: ${e.expectedOutcome}` : ""}\n`;
+    }
+  }
+
+  // ── Pipeline by segment ───────────────────────────────────────────────────
+  const quarters = [...new Set(pipelineSnaps.map(p => p.quarter))].sort().slice(-4);
+  let pipelineText = "";
+  if (pipelineSnaps.length > 0) {
+    pipelineText = "\n## Pipeline by Quarter & Segment (paid media attribution)\n";
+    pipelineText += `Segment | ${quarters.join(" | ")}\n`;
+    const segments = [...new Set(pipelineSnaps.map(p => p.segment))].sort();
+    for (const seg of segments) {
+      const row = quarters.map(q => {
+        const snap = pipelineSnaps.find(p => p.quarter === q && p.segment === seg);
+        return snap ? fmt$(snap.amountPaid) : "—";
+      });
+      pipelineText += `${seg} | ${row.join(" | ")}\n`;
+    }
+  }
+
+  return `${campText}${metricText}${pacingText}${changeText}${pipelineText}`;
+}
+
 async function resolveApiKey(): Promise<string | null> {
   try {
     const row = await prisma.integration.findUnique({ where: { platform: "anthropic" } });
@@ -42,13 +243,19 @@ function formatTableForPrompt(tableData: Record<string, unknown>): string {
 }
 
 export async function POST(req: NextRequest) {
-  const apiKey = await resolveApiKey();
+  const [apiKey, enriched] = await Promise.all([
+    resolveApiKey(),
+    fetchEnrichedContext(),
+  ]);
+
   if (!apiKey) {
     return NextResponse.json(
       { error: "Anthropic AI is not connected. Add your API key under Integrations." },
       { status: 503 }
     );
   }
+
+  const enrichedContextText = formatEnrichedContext(enriched);
 
   interface Attachment {
     name:     string;
@@ -160,11 +367,16 @@ ${JSON.stringify(campaignRolling, null, 2)}
     ? `\n## ⚠️ CONVERSION DATA INCOMPLETE\nThe most recent period ("${mostRecentPeriodLabel}") ended less than 48 hours ago. Google Ads reports conversions with a 48h+ delay, and pipeline/Closed Won deal data has an average 14-day lag. For this period:\n- Lead your analysis with TOP-OF-FUNNEL metrics only: impressions, clicks, CTR, CPC\n- Explicitly state that conversion/pipeline data is not yet complete and should not be used to draw conclusions\n- Do NOT give alarming verdicts based on conversion drops — they are artefacts of the reporting lag, not real performance changes\n- Frame bottom-funnel metrics as "preliminary — expect this to update significantly over the next 48h–14 days"\n`
     : "";
 
-  const systemPrompt = `You are a Paid Media AI analyst for a B2B SaaS company. You have full visibility into the user's Google Ads and HubSpot performance data below. The three active campaigns are: Performance Max (PMax, no IS metrics), S_Non-Brand (Search), and S_Brand (Search). Today's date is ${today}.
+  const systemPrompt = `You are a Paid Media AI analyst for a B2B SaaS company. You have full visibility into the complete Google Ads and HubSpot database — not just what is currently on screen. The three active campaigns are: Performance Max (PMax, no IS metrics), S_Non-Brand (Search), and S_Brand (Search). Today's date is ${today}. Current quarter: ${enriched.quarter}.
+
+## DATA SOURCES AVAILABLE TO YOU
+You have access to: (1) 90 days of daily Google Ads spend data per campaign from the database, (2) 12 months of paid media funnel attribution (leads → MQLs → SQOs → Closed Won → Pipeline) from the database, (3) current quarter pacing targets, (4) recent Google Ads change events (what was changed and when), (5) pipeline by quarter and customer segment, and (6) the current rolling view from the dashboard page.
 ${summaryText}${campaignBreakdownText}
-## Aggregate Rolling Averages Table (all campaigns combined, ${rollingView} view — most recent period first)
+## Dashboard Rolling Averages (all campaigns combined, ${rollingView} view — most recent period first)
 ${tableText}
 ${campaignRollingText}${funnelText}${conversionLagWarning}
+## ── FULL DATABASE CONTEXT ─────────────────────────────────────────────────
+${enrichedContextText}
 ## Underlying row data for chart generation (newest first, raw numbers)
 ${JSON.stringify(chartRows.slice(0, 8), null, 2)}
 
