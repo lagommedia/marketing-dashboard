@@ -41,27 +41,16 @@ export async function GET(req: Request) {
     const siteVisits = paidVisits + organicVisits;
 
     // ── Funnel counts (channel-filtered) ─────────────────────────────────────
-    const channelFilter =
-      channel === "paid" ? [
-        { platform: "google_ads", channel: "paid_media" },
-        { platform: "manual",     channel: "paid_media" },
-      ] :
-      channel === "organic" ? [
-        { platform: "google_search_console", channel: "organic" },
-        { platform: "manual",                channel: "organic" },
-      ] : [
-        // "all" — same logic as before
-        { platform: "hubspot",               channel: "all"        },
-        { platform: "google_ads",            channel: "paid_media" },
-        { platform: "google_search_console", channel: "organic"    },
-        { platform: "manual",                channel: "paid_media" },
-        { platform: "manual",                channel: "organic"    },
-      ];
+    // Mirror the logic in /api/metrics/trend: filter by channel only (no platform
+    // restriction) so HubSpot rows tagged paid_media / organic are included.
+    const channelValue =
+      channel === "paid"    ? "paid_media" :
+      channel === "organic" ? "organic"    : "all";
 
     const rows = await prisma.metricSnapshot.findMany({
       where: {
-        date: { gte: fromDate, lte: toEnd },
-        OR:   channelFilter,
+        date:    { gte: fromDate, lte: toEnd },
+        channel: channelValue,
       },
     });
 
