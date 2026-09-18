@@ -272,7 +272,7 @@ export async function POST(req: NextRequest) {
       campaignRolling: unknown[] | null,
       rollingView: string,
       messages: Array<{ role: string; content: string }>,
-      attachment: Attachment | null;
+      attachments: Attachment[];
   try {
     const body      = await req.json();
     question        = body.question        ?? "";
@@ -283,7 +283,10 @@ export async function POST(req: NextRequest) {
     campaignRolling = body.campaignRolling ?? null;
     rollingView     = body.rollingView     ?? "weekly";
     messages        = body.messages        ?? [];
-    attachment      = body.attachment      ?? null;
+    // Accept both new `attachments[]` and legacy single `attachment`
+    attachments     = Array.isArray(body.attachments) ? body.attachments
+                    : body.attachment ? [body.attachment]
+                    : [];
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
@@ -425,7 +428,7 @@ Chart rules:
     content: m.content,
   }));
 
-  // Build the last user message — inject attachment content blocks if present
+  // Build the last user message — inject all attachment content blocks
   type ImageMediaType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
   type ContentBlock =
     | { type: "text"; text: string }
@@ -433,16 +436,18 @@ Chart rules:
     | { type: "document"; source: { type: "base64"; media_type: "application/pdf"; data: string } };
 
   let lastUserContent: string | ContentBlock[] = question;
-  if (attachment) {
+  if (attachments.length > 0) {
     const blocks: ContentBlock[] = [];
-    if (attachment.text) {
-      blocks.push({ type: "text", text: `[Attached file: ${attachment.name}]\n\`\`\`\n${attachment.text}\n\`\`\`` });
-    } else if (attachment.data) {
-      if (attachment.mimeType === "application/pdf") {
-        blocks.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: attachment.data } });
-      } else if (attachment.mimeType.startsWith("image/")) {
-        const mt = attachment.mimeType as ImageMediaType;
-        blocks.push({ type: "image", source: { type: "base64", media_type: mt, data: attachment.data } });
+    for (const att of attachments) {
+      if (att.text) {
+        blocks.push({ type: "text", text: `[Attached file: ${att.name}]\n\`\`\`\n${att.text}\n\`\`\`` });
+      } else if (att.data) {
+        if (att.mimeType === "application/pdf") {
+          blocks.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: att.data } });
+        } else if (att.mimeType.startsWith("image/")) {
+          const mt = att.mimeType as ImageMediaType;
+          blocks.push({ type: "image", source: { type: "base64", media_type: mt, data: att.data } });
+        }
       }
     }
     blocks.push({ type: "text", text: question });
