@@ -942,6 +942,9 @@ type FunnelBucket = { leads: number; mqls: number; sqos: number; closedWon: numb
 function RollingTable({ data, title, subtitle, hideIS, campaignId, campaignName, annotations, onAnalyze, onDeleteAnnotation, onEditAnnotation }: { data: RollingData; title?: string; subtitle?: string; hideIS?: boolean; campaignId?: string; campaignName?: string; annotations?: AnnotationDay[]; onAnalyze?: (q: string, annotId: string) => void; onDeleteAnnotation?: (id: string) => void; onEditAnnotation?: (ev: ChangeAnnotation) => void }) {
   const { rows, avg12, wowDelta, wowPct, avg12Delta, avg12Pct, view, dayName } = data;
 
+  // Change log collapse state (default collapsed)
+  const [changeLogOpen, setChangeLogOpen] = useState(false);
+
   // Per-period funnel data (campaign tables only)
   const [funnelRolling, setFunnelRolling] = useState<Record<string, FunnelBucket> | null>(null);
   const [funnelLoading, setFunnelLoading] = useState(false);
@@ -1025,9 +1028,21 @@ function RollingTable({ data, title, subtitle, hideIS, campaignId, campaignName,
 
       {/* Change history */}
       {annotations && annotations.length > 0 && (
-        <div className="px-6 py-4 border-b border-amber-100 bg-amber-50/60">
-          <p className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide mb-3">Change Log</p>
-          <div className="space-y-3">
+        <div className="border-b border-amber-100 bg-amber-50/60">
+          <button
+            onClick={() => setChangeLogOpen(o => !o)}
+            className="w-full flex items-center justify-between px-6 py-3 hover:bg-amber-100/50 transition-colors"
+          >
+            <span className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide">
+              Change Log
+              <span className="ml-1.5 text-amber-500 font-normal normal-case">({annotations.reduce((s, a) => s + a.events.length, 0)})</span>
+            </span>
+            {changeLogOpen
+              ? <ChevronUp className="w-3.5 h-3.5 text-amber-600" />
+              : <ChevronDown className="w-3.5 h-3.5 text-amber-600" />}
+          </button>
+          {changeLogOpen && (
+          <div className="px-6 pb-4 space-y-3">
             {annotations.map(ann => ann.events.map(ev => {
               const dateLabel = new Date(ann.date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
               const analyzeQ = ev.expectedOutcome
@@ -1107,6 +1122,7 @@ function RollingTable({ data, title, subtitle, hideIS, campaignId, campaignName,
               );
             }))}
           </div>
+          )}
         </div>
       )}
 
