@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { RefreshCw, TrendingUp, MousePointerClick, Eye, Crosshair, ChevronDown, ChevronUp, Star, Search, Bot, Globe, Plus, Pencil, Trash2, Play, ExternalLink, BarChart2, Sparkles, Users, FileText } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { KEYWORD_PILLARS } from "@/lib/seo-pillars";
 
 type Channel = "seo" | "aeo" | "geo";
 type Segment = "branded" | "non-branded";
@@ -19,6 +20,15 @@ interface AeoSignals {
   lists:            boolean;
   metaDesc:         boolean;
   h1Present:        boolean;
+}
+
+interface AiOverviewCitedItem { url: string; domain: string; title: string }
+interface AiOverviewCheck {
+  id: string; query: string; checkedAt: string;
+  hasOverview: boolean; zeniCited: boolean;
+  overviewText: string | null;
+  citedUrls: string;
+  allResults: string | null;
 }
 
 interface AeoReadinessPillar {
@@ -604,6 +614,12 @@ export function SeoClient() {
   const [qSaving, setQSaving] = useState(false);
 
 
+  // AI Overview tracker state
+  const [aiOverviewChecks, setAiOverviewChecks]           = useState<AiOverviewCheck[]>([]);
+  const [aiOverviewLoading, setAiOverviewLoading]         = useState(false);
+  const [aiOverviewRunning, setAiOverviewRunning]         = useState(false);
+  const [aiOverviewRunningQuery, setAiOverviewRunningQuery] = useState<string | null>(null);
+
   // GEO prompt tracker state
   const [geoResults, setGeoResults]           = useState<GeoPromptResult[]>([]);
   const [geoLoading, setGeoLoading]           = useState(false);
@@ -640,6 +656,17 @@ export function SeoClient() {
       setAeoReadiness(json.pillars ?? null);
     } finally {
       setAeoReadinessLoading(false);
+    }
+  }, []);
+
+  const loadAiOverviewChecks = useCallback(async () => {
+    setAiOverviewLoading(true);
+    try {
+      const res = await fetch("/api/seo/ai-overview");
+      const json = await res.json();
+      setAiOverviewChecks(json.checks ?? []);
+    } finally {
+      setAiOverviewLoading(false);
     }
   }, []);
 
@@ -822,16 +849,56 @@ export function SeoClient() {
 
   useEffect(() => { load(segment); }, [segment, load]);
   useEffect(() => { loadGa(); }, [loadGa]);
+  async function runAllOverviewChecks() {
+    setAiOverviewRunning(true);
+    try {
+      const res = await fetch("/api/seo/ai-overview?all=1", { method: "POST" });
+      const json = await res.json();
+      if (!res.ok && json.error === "DataForSEO credentials not configured") {
+        alert("DataForSEO credentials not configured — set DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD in your environment.");
+        return;
+      }
+      await loadAiOverviewChecks();
+    } finally {
+      setAiOverviewRunning(false);
+    }
+  }
+
+  async function runSingleOverviewCheck(query: string) {
+    setAiOverviewRunningQuery(query);
+    try {
+      const res = await fetch("/api/seo/ai-overview", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ query }),
+      });
+      const json = await res.json();
+      if (!res.ok && json.error === "DataForSEO credentials not configured") {
+        alert("DataForSEO credentials not configured — set DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD in your environment.");
+        return;
+      }
+      if (json.check) {
+        setAiOverviewChecks(prev => {
+          const filtered = prev.filter(c => c.query !== query);
+          return [json.check, ...filtered];
+        });
+      }
+    } finally {
+      setAiOverviewRunningQuery(null);
+    }
+  }
+
   useEffect(() => {
     if (channel === "aeo") {
       if (!aeoOverview)   loadAeoOverview();
       if (!aeoReadiness)  loadAeoReadiness();
       loadCustomQueries();
+      loadAiOverviewChecks();
     }
     if (channel === "geo") {
       loadGeoResults();
     }
-  }, [channel, aeoOverview, aeoReadiness, loadAeoOverview, loadAeoReadiness, loadGeoResults, loadCustomQueries]);
+  }, [channel, aeoOverview, aeoReadiness, loadAeoOverview, loadAeoReadiness, loadGeoResults, loadCustomQueries, loadAiOverviewChecks]);
 
   async function handleSync() {
     setSyncing(true);
@@ -1465,6 +1532,153 @@ export function SeoClient() {
                 <p className="text-xs mt-1">Switch to this tab to trigger scoring, or click "Refresh Scores".</p>
               </div>
             )}
+          </div>
+
+          {/* ── AI Overview Tracker ── */}
+          <div>
+            <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-700">AI Overview Tracker</h2>
+                <p className="text-xs text-slate-400 mt-0.5">Whether Google shows an AI Overview for each tracked query, who gets cited, and where you rank</p>
+              </div>
+              <button
+                onClick={runAllOverviewChecks}
+                disabled={aiOverviewRunning}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+              >
+                <RefreshCw className={cn("w-3.5 h-3.5", aiOverviewRunning && "animate-spin")} />
+                {aiOverviewRunning ? "Running…" : "Run All Checks"}
+              </button>
+            </div>
+
+            {aiOverviewLoading && (
+              <div className="text-sm text-slate-400 py-8 text-center">Loading…</div>
+            )}
+
+            {!aiOverviewLoading && (() => {
+              const activeCustom = customQueries.filter(q => q.active);
+
+              const pillarEntries = KEYWORD_PILLARS.map(p => ({
+                label: p.label,
+                query: p.seeds[0],
+              }));
+
+              const customEntries = activeCustom.map(q => ({
+                label: q.label,
+                query: q.query,
+              }));
+
+              const seen = new Set<string>();
+              const allCards = [...pillarEntries, ...customEntries].filter(e => {
+                if (seen.has(e.query)) return false;
+                seen.add(e.query);
+                return true;
+              });
+
+              if (allCards.length === 0) {
+                return (
+                  <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-xs text-slate-400">
+                    Add custom queries or wait for pillar data to load
+                  </div>
+                );
+              }
+
+              return (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                  {allCards.map(({ label, query }) => {
+                    const check = aiOverviewChecks.find(c => c.query === query);
+                    const isRunningThis = aiOverviewRunningQuery === query;
+                    const citedItems: AiOverviewCitedItem[] = check?.citedUrls
+                      ? (() => { try { return JSON.parse(check.citedUrls); } catch { return []; } })()
+                      : [];
+
+                    const relativeTime = (dateStr: string) => {
+                      const diff = Date.now() - new Date(dateStr).getTime();
+                      const mins = Math.floor(diff / 60000);
+                      if (mins < 1) return "just now";
+                      if (mins < 60) return `${mins}m ago`;
+                      const hrs = Math.floor(mins / 60);
+                      if (hrs < 24) return `${hrs}h ago`;
+                      return `${Math.floor(hrs / 24)}d ago`;
+                    };
+
+                    return (
+                      <div key={query} className="bg-white rounded-xl border border-slate-200 p-4 flex flex-col gap-3">
+                        <div>
+                          <p className="text-xs font-semibold text-slate-700">{label}</p>
+                          <p className="text-[10px] italic text-indigo-500 mt-0.5">&ldquo;{query}&rdquo;</p>
+                        </div>
+
+                        {check ? (
+                          <div className="flex flex-col gap-2 flex-1">
+                            <div className={cn(
+                              "text-xs font-bold px-2 py-1 rounded-lg text-center",
+                              check.hasOverview
+                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                : "bg-slate-50 text-slate-500 border border-slate-200"
+                            )}>
+                              AI Overview: {check.hasOverview ? "YES" : "NO"}
+                            </div>
+
+                            {check.hasOverview && (
+                              <>
+                                <div className={cn(
+                                  "text-[10px] font-semibold px-2 py-1 rounded text-center",
+                                  check.zeniCited
+                                    ? "bg-emerald-50 text-emerald-600"
+                                    : "bg-amber-50 text-amber-600"
+                                )}>
+                                  {check.zeniCited ? "Zeni cited ✓" : "Zeni not cited"}
+                                </div>
+
+                                {citedItems.length > 0 && (
+                                  <div>
+                                    <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Cited sources</p>
+                                    <div className="space-y-0.5">
+                                      {citedItems.slice(0, 4).map((item, i) => (
+                                        <div key={i} className="text-[10px] text-slate-600 truncate" title={item.title}>
+                                          <span className="font-medium text-slate-700">{item.domain}</span>
+                                          {item.title && (
+                                            <span className="text-slate-400 ml-1">— {item.title.slice(0, 40)}{item.title.length > 40 ? "…" : ""}</span>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {check.overviewText && (
+                                  <blockquote className="text-[10px] text-slate-500 italic bg-slate-50 border-l-2 border-slate-200 pl-2 py-1 rounded-r">
+                                    {check.overviewText.slice(0, 120)}{check.overviewText.length > 120 ? "…" : ""}
+                                  </blockquote>
+                                )}
+                              </>
+                            )}
+
+                            <p className="text-[9px] text-slate-400 mt-auto">
+                              Checked {relativeTime(check.checkedAt)}
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="flex-1 flex items-center justify-center text-[10px] text-slate-400 italic py-4">
+                            Not yet checked
+                          </div>
+                        )}
+
+                        <button
+                          onClick={() => runSingleOverviewCheck(query)}
+                          disabled={isRunningThis || aiOverviewRunning}
+                          className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg border border-slate-200 text-[11px] text-slate-500 hover:bg-slate-50 disabled:opacity-50"
+                        >
+                          <RefreshCw className={cn("w-3 h-3", isRunningThis && "animate-spin")} />
+                          {isRunningThis ? "Checking…" : "Run Check"}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}

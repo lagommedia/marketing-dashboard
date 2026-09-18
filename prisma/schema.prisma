@@ -290,6 +290,22 @@ model AeoCustomQuery {
   @@index([active])
 }
 
+// Per-query DataForSEO AI Overview checks — records whether Google shows an AI Overview
+// for each query, whether Zeni is cited, and who else is cited.
+model AiOverviewCheck {
+  id           String   @id @default(cuid())
+  query        String
+  checkedAt    DateTime @default(now())
+  hasOverview  Boolean  @default(false)
+  zeniCited    Boolean  @default(false)
+  overviewText String?
+  citedUrls    String
+  allResults   String?
+
+  @@index([query])
+  @@index([checkedAt])
+}
+
 // User-managed GEO prompts — the exact questions fired at AI engines.
 model GeoPrompt {
   id           String   @id @default(cuid())
