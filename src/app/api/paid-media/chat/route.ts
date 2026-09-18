@@ -15,6 +15,13 @@ async function fetchEnrichedContext() {
   const d90   = new Date(now); d90.setDate(d90.getDate() - 90);
   const d365  = new Date(now); d365.setDate(d365.getDate() - 365);
   const d60   = new Date(now); d60.setDate(d60.getDate() - 60);
+  const d7    = new Date(now); d7.setDate(d7.getDate() - 7);
+
+  // Month-to-date window
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const dayOfMonth  = now.getDate();
+  const daysRemaining = daysInMonth - dayOfMonth;
 
   // Current quarter label, e.g. "Q3 2026"
   const quarter = `Q${Math.ceil((now.getMonth() + 1) / 3)} ${now.getFullYear()}`;
@@ -91,18 +98,88 @@ async function fetchEnrichedContext() {
     }),
   ]);
 
-  return { campaignDaily, metricSnaps, pacingTargets, changeEvents, pipelineSnaps, quarter, prevQ };
+  // ── Pre-compute MTD and recent daily rate ────────────────────────────────
+  // MTD: sum spend from 1st of month through today
+  const mtdRows    = campaignDaily.filter(r => new Date(r.date) >= monthStart);
+  const recent7Rows = campaignDaily.filter(r => new Date(r.date) >= d7);
+
+  // Aggregate by campaign name
+  function aggByCampaign(rows: typeof campaignDaily) {
+    const map: Record<string, number> = {};
+    for (const r of rows) {
+      const name = r.campaignName ?? r.campaignId;
+      map[name] = (map[name] ?? 0) + r.spend;
+    }
+    return map;
+  }
+  const mtdByCampaign     = aggByCampaign(mtdRows);
+  const recent7ByCampaign = aggByCampaign(recent7Rows);
+  const mtdTotal           = Object.values(mtdByCampaign).reduce((s, v) => s + v, 0);
+  const recent7Total       = Object.values(recent7ByCampaign).reduce((s, v) => s + v, 0);
+  const dailyRateTotal     = recent7Total / 7; // avg daily spend over last 7 days
+  const projectedMonthEnd  = mtdTotal + dailyRateTotal * daysRemaining;
+
+  // Daily rate by campaign
+  const dailyRateByCampaign = Object.fromEntries(
+    Object.entries(recent7ByCampaign).map(([name, total]) => [name, total / 7])
+  );
+
+  const spendForecast = {
+    monthName:          now.toLocaleString("en-US", { month: "long", year: "numeric" }),
+    dayOfMonth,
+    daysInMonth,
+    daysRemaining,
+    mtdTotal,
+    mtdByCampaign,
+    dailyRateTotal,
+    dailyRateByCampaign,
+    projectedMonthEnd,
+  };
+
+  return { campaignDaily, metricSnaps, pacingTargets, changeEvents, pipelineSnaps, quarter, prevQ, spendForecast };
 }
 
 function formatEnrichedContext(ctx: Awaited<ReturnType<typeof fetchEnrichedContext>>): string {
-  const { campaignDaily, metricSnaps, pacingTargets, changeEvents, pipelineSnaps, quarter, prevQ } = ctx;
+  const { campaignDaily, metricSnaps, pacingTargets, changeEvents, pipelineSnaps, quarter, prevQ, spendForecast } = ctx;
 
   const fmt$ = (v: number | null | undefined) =>
     v == null ? "—" : `$${v.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
   const fmtN  = (v: number | null | undefined, d = 0) => v == null ? "—" : v.toLocaleString("en-US", { maximumFractionDigits: d });
   const fmtPct = (v: number | null | undefined) => v == null ? "—" : `${(v * 100).toFixed(1)}%`;
 
-  // ── Campaign daily: aggregate per campaign per week for readability ────────
+  // ── Spend forecast block — put this FIRST so it is never missed ──────────
+  const sf = spendForecast;
+  const pacingTarget = pacingTargets.find(t => t.period === quarter);
+  const targetSpend  = pacingTarget?.targetSpend ?? null;
+  const pacingPct    = targetSpend && targetSpend > 0
+    ? Math.round((sf.projectedMonthEnd / targetSpend) * 100)
+    : null;
+  const mtdPacingPct = targetSpend && targetSpend > 0
+    ? Math.round((sf.mtdTotal / (targetSpend * sf.dayOfMonth / sf.daysInMonth)) * 100)
+    : null;
+
+  let forecastText = `\n## ⭐ SPEND FORECAST — ${sf.monthName} (pre-computed — use these numbers directly)\n`;
+  forecastText += `Today is day **${sf.dayOfMonth} of ${sf.daysInMonth}** (${sf.daysRemaining} days remaining).\n\n`;
+  forecastText += `**Month-to-date spend (${sf.monthName.split(" ")[0]} 1–${sf.dayOfMonth}):** ${fmt$(sf.mtdTotal)}\n`;
+  for (const [name, spend] of Object.entries(sf.mtdByCampaign).sort(([,a],[,b]) => b - a)) {
+    forecastText += `  - ${name}: ${fmt$(spend)}\n`;
+  }
+  forecastText += `\n**Recent daily spend rate (7-day avg):** ${fmt$(sf.dailyRateTotal)}/day\n`;
+  for (const [name, rate] of Object.entries(sf.dailyRateByCampaign).sort(([,a],[,b]) => b - a)) {
+    forecastText += `  - ${name}: ${fmt$(rate)}/day\n`;
+  }
+  forecastText += `\n**Projected month-end spend** (MTD + daily rate × ${sf.daysRemaining} days remaining): **${fmt$(sf.projectedMonthEnd)}**\n`;
+  if (targetSpend) {
+    forecastText += `**Monthly spend target:** ${fmt$(targetSpend)}\n`;
+    forecastText += `**Projected vs target:** ${pacingPct}% of target\n`;
+    forecastText += `**MTD pacing vs pro-rata target:** ${mtdPacingPct}% (${mtdPacingPct && mtdPacingPct > 100 ? "ahead" : "behind"} pace)\n`;
+  }
+  forecastText += `\nNOTE: The 7-day average daily rate captures recent budget changes. If budgets were changed in the last 7 days, the rate already reflects the new level. Check "Recent Google Ads Changes" below for context on any changes.\n`;
+
+  // ── Campaign daily: aggregate per campaign per week (last 8 weeks) ────────
+  const eightWeeksAgo = new Date(); eightWeeksAgo.setDate(eightWeeksAgo.getDate() - 56);
+  const recentDaily = campaignDaily.filter(r => new Date(r.date) >= eightWeeksAgo);
+
   const campaignWeekly: Record<string, Record<string, {
     spend: number; clicks: number; impressions: number;
     conversions: number; conversionValue: number;
@@ -110,7 +187,7 @@ function formatEnrichedContext(ctx: Awaited<ReturnType<typeof fetchEnrichedConte
     days: number;
   }>> = {};
 
-  for (const row of campaignDaily) {
+  for (const row of recentDaily) {
     const name = row.campaignName ?? row.campaignId;
     const weekStart = new Date(row.date);
     weekStart.setDate(weekStart.getDate() - weekStart.getDay());
@@ -132,7 +209,7 @@ function formatEnrichedContext(ctx: Awaited<ReturnType<typeof fetchEnrichedConte
     campaignWeekly[name][wk] = e;
   }
 
-  let campText = "\n## Google Ads — Weekly Campaign Performance (last 90 days, oldest first)\n";
+  let campText = "\n## Google Ads — Weekly Campaign Performance (last 8 weeks, oldest first)\n";
   for (const [name, weeks] of Object.entries(campaignWeekly)) {
     campText += `\n### ${name}\n`;
     campText += "Week | Spend | Impressions | Clicks | Conv | Conv Value | Search IS | Lost IS (Rank) | Lost IS (Budget)\n";
@@ -203,7 +280,7 @@ function formatEnrichedContext(ctx: Awaited<ReturnType<typeof fetchEnrichedConte
     }
   }
 
-  return `${campText}${metricText}${pacingText}${changeText}${pipelineText}`;
+  return `${forecastText}${campText}${metricText}${pacingText}${changeText}${pipelineText}`;
 }
 
 async function resolveApiKey(): Promise<string | null> {
@@ -459,7 +536,7 @@ Chart rules:
     const client = new Anthropic({ apiKey });
     const response = await client.messages.create({
       model:      "claude-sonnet-4-6",
-      max_tokens: 4096,
+      max_tokens: 8192,
       system:     systemPrompt,
       messages:   [...chatHistory, { role: "user", content: lastUserContent }],
     });
