@@ -273,6 +273,22 @@ model AeoPillarScore {
   fetchedAt DateTime @default(now())
 }
 
+// User-managed AEO query/page pairs — explicit search query + target URL to score.
+model AeoCustomQuery {
+  id        String    @id @default(cuid())
+  label     String
+  query     String
+  targetUrl String
+  active    Boolean   @default(true)
+  score     Int?
+  signals   String?   // JSON: AeoSignals
+  fetchedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([active])
+}
+
 // User-managed GEO prompts — the exact questions fired at AI engines.
 model GeoPrompt {
   id           String   @id @default(cuid())

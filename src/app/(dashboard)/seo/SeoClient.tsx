@@ -561,6 +561,22 @@ export function SeoClient() {
   const [aeoSyncMsg, setAeoSyncMsg]         = useState<string | null>(null);
   const [aeoRefreshing, setAeoRefreshing]   = useState(false);
 
+  // AEO custom query management
+  interface AeoCustomQuery {
+    id: string; label: string; query: string; targetUrl: string;
+    active: boolean; score: number | null; signals: string | null;
+    fetchedAt: string | null; createdAt: string;
+  }
+  const [customQueries, setCustomQueries]       = useState<AeoCustomQuery[]>([]);
+  const [customLoading, setCustomLoading]       = useState(false);
+  const [customRescoring, setCustomRescoring]   = useState(false);
+  const [showQueryForm, setShowQueryForm]       = useState(false);
+  const [editingQuery, setEditingQuery]         = useState<AeoCustomQuery | null>(null);
+  const [qLabel, setQLabel]   = useState("");
+  const [qQuery, setQQuery]   = useState("");
+  const [qUrl, setQUrl]       = useState("");
+  const [qSaving, setQSaving] = useState(false);
+
 
   // GEO prompt tracker state
   const [geoResults, setGeoResults]           = useState<GeoPromptResult[]>([]);
@@ -600,6 +616,83 @@ export function SeoClient() {
       setAeoReadinessLoading(false);
     }
   }, []);
+
+  const loadCustomQueries = useCallback(async () => {
+    setCustomLoading(true);
+    try {
+      const res = await fetch("/api/seo/aeo-queries");
+      const json = await res.json();
+      setCustomQueries(json.queries ?? []);
+    } finally {
+      setCustomLoading(false);
+    }
+  }, []);
+
+  async function handleCustomRescore() {
+    setCustomRescoring(true);
+    try {
+      const res = await fetch("/api/seo/aeo-queries?rescore=1", { method: "POST" });
+      const json = await res.json();
+      setCustomQueries(json.queries ?? []);
+    } finally {
+      setCustomRescoring(false);
+    }
+  }
+
+  function openNewQueryForm() {
+    setEditingQuery(null);
+    setQLabel(""); setQQuery(""); setQUrl("");
+    setShowQueryForm(true);
+  }
+
+  function openEditQueryForm(q: AeoCustomQuery) {
+    setEditingQuery(q);
+    setQLabel(q.label); setQQuery(q.query); setQUrl(q.targetUrl);
+    setShowQueryForm(true);
+  }
+
+  async function saveQuery() {
+    if (!qLabel.trim() || !qQuery.trim() || !qUrl.trim()) return;
+    setQSaving(true);
+    try {
+      if (editingQuery) {
+        const res = await fetch(`/api/seo/aeo-queries/${editingQuery.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ label: qLabel, query: qQuery, targetUrl: qUrl }),
+        });
+        const json = await res.json();
+        setCustomQueries(prev => prev.map(q => q.id === editingQuery.id ? json.query : q));
+      } else {
+        const res = await fetch("/api/seo/aeo-queries", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ label: qLabel, query: qQuery, targetUrl: qUrl }),
+        });
+        const json = await res.json();
+        setCustomQueries(prev => [...prev, json.query]);
+      }
+      setShowQueryForm(false);
+      setEditingQuery(null);
+    } finally {
+      setQSaving(false);
+    }
+  }
+
+  async function deleteQuery(id: string) {
+    await fetch(`/api/seo/aeo-queries/${id}`, { method: "DELETE" });
+    setCustomQueries(prev => prev.filter(q => q.id !== id));
+  }
+
+  async function toggleQueryActive(q: AeoCustomQuery) {
+    const res = await fetch(`/api/seo/aeo-queries/${q.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ active: !q.active }),
+    });
+    const json = await res.json();
+    setCustomQueries(prev => prev.map(x => x.id === q.id ? json.query : x));
+  }
 
   const loadGeoResults = useCallback(async () => {
     setGeoLoading(true);
@@ -707,11 +800,12 @@ export function SeoClient() {
     if (channel === "aeo") {
       if (!aeoOverview)   loadAeoOverview();
       if (!aeoReadiness)  loadAeoReadiness();
+      loadCustomQueries();
     }
     if (channel === "geo") {
       loadGeoResults();
     }
-  }, [channel, aeoOverview, aeoReadiness, loadAeoOverview, loadAeoReadiness, loadGeoResults]);
+  }, [channel, aeoOverview, aeoReadiness, loadAeoOverview, loadAeoReadiness, loadGeoResults, loadCustomQueries]);
 
   async function handleSync() {
     setSyncing(true);
@@ -773,9 +867,18 @@ export function SeoClient() {
   async function handleAeoReadinessRefresh() {
     setAeoRefreshing(true);
     try {
-      const res  = await fetch("/api/seo/aeo-readiness", { method: "POST" });
+      const [res, cRes] = await Promise.all([
+        fetch("/api/seo/aeo-readiness", { method: "POST" }),
+        customQueries.length > 0
+          ? fetch("/api/seo/aeo-queries?rescore=1", { method: "POST" })
+          : Promise.resolve(null),
+      ]);
       const json = await res.json();
       setAeoReadiness(json.pillars ?? null);
+      if (cRes) {
+        const cJson = await cRes.json();
+        setCustomQueries(cJson.queries ?? []);
+      }
     } finally {
       setAeoRefreshing(false);
     }
@@ -1017,85 +1120,248 @@ export function SeoClient() {
             <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
               <div>
                 <h2 className="text-sm font-semibold text-slate-700">Content Readiness Score</h2>
-                <p className="text-xs text-slate-400 mt-0.5">How well each pillar page is structured to be cited by AI Overview · Scored against 7 AEO signals</p>
+                <p className="text-xs text-slate-400 mt-0.5">How well each page is structured to be cited by AI Overview · Scored against 7 AEO signals</p>
               </div>
-              <button
-                onClick={handleAeoReadinessRefresh}
-                disabled={aeoRefreshing}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50"
-              >
-                <RefreshCw className={cn("w-3.5 h-3.5", aeoRefreshing && "animate-spin")} />
-                {aeoRefreshing ? "Rescoring…" : "Refresh Scores"}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={openNewQueryForm}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-sm text-indigo-600 hover:bg-indigo-100"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Add Query
+                </button>
+                <button
+                  onClick={handleAeoReadinessRefresh}
+                  disabled={aeoRefreshing}
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  <RefreshCw className={cn("w-3.5 h-3.5", aeoRefreshing && "animate-spin")} />
+                  {aeoRefreshing ? "Rescoring…" : "Refresh Scores"}
+                </button>
+              </div>
             </div>
+
+            {/* ── Custom query management panel ── */}
+            {(customQueries.length > 0 || showQueryForm) && (
+              <div className="rounded-xl border border-slate-200 bg-white mb-5 overflow-hidden">
+                <div className="px-4 py-3 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Tracked Queries</p>
+                  {customQueries.length > 0 && (
+                    <button
+                      onClick={handleCustomRescore}
+                      disabled={customRescoring}
+                      className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600 disabled:opacity-50"
+                    >
+                      <RefreshCw className={cn("w-3 h-3", customRescoring && "animate-spin")} />
+                      {customRescoring ? "Rescoring…" : "Rescore"}
+                    </button>
+                  )}
+                </div>
+
+                {customLoading && <p className="text-xs text-slate-400 text-center py-4">Loading…</p>}
+
+                {!customLoading && customQueries.map(q => (
+                  <div key={q.id} className={cn("flex items-center gap-3 px-4 py-3 border-b border-slate-100 last:border-0", !q.active && "opacity-50")}>
+                    <button
+                      onClick={() => toggleQueryActive(q)}
+                      title={q.active ? "Disable" : "Enable"}
+                      className={cn("w-3.5 h-3.5 rounded-full border-2 shrink-0 transition-colors",
+                        q.active ? "bg-emerald-500 border-emerald-500" : "bg-white border-slate-300")}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-slate-700 truncate">{q.label}</p>
+                      <p className="text-[11px] text-indigo-500 truncate">query: &ldquo;{q.query}&rdquo;</p>
+                      <a href={q.targetUrl} target="_blank" rel="noopener noreferrer"
+                         className="text-[10px] text-slate-400 hover:underline truncate block">
+                        {q.targetUrl}
+                      </a>
+                    </div>
+                    <div className="shrink-0 text-center">
+                      {q.score != null ? (
+                        <span className={cn("text-sm font-bold",
+                          q.score >= 70 ? "text-emerald-600" : q.score >= 40 ? "text-amber-500" : "text-rose-500")}>
+                          {q.score}/100
+                        </span>
+                      ) : (
+                        <span className="text-xs text-slate-300">—</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button onClick={() => openEditQueryForm(q)}
+                        className="p-1 rounded text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 transition-colors">
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <button onClick={() => deleteQuery(q.id)}
+                        className="p-1 rounded text-slate-300 hover:text-red-400 hover:bg-red-50 transition-colors">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+
+                {/* Add / Edit form */}
+                {showQueryForm && (
+                  <div className="px-4 py-4 bg-indigo-50/50 border-t border-indigo-100">
+                    <p className="text-xs font-semibold text-indigo-700 mb-3">
+                      {editingQuery ? "Edit Query" : "New Query / Page"}
+                    </p>
+                    <div className="space-y-2">
+                      <input
+                        value={qLabel}
+                        onChange={e => setQLabel(e.target.value)}
+                        placeholder="Label (e.g. AI Bookkeeping)"
+                        className="w-full text-xs px-3 py-2 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                      />
+                      <input
+                        value={qQuery}
+                        onChange={e => setQQuery(e.target.value)}
+                        placeholder="Search query (e.g. best ai bookkeeping software)"
+                        className="w-full text-xs px-3 py-2 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                      />
+                      <input
+                        value={qUrl}
+                        onChange={e => setQUrl(e.target.value)}
+                        placeholder="Target page URL (https://www.zeni.ai/...)"
+                        className="w-full text-xs px-3 py-2 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2 mt-3">
+                      <button
+                        onClick={saveQuery}
+                        disabled={qSaving || !qLabel.trim() || !qQuery.trim() || !qUrl.trim()}
+                        className="px-4 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 disabled:opacity-50"
+                      >
+                        {qSaving ? "Saving & scoring…" : editingQuery ? "Save Changes" : "Add & Score"}
+                      </button>
+                      <button
+                        onClick={() => { setShowQueryForm(false); setEditingQuery(null); }}
+                        className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* "Add Query" prompt when no custom queries yet */}
+            {customQueries.length === 0 && !showQueryForm && !customLoading && (
+              <button
+                onClick={openNewQueryForm}
+                className="w-full mb-5 rounded-xl border border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 text-xs text-slate-400 py-3 transition-colors"
+              >
+                + Add a search query and target page to track
+              </button>
+            )}
 
             {aeoReadinessLoading && <div className="text-sm text-slate-400 py-8 text-center">Fetching & scoring pillar pages…</div>}
 
             {!aeoReadinessLoading && aeoReadiness && (
               <>
                 {/* Score grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 mb-6">
-                  {aeoReadiness.map(p => {
-                    const grade = p.score >= 70 ? "strong" : p.score >= 40 ? "moderate" : "weak";
-                    const cfg = {
+                {(() => {
+                  const SIGNAL_LABELS = [
+                    { key: "faqSchema"        as const, label: "FAQ Schema",         pts: 20 },
+                    { key: "questionHeadings" as const, label: "Question Headings",  pts: 20 },
+                    { key: "directAnswer"     as const, label: "Direct Answer Para", pts: 20 },
+                    { key: "lists"            as const, label: "Structured Lists",   pts: 15 },
+                    { key: "orgSchema"        as const, label: "Org/Article Schema", pts: 15 },
+                    { key: "metaDesc"         as const, label: "Meta Description",   pts: 5  },
+                    { key: "h1Present"        as const, label: "H1 Present",         pts: 5  },
+                  ];
+                  function gradeCard(score: number) {
+                    const grade = score >= 70 ? "strong" : score >= 40 ? "moderate" : "weak";
+                    return {
                       strong:   { bg: "bg-emerald-50", border: "border-emerald-200", badge: "bg-emerald-100 text-emerald-700", bar: "bg-emerald-500", label: "Strong" },
                       moderate: { bg: "bg-amber-50",   border: "border-amber-200",   badge: "bg-amber-100 text-amber-700",   bar: "bg-amber-400",   label: "Moderate" },
                       weak:     { bg: "bg-rose-50",    border: "border-rose-200",    badge: "bg-rose-100 text-rose-700",    bar: "bg-rose-400",    label: "Needs work" },
                     }[grade];
-                    const SIGNAL_LABELS: { key: keyof typeof p.signals; label: string; pts: number }[] = [
-                      { key: "faqSchema",        label: "FAQ Schema",         pts: 20 },
-                      { key: "questionHeadings", label: "Question Headings",  pts: 20 },
-                      { key: "directAnswer",     label: "Direct Answer Para", pts: 20 },
-                      { key: "lists",            label: "Structured Lists",   pts: 15 },
-                      { key: "orgSchema",        label: "Org/Article Schema", pts: 15 },
-                      { key: "metaDesc",         label: "Meta Description",   pts: 5  },
-                      { key: "h1Present",        label: "H1 Present",         pts: 5  },
-                    ];
+                  }
+                  function SignalChecklist({ signals }: { signals: Record<string, boolean> }) {
                     return (
-                      <div key={p.pillarId} className={cn("rounded-xl border p-4", cfg.bg, cfg.border)}>
-                        <div className="flex items-start justify-between mb-3">
-                          <div className="flex-1 min-w-0 pr-2">
-                            <p className="text-xs font-semibold text-slate-700 truncate">{p.label}</p>
-                            {p.pageUrl && (
-                              <a href={p.pageUrl} target="_blank" rel="noopener noreferrer"
-                                 className="text-[10px] text-indigo-500 hover:underline truncate block max-w-full">
-                                {p.pageUrl.replace("https://www.zeni.ai", "")}
-                              </a>
-                            )}
-                            {!p.pageUrl && <p className="text-[10px] text-slate-400 italic">Page not discovered</p>}
-                          </div>
-                          <span className={cn("shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full", cfg.badge)}>
-                            {cfg.label}
-                          </span>
-                        </div>
-
-                        {/* Score bar */}
-                        <div className="flex items-center gap-2 mb-3">
-                          <div className="flex-1 h-2 bg-white/60 rounded-full overflow-hidden">
-                            <div className={cn("h-2 rounded-full transition-all", cfg.bar)} style={{ width: `${p.score}%` }} />
-                          </div>
-                          <span className="text-sm font-bold text-slate-800 shrink-0">{p.score}/100</span>
-                        </div>
-
-                        {/* Signal checklist */}
-                        <div className="space-y-1">
-                          {SIGNAL_LABELS.map(s => (
-                            <div key={s.key} className="flex items-center justify-between text-[10px]">
-                              <span className={cn("flex items-center gap-1", p.signals[s.key] ? "text-slate-600" : "text-slate-400")}>
-                                <span className={cn("w-3 h-3 rounded-full flex items-center justify-center text-white font-bold shrink-0",
-                                  p.signals[s.key] ? "bg-emerald-500" : "bg-slate-200")}>
-                                  {p.signals[s.key] ? "✓" : ""}
-                                </span>
-                                {s.label}
+                      <div className="space-y-1">
+                        {SIGNAL_LABELS.map(s => (
+                          <div key={s.key} className="flex items-center justify-between text-[10px]">
+                            <span className={cn("flex items-center gap-1", signals[s.key] ? "text-slate-600" : "text-slate-400")}>
+                              <span className={cn("w-3 h-3 rounded-full flex items-center justify-center text-white font-bold shrink-0",
+                                signals[s.key] ? "bg-emerald-500" : "bg-slate-200")}>
+                                {signals[s.key] ? "✓" : ""}
                               </span>
-                              <span className={p.signals[s.key] ? "text-slate-500" : "text-slate-300"}>+{s.pts}</span>
-                            </div>
-                          ))}
-                        </div>
+                              {s.label}
+                            </span>
+                            <span className={signals[s.key] ? "text-slate-500" : "text-slate-300"}>+{s.pts}</span>
+                          </div>
+                        ))}
                       </div>
                     );
-                  })}
-                </div>
+                  }
+                  const activeCustom = customQueries.filter(q => q.active && q.score != null);
+                  return (
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 mb-6">
+                      {aeoReadiness.map(p => {
+                        const cfg = gradeCard(p.score);
+                        return (
+                          <div key={p.pillarId} className={cn("rounded-xl border p-4", cfg.bg, cfg.border)}>
+                            <div className="flex items-start justify-between mb-3">
+                              <div className="flex-1 min-w-0 pr-2">
+                                <p className="text-xs font-semibold text-slate-700 truncate">{p.label}</p>
+                                {p.pageUrl && (
+                                  <a href={p.pageUrl} target="_blank" rel="noopener noreferrer"
+                                     className="text-[10px] text-indigo-500 hover:underline truncate block max-w-full">
+                                    {p.pageUrl.replace("https://www.zeni.ai", "")}
+                                  </a>
+                                )}
+                                {!p.pageUrl && <p className="text-[10px] text-slate-400 italic">Page not discovered</p>}
+                              </div>
+                              <span className={cn("shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full", cfg.badge)}>{cfg.label}</span>
+                            </div>
+                            <div className="flex items-center gap-2 mb-3">
+                              <div className="flex-1 h-2 bg-white/60 rounded-full overflow-hidden">
+                                <div className={cn("h-2 rounded-full transition-all", cfg.bar)} style={{ width: `${p.score}%` }} />
+                              </div>
+                              <span className="text-sm font-bold text-slate-800 shrink-0">{p.score}/100</span>
+                            </div>
+                            <SignalChecklist signals={p.signals as unknown as Record<string, boolean>} />
+                          </div>
+                        );
+                      })}
+
+                      {activeCustom.map(q => {
+                        const score = q.score ?? 0;
+                        const cfg   = gradeCard(score);
+                        const sigs: Record<string, boolean> = q.signals ? JSON.parse(q.signals) : {};
+                        return (
+                          <div key={q.id} className={cn("rounded-xl border p-4 relative", cfg.bg, cfg.border)}>
+                            <div className="absolute top-2 right-2 flex gap-1">
+                              <button onClick={() => openEditQueryForm(q)}
+                                className="p-0.5 rounded text-slate-300 hover:text-indigo-500 transition-colors">
+                                <Pencil className="w-3 h-3" />
+                              </button>
+                            </div>
+                            <div className="flex items-start justify-between mb-3 pr-8">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs font-semibold text-slate-700 truncate">{q.label}</p>
+                                <a href={q.targetUrl} target="_blank" rel="noopener noreferrer"
+                                   className="text-[10px] text-indigo-500 hover:underline truncate block max-w-full">
+                                  {q.targetUrl.replace("https://www.zeni.ai", "")}
+                                </a>
+                                <p className="text-[10px] text-slate-400 italic truncate">&ldquo;{q.query}&rdquo;</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 mb-3">
+                              <div className="flex-1 h-2 bg-white/60 rounded-full overflow-hidden">
+                                <div className={cn("h-2 rounded-full transition-all", cfg.bar)} style={{ width: `${score}%` }} />
+                              </div>
+                              <span className="text-sm font-bold text-slate-800 shrink-0">{score}/100</span>
+                            </div>
+                            <SignalChecklist signals={sigs} />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
 
                 {/* Signal legend */}
                 <div className="rounded-xl border border-slate-200 bg-slate-50 px-5 py-4">
