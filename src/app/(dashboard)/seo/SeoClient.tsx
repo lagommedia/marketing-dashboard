@@ -22,12 +22,13 @@ interface AeoSignals {
 }
 
 interface AeoReadinessPillar {
-  pillarId:  string;
-  label:     string;
-  isPrimary: boolean;
-  pageUrl:   string | null;
-  score:     number;
-  signals:   AeoSignals;
+  pillarId:        string;
+  label:           string;
+  isPrimary:       boolean;
+  pageUrl:         string | null;
+  pageUrlOverride: string | null;
+  score:           number;
+  signals:         AeoSignals;
 }
 
 interface AeoOverviewData {
@@ -560,6 +561,31 @@ export function SeoClient() {
   const [aeoSyncing, setAeoSyncing]         = useState(false);
   const [aeoSyncMsg, setAeoSyncMsg]         = useState<string | null>(null);
   const [aeoRefreshing, setAeoRefreshing]   = useState(false);
+
+  // AEO pillar URL editing
+  const [editingPillarId, setEditingPillarId] = useState<string | null>(null);
+  const [pillarUrlDraft, setPillarUrlDraft]   = useState("");
+  const [pillarSaving, setPillarSaving]       = useState(false);
+
+  async function savePillarUrl(pillarId: string) {
+    setPillarSaving(true);
+    try {
+      const res  = await fetch(`/api/seo/aeo-readiness/${pillarId}`, {
+        method:  "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ pageUrlOverride: pillarUrlDraft.trim() || null }),
+      });
+      const json = await res.json();
+      if (json.pillar) {
+        setAeoReadiness(prev =>
+          prev ? prev.map(p => p.pillarId === pillarId ? { ...p, ...json.pillar } : p) : prev,
+        );
+      }
+    } finally {
+      setPillarSaving(false);
+      setEditingPillarId(null);
+    }
+  }
 
   // AEO custom query management
   interface AeoCustomQuery {
@@ -1300,22 +1326,76 @@ export function SeoClient() {
                   return (
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 mb-6">
                       {aeoReadiness.map(p => {
-                        const cfg = gradeCard(p.score);
+                        const cfg        = gradeCard(p.score);
+                        const isEditing  = editingPillarId === p.pillarId;
                         return (
                           <div key={p.pillarId} className={cn("rounded-xl border p-4", cfg.bg, cfg.border)}>
                             <div className="flex items-start justify-between mb-3">
                               <div className="flex-1 min-w-0 pr-2">
                                 <p className="text-xs font-semibold text-slate-700 truncate">{p.label}</p>
-                                {p.pageUrl && (
+                                {p.pageUrlOverride && (
+                                  <span className="text-[9px] font-medium text-indigo-400 uppercase tracking-wide">pinned</span>
+                                )}
+                                {p.pageUrl && !isEditing && (
                                   <a href={p.pageUrl} target="_blank" rel="noopener noreferrer"
                                      className="text-[10px] text-indigo-500 hover:underline truncate block max-w-full">
                                     {p.pageUrl.replace("https://www.zeni.ai", "")}
                                   </a>
                                 )}
-                                {!p.pageUrl && <p className="text-[10px] text-slate-400 italic">Page not discovered</p>}
+                                {!p.pageUrl && !isEditing && (
+                                  <p className="text-[10px] text-slate-400 italic">Page not discovered</p>
+                                )}
                               </div>
-                              <span className={cn("shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full", cfg.badge)}>{cfg.label}</span>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full", cfg.badge)}>{cfg.label}</span>
+                                {!isEditing && (
+                                  <button
+                                    onClick={() => { setEditingPillarId(p.pillarId); setPillarUrlDraft(p.pageUrl ?? ""); }}
+                                    title="Edit target URL"
+                                    className="p-1 rounded text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 transition-colors"
+                                  >
+                                    <Pencil className="w-3 h-3" />
+                                  </button>
+                                )}
+                              </div>
                             </div>
+
+                            {/* Inline URL edit form */}
+                            {isEditing && (
+                              <div className="mb-3 space-y-1.5">
+                                <input
+                                  autoFocus
+                                  value={pillarUrlDraft}
+                                  onChange={e => setPillarUrlDraft(e.target.value)}
+                                  placeholder="https://www.zeni.ai/..."
+                                  className="w-full text-[11px] px-2.5 py-1.5 rounded-lg border border-indigo-300 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                                />
+                                <div className="flex gap-1.5">
+                                  <button
+                                    onClick={() => savePillarUrl(p.pillarId)}
+                                    disabled={pillarSaving}
+                                    className="flex-1 py-1 rounded-lg bg-indigo-600 text-white text-[11px] font-medium hover:bg-indigo-700 disabled:opacity-50"
+                                  >
+                                    {pillarSaving ? "Saving…" : "Save & Rescore"}
+                                  </button>
+                                  <button
+                                    onClick={() => setEditingPillarId(null)}
+                                    className="px-2 py-1 rounded-lg border border-slate-200 text-[11px] text-slate-500 hover:bg-slate-50"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                                {p.pageUrlOverride && (
+                                  <button
+                                    onClick={() => { setPillarUrlDraft(""); savePillarUrl(p.pillarId); }}
+                                    className="text-[10px] text-rose-400 hover:text-rose-600"
+                                  >
+                                    Clear override (revert to auto-discovered URL)
+                                  </button>
+                                )}
+                              </div>
+                            )}
+
                             <div className="flex items-center gap-2 mb-3">
                               <div className="flex-1 h-2 bg-white/60 rounded-full overflow-hidden">
                                 <div className={cn("h-2 rounded-full transition-all", cfg.bar)} style={{ width: `${p.score}%` }} />

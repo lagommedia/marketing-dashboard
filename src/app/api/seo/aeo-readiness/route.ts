@@ -66,22 +66,23 @@ async function computeAndCache(force = false) {
 
   const results = await Promise.all(
     KEYWORD_PILLARS.map(async pillar => {
-      if (!force) {
-        const cached = await prisma.aeoPillarScore.findUnique({ where: { pillarId: pillar.id } });
-        if (cached && cached.fetchedAt > cutoff) {
-          return {
-            pillarId:  pillar.id,
-            label:     pillar.label,
-            isPrimary: pillar.isPrimary,
-            pageUrl:   cached.pageUrl,
-            score:     cached.score,
-            signals:   JSON.parse(cached.signals) as AeoSignals,
-            fromCache: true,
-          };
-        }
+      const existing = await prisma.aeoPillarScore.findUnique({ where: { pillarId: pillar.id } });
+
+      if (!force && existing && existing.fetchedAt > cutoff) {
+        return {
+          pillarId:        pillar.id,
+          label:           pillar.label,
+          isPrimary:       pillar.isPrimary,
+          pageUrl:         existing.pageUrlOverride ?? existing.pageUrl,
+          pageUrlOverride: existing.pageUrlOverride,
+          score:           existing.score,
+          signals:         JSON.parse(existing.signals) as AeoSignals,
+          fromCache:       true,
+        };
       }
 
-      const pageUrl = pillarUrls.get(pillar.id) ?? null;
+      // User-pinned URL takes precedence over sitemap discovery
+      const pageUrl = existing?.pageUrlOverride ?? pillarUrls.get(pillar.id) ?? null;
       const { signals, score } = pageUrl
         ? await scorePage(pageUrl, pillar.seeds)
         : { signals: { ...EMPTY_SIGNALS }, score: 0 };
@@ -92,7 +93,16 @@ async function computeAndCache(force = false) {
         update: { pageUrl, score, signals: JSON.stringify(signals), fetchedAt: new Date() },
       });
 
-      return { pillarId: pillar.id, label: pillar.label, isPrimary: pillar.isPrimary, pageUrl, score, signals, fromCache: false };
+      return {
+        pillarId:        pillar.id,
+        label:           pillar.label,
+        isPrimary:       pillar.isPrimary,
+        pageUrl,
+        pageUrlOverride: existing?.pageUrlOverride ?? null,
+        score,
+        signals,
+        fromCache:       false,
+      };
     })
   );
 

@@ -265,12 +265,13 @@ model GscAiOverviewDay {
 
 // Cached AEO content-readiness scores per pillar (refreshed on demand)
 model AeoPillarScore {
-  id        String   @id @default(cuid())
-  pillarId  String   @unique
-  pageUrl   String?
-  score     Int      // 0-100
-  signals   String   // JSON: { faqSchema, orgSchema, howtoSchema, questionHeadings, directAnswer, lists, metaDesc }
-  fetchedAt DateTime @default(now())
+  id              String   @id @default(cuid())
+  pillarId        String   @unique
+  pageUrl         String?  // auto-discovered from sitemap
+  pageUrlOverride String?  // user-pinned URL (takes precedence over auto-discovered)
+  score           Int      // 0-100
+  signals         String   // JSON: { faqSchema, orgSchema, howtoSchema, questionHeadings, directAnswer, lists, metaDesc }
+  fetchedAt       DateTime @default(now())
 }
 
 // User-managed AEO query/page pairs — explicit search query + target URL to score.
