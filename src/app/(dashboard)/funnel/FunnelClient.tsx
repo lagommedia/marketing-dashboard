@@ -14,6 +14,7 @@ interface FunnelCounts {
   siteVisits:    number;
   paidVisits:    number;
   organicVisits: number;
+  adSpend:       number;
   leads:         number;
   mqls:          number;
   sqos:          number;
@@ -323,6 +324,15 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
 
   const siteVisits = counts?.siteVisits ?? 0;
 
+  // Which spend figure to use for cost-per calculations:
+  // - organic: no cost (show "—")
+  // - paid: actual Google Ads spend from CampaignDailySpend
+  // - all: estimated marketing spend (pacing target / sheets)
+  const effectiveSpend =
+    channel === "organic" ? null :
+    channel === "paid"    ? (counts?.adSpend ?? null) :
+    estimatedSpend;
+
   return (
     <>
       {/* Top controls row */}
@@ -440,8 +450,8 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
                   i === 0 ? siteVisits : getCount(counts, STAGES[i - 1].key);
                 const conversion = fmtPct(count, prevCount);
 
-                const costPer = estimatedSpend != null && count > 0
-                  ? fmtCurrency(estimatedSpend / count)
+                const costPer = effectiveSpend != null && count > 0
+                  ? fmtCurrency(effectiveSpend / count)
                   : "—";
 
                 return (
@@ -523,25 +533,29 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
       )}
 
       {/* Cost per summary */}
-      {counts && estimatedSpend != null && (
+      {counts && effectiveSpend != null && (
         <div className="bg-slate-50 rounded-xl border border-slate-200 p-5">
           <div className="flex items-center justify-between mb-3">
             <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Cost Per Stage</p>
-            <p className="text-xs text-slate-400">Based on {fmtCurrency(estimatedSpend)} est. marketing spend</p>
+            <p className="text-xs text-slate-400">
+              {channel === "paid"
+                ? `Based on ${fmtCurrency(effectiveSpend)} actual ad spend`
+                : `Based on ${fmtCurrency(effectiveSpend)} est. marketing spend`}
+            </p>
           </div>
           <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
             {/* Site visits cost tile */}
             <div className="rounded-lg p-3 text-center bg-indigo-50">
               <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-700">
-                {channel === "paid" ? "Paid Visit" : channel === "organic" ? "Organic Visit" : "Site Visit"}
+                {channel === "paid" ? "Paid Visit" : "Site Visit"}
               </p>
               <p className="text-sm font-bold mt-1 text-indigo-700">
-                {siteVisits > 0 ? fmtCurrency(estimatedSpend / siteVisits) : "—"}
+                {siteVisits > 0 ? fmtCurrency(effectiveSpend / siteVisits) : "—"}
               </p>
             </div>
             {STAGES.map(stage => {
               const count   = getCount(counts, stage.key);
-              const costPer = count > 0 ? fmtCurrency(estimatedSpend / count) : "—";
+              const costPer = count > 0 ? fmtCurrency(effectiveSpend / count) : "—";
               return (
                 <div key={stage.key} className={cn("rounded-lg p-3 text-center", stage.bg)}>
                   <p className={cn("text-[11px] font-semibold uppercase tracking-wide", stage.color)}>{stage.label}</p>
