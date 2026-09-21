@@ -382,8 +382,17 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
         )}
 
         {counts && (() => {
-          // Scale bars relative to site visits (the new top of funnel)
+          // Log scale for bar widths — prevents the T-shape when top-of-funnel
+          // (site visits) dwarfs lower stages by orders of magnitude.
           const topCount = Math.max(siteVisits, counts.leads, 1);
+          const logPct = (count: number) => {
+            if (count <= 0) return 8;
+            if (count >= topCount) return 100;
+            return Math.max(
+              (Math.log2(count + 1) / Math.log2(topCount + 1)) * 100,
+              8,
+            );
+          };
 
           return (
             <>
@@ -394,8 +403,8 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
                     <div
                       className="absolute inset-y-0 rounded-sm transition-all duration-700 bg-indigo-400"
                       style={{
-                        left:  `${(100 - Math.max((siteVisits / topCount) * 100, 6)) / 2}%`,
-                        right: `${(100 - Math.max((siteVisits / topCount) * 100, 6)) / 2}%`,
+                        left:  `${(100 - logPct(siteVisits)) / 2}%`,
+                        right: `${(100 - logPct(siteVisits)) / 2}%`,
                       }}
                     />
                     <div className="absolute inset-0 flex items-center justify-center gap-1">
@@ -424,7 +433,7 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
               {/* Existing funnel stages */}
               {STAGES.map((stage, i) => {
                 const count   = getCount(counts, stage.key);
-                const barPct  = Math.max((count / topCount) * 100, 6);
+                const barPct  = logPct(count);
 
                 // Conversion from previous stage (visits for Leads, otherwise prev stage)
                 const prevCount =
