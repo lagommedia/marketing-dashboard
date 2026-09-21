@@ -22,12 +22,15 @@ export async function GET(req: Request) {
     let paidVisits    = 0;
     let organicVisits = 0;
 
+    let adSpend = 0;
+
     if (channel === "all" || channel === "paid") {
       const paidRows = await prisma.campaignDailySpend.findMany({
         where:  { date: { gte: fromDate, lte: toEnd } },
-        select: { clicks: true },
+        select: { clicks: true, spend: true },
       });
       paidVisits = paidRows.reduce((s, r) => s + r.clicks, 0);
+      adSpend    = paidRows.reduce((s, r) => s + r.spend,  0);
     }
 
     if (channel === "all" || channel === "organic") {
@@ -61,6 +64,7 @@ export async function GET(req: Request) {
       siteVisits,
       paidVisits,
       organicVisits,
+      adSpend,
       leads:     sum("leads"),
       mqls:      sum("mqls"),
       sqls:      0,
