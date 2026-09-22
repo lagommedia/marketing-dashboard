@@ -147,7 +147,7 @@ export default function EmailClient() {
       const res = await fetch(`/api/email/stats?year=${y}&month=${m}`);
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body.error ?? `HTTP ${res.status}`);
+        throw new Error(body.error ?? `HTTP ${res.status}` + (body.detail ? `: ${body.detail}` : ""));
       }
       setData(await res.json());
     } catch (e) {

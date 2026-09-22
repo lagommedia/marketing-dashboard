@@ -1,16 +1,15 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { decrypt } from "@/lib/encryption";
 
 export const dynamic = "force-dynamic";
 
 const HS_BASE = "https://api.hubapi.com";
 
 async function getToken(): Promise<string | null> {
-  const row = await prisma.integration.findFirst({
-    where: { platform: "hubspot", connected: true },
-    select: { accessToken: true },
-  });
-  return row?.accessToken ?? null;
+  const row = await prisma.integration.findUnique({ where: { platform: "hubspot" } });
+  if (!row?.connected || !row.accessToken) return null;
+  return decrypt(row.accessToken);
 }
 
 function monthRange(year: number, month: number) {
