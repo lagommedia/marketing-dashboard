@@ -19,6 +19,7 @@ import {
   Filter,
   Bell,
   Mail,
+  Bot,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -82,6 +83,12 @@ const NAV_ITEMS = [
     label: "AI Analyst",
     icon: Sparkles,
     description: "Company AI breakdown",
+  },
+  {
+    href: "/mar-ops",
+    label: "Mar Ops Agent",
+    icon: Bot,
+    description: "Marketing ops AI chat",
   },
   {
     href: "/alerts",
