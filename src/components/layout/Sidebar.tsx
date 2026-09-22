@@ -18,6 +18,7 @@ import {
   LogOut,
   Filter,
   Bell,
+  Mail,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -63,6 +64,12 @@ const NAV_ITEMS = [
     label: "Social Media",
     icon: Share2,
     description: "Social performance",
+  },
+  {
+    href: "/email",
+    label: "Email",
+    icon: Mail,
+    description: "HubSpot email performance",
   },
   {
     href: "/manual",
