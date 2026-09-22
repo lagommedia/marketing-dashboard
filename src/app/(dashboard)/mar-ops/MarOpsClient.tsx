@@ -6,7 +6,6 @@ import {
   Bot, User, Lightbulb, BarChart2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import ReactMarkdown from "react-markdown";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -26,29 +25,94 @@ const STARTERS = [
   { icon: Lightbulb, text: "What's our current CAC and GTM efficiency?" },
 ];
 
-// ── Markdown renderer ─────────────────────────────────────────────────────────
+// ── Markdown renderer (no external dependency) ───────────────────────────────
+
+function renderInline(text: string): React.ReactNode[] {
+  // Handle **bold** and `code`
+  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**"))
+      return <strong key={i} className="font-semibold text-slate-900">{part.slice(2, -2)}</strong>;
+    if (part.startsWith("`") && part.endsWith("`"))
+      return <code key={i} className="bg-slate-100 text-slate-800 px-1 py-0.5 rounded text-xs font-mono">{part.slice(1, -1)}</code>;
+    return part;
+  });
+}
 
 function MarkdownAnswer({ content }: { content: string }) {
-  return (
-    <ReactMarkdown
-      components={{
-        p:      ({ children }) => <p className="mb-3 last:mb-0">{children}</p>,
-        strong: ({ children }) => <strong className="font-semibold text-slate-900">{children}</strong>,
-        ul:     ({ children }) => <ul className="list-disc list-inside space-y-1 mb-3">{children}</ul>,
-        ol:     ({ children }) => <ol className="list-decimal list-inside space-y-1 mb-3">{children}</ol>,
-        li:     ({ children }) => <li className="text-slate-700">{children}</li>,
-        h2:     ({ children }) => <h2 className="text-base font-semibold text-slate-900 mt-4 mb-2">{children}</h2>,
-        h3:     ({ children }) => <h3 className="text-sm font-semibold text-slate-800 mt-3 mb-1.5">{children}</h3>,
-        code:   ({ children }) => <code className="bg-slate-100 text-slate-800 px-1.5 py-0.5 rounded text-xs font-mono">{children}</code>,
-        pre:    ({ children }) => <pre className="bg-slate-100 rounded-lg p-3 overflow-x-auto text-xs mb-3">{children}</pre>,
-        table:  ({ children }) => <div className="overflow-x-auto mb-3"><table className="w-full text-xs border-collapse">{children}</table></div>,
-        th:     ({ children }) => <th className="text-left px-3 py-2 bg-slate-100 border border-slate-200 font-semibold text-slate-700">{children}</th>,
-        td:     ({ children }) => <td className="px-3 py-2 border border-slate-200 text-slate-700">{children}</td>,
-      }}
-    >
-      {content}
-    </ReactMarkdown>
-  );
+  const lines = content.split("\n");
+  const nodes: React.ReactNode[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    if (line.startsWith("### ")) {
+      nodes.push(<h3 key={i} className="text-sm font-semibold text-slate-800 mt-3 mb-1.5">{renderInline(line.slice(4))}</h3>);
+    } else if (line.startsWith("## ")) {
+      nodes.push(<h2 key={i} className="text-base font-semibold text-slate-900 mt-4 mb-2">{renderInline(line.slice(3))}</h2>);
+    } else if (line.startsWith("# ")) {
+      nodes.push(<h1 key={i} className="text-lg font-bold text-slate-900 mt-4 mb-2">{renderInline(line.slice(2))}</h1>);
+    } else if (line.startsWith("- ") || line.startsWith("* ")) {
+      // Collect consecutive list items
+      const items: string[] = [];
+      while (i < lines.length && (lines[i].startsWith("- ") || lines[i].startsWith("* "))) {
+        items.push(lines[i].slice(2));
+        i++;
+      }
+      nodes.push(
+        <ul key={`ul-${i}`} className="list-disc list-inside space-y-1 mb-3">
+          {items.map((item, j) => <li key={j} className="text-slate-700">{renderInline(item)}</li>)}
+        </ul>
+      );
+      continue;
+    } else if (/^\d+\. /.test(line)) {
+      const items: string[] = [];
+      while (i < lines.length && /^\d+\. /.test(lines[i])) {
+        items.push(lines[i].replace(/^\d+\. /, ""));
+        i++;
+      }
+      nodes.push(
+        <ol key={`ol-${i}`} className="list-decimal list-inside space-y-1 mb-3">
+          {items.map((item, j) => <li key={j} className="text-slate-700">{renderInline(item)}</li>)}
+        </ol>
+      );
+      continue;
+    } else if (line.startsWith("|")) {
+      // Table
+      const tableLines: string[] = [];
+      while (i < lines.length && lines[i].startsWith("|")) {
+        tableLines.push(lines[i]);
+        i++;
+      }
+      const rows = tableLines.filter(l => !l.match(/^\|[-| ]+\|$/));
+      nodes.push(
+        <div key={`tbl-${i}`} className="overflow-x-auto mb-3">
+          <table className="w-full text-xs border-collapse">
+            <tbody>
+              {rows.map((row, ri) => (
+                <tr key={ri}>
+                  {row.split("|").filter((_, ci) => ci > 0 && ci < row.split("|").length - 1).map((cell, ci) => (
+                    ri === 0
+                      ? <th key={ci} className="text-left px-3 py-2 bg-slate-100 border border-slate-200 font-semibold text-slate-700">{renderInline(cell.trim())}</th>
+                      : <td key={ci} className="px-3 py-2 border border-slate-200 text-slate-700">{renderInline(cell.trim())}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+      continue;
+    } else if (line.trim() === "") {
+      // skip blank lines (spacing handled by mb-3)
+    } else {
+      nodes.push(<p key={i} className="mb-3 last:mb-0">{renderInline(line)}</p>);
+    }
+    i++;
+  }
+
+  return <div className="text-sm leading-relaxed">{nodes}</div>;
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
