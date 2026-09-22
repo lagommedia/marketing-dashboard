@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { ExternalLink, X, Bell, ChevronRight, Loader2, AlertTriangle, Globe } from "lucide-react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { ExternalLink, X, Bell, ChevronRight, Loader2, AlertTriangle, Globe, Bot, Send, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -302,6 +302,7 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
   const [showNotifs,   setShowNotifs]   = useState(false);
   const [notifCount,   setNotifCount]   = useState(initialNotifCount);
   const [channel,      setChannel]      = useState<Channel>("all");
+  const [chatOpen,     setChatOpen]     = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -585,6 +586,198 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
           onClose={() => { setShowNotifs(false); setNotifCount(0); }}
         />
       )}
+
+      {/* Mar Ops AI chat */}
+      <FunnelChatDrawer open={chatOpen} onClose={() => setChatOpen(false)} />
+      <button
+        onClick={() => setChatOpen(true)}
+        className={cn(
+          "fixed bottom-6 right-6 z-40 flex items-center gap-2.5 px-4 py-3 rounded-2xl shadow-lg font-medium text-sm transition-all duration-200",
+          chatOpen
+            ? "opacity-0 pointer-events-none scale-90"
+            : "bg-indigo-600 text-white hover:bg-indigo-700 hover:shadow-xl hover:scale-105"
+        )}
+      >
+        <Bot className="w-5 h-5" />
+        Ask AI
+      </button>
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Funnel Chat Drawer (Mar Ops agent, funnel-scoped)
+// ---------------------------------------------------------------------------
+
+interface ChatMsg { role: "user" | "assistant"; content: string }
+
+const FUNNEL_STARTERS = [
+  "What's our biggest funnel drop-off right now?",
+  "How does our Visits → Lead conversion compare to last quarter?",
+  "Which channel is driving the most MQLs?",
+  "Are we on pace to hit our SQO target this quarter?",
+  "What's driving the gap between MQLs and SQOs?",
+];
+
+function renderInline(text: string): React.ReactNode[] {
+  return text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**"))
+      return <strong key={i} className="font-semibold text-slate-900">{part.slice(2, -2)}</strong>;
+    if (part.startsWith("`") && part.endsWith("`"))
+      return <code key={i} className="bg-slate-100 text-slate-800 px-1 py-0.5 rounded text-xs font-mono">{part.slice(1, -1)}</code>;
+    return part;
+  });
+}
+
+function SimpleMarkdown({ content }: { content: string }) {
+  const lines = content.split("\n");
+  const nodes: React.ReactNode[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (line.startsWith("### ")) {
+      nodes.push(<h3 key={i} className="text-xs font-semibold text-slate-800 mt-3 mb-1">{renderInline(line.slice(4))}</h3>);
+    } else if (line.startsWith("## ")) {
+      nodes.push(<h2 key={i} className="text-sm font-semibold text-slate-900 mt-3 mb-1.5">{renderInline(line.slice(3))}</h2>);
+    } else if (line.startsWith("- ") || line.startsWith("* ")) {
+      const items: string[] = [];
+      while (i < lines.length && (lines[i].startsWith("- ") || lines[i].startsWith("* "))) {
+        items.push(lines[i].slice(2)); i++;
+      }
+      nodes.push(<ul key={`ul${i}`} className="list-disc list-inside space-y-0.5 mb-2">{items.map((it, j) => <li key={j} className="text-slate-700">{renderInline(it)}</li>)}</ul>);
+      continue;
+    } else if (line.trim() === "") {
+      // skip
+    } else {
+      nodes.push(<p key={i} className="mb-2 last:mb-0">{renderInline(line)}</p>);
+    }
+    i++;
+  }
+  return <div className="text-xs leading-relaxed">{nodes}</div>;
+}
+
+function FunnelChatDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [messages,    setMessages]    = useState<ChatMsg[]>([]);
+  const [input,       setInput]       = useState("");
+  const [loading,     setLoading]     = useState(false);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
+
+  async function send(q: string) {
+    if (!q.trim() || loading) return;
+    setSuggestions([]);
+    const userMsg: ChatMsg = { role: "user", content: q };
+    const next = [...messages, userMsg];
+    setMessages(next);
+    setInput("");
+    setLoading(true);
+    try {
+      const res  = await fetch("/api/mar-ops/chat", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ question: q, messages: messages.map(m => ({ role: m.role, content: m.content })) }),
+      });
+      const data = await res.json();
+      setMessages([...next, { role: "assistant", content: data.answer ?? "No response." }]);
+      if (Array.isArray(data.suggestions)) setSuggestions(data.suggestions);
+    } catch {
+      setMessages([...next, { role: "assistant", content: "Something went wrong. Please try again." }]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed bottom-6 right-6 z-50 w-[420px] max-h-[70vh] flex flex-col bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center gap-2.5 px-4 py-3 bg-indigo-600 shrink-0">
+        <Sparkles className="w-4 h-4 text-white" />
+        <div className="flex-1">
+          <p className="text-sm font-semibold text-white leading-none">Mar Ops Agent</p>
+          <p className="text-xs text-indigo-200 mt-0.5">Funnel analysis · live data</p>
+        </div>
+        <button onClick={onClose} className="p-1 rounded hover:bg-indigo-500 transition-colors text-indigo-200 hover:text-white">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 min-h-0">
+        {messages.length === 0 && (
+          <div className="space-y-2">
+            <p className="text-xs text-slate-400 text-center py-2">Ask anything about your funnel</p>
+            {FUNNEL_STARTERS.map((s) => (
+              <button key={s} onClick={() => send(s)}
+                className="w-full text-left text-xs px-3 py-2 bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 rounded-lg text-slate-600 hover:text-indigo-700 transition-colors">
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {messages.map((m, i) => (
+          <div key={i} className={cn("flex gap-2", m.role === "user" ? "flex-row-reverse" : "")}>
+            <div className={cn("w-6 h-6 rounded-full shrink-0 flex items-center justify-center text-white text-[10px] font-bold mt-0.5",
+              m.role === "user" ? "bg-slate-700" : "bg-indigo-600")}>
+              {m.role === "user" ? "Y" : <Bot className="w-3 h-3" />}
+            </div>
+            <div className={cn("rounded-xl px-3 py-2 max-w-[85%]",
+              m.role === "user"
+                ? "bg-slate-800 text-white text-xs leading-relaxed"
+                : "bg-slate-50 border border-slate-200 text-slate-700")}>
+              {m.role === "assistant" ? <SimpleMarkdown content={m.content} /> : <span className="text-xs">{m.content}</span>}
+            </div>
+          </div>
+        ))}
+
+        {loading && (
+          <div className="flex gap-2">
+            <div className="w-6 h-6 rounded-full bg-indigo-600 shrink-0 flex items-center justify-center mt-0.5">
+              <Bot className="w-3 h-3 text-white" />
+            </div>
+            <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 flex items-center gap-2 text-xs text-slate-400">
+              <Loader2 className="w-3 h-3 animate-spin text-indigo-500" />
+              Analysing…
+            </div>
+          </div>
+        )}
+
+        {suggestions.length > 0 && !loading && (
+          <div className="space-y-1 pl-8">
+            {suggestions.map((s, i) => (
+              <button key={i} onClick={() => send(s)}
+                className="w-full text-left text-xs text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 rounded-lg px-2 py-1.5 transition-colors">
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Input */}
+      <div className="shrink-0 px-3 py-2 border-t border-slate-100">
+        <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100 transition-all">
+          <input
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(input); } }}
+            placeholder="Ask about your funnel…"
+            className="flex-1 bg-transparent text-xs text-slate-800 placeholder-slate-400 focus:outline-none"
+          />
+          <button onClick={() => send(input)} disabled={!input.trim() || loading}
+            className={cn("w-6 h-6 rounded-lg flex items-center justify-center transition-colors",
+              input.trim() && !loading ? "bg-indigo-600 text-white hover:bg-indigo-700" : "bg-slate-200 text-slate-400 cursor-not-allowed")}>
+            <Send className="w-3 h-3" />
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
