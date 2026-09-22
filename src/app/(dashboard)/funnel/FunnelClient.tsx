@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { ExternalLink, X, Bell, ChevronRight, Loader2, AlertTriangle, Globe, Bot, Send, Sparkles } from "lucide-react";
+import { ExternalLink, X, Bell, ChevronRight, Loader2, AlertTriangle, Globe, Bot, Send, Sparkles, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -660,6 +660,7 @@ function FunnelChatDrawer({ open, onClose }: { open: boolean; onClose: () => voi
   const [messages,    setMessages]    = useState<ChatMsg[]>([]);
   const [input,       setInput]       = useState("");
   const [loading,     setLoading]     = useState(false);
+  const [error,       setError]       = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -669,6 +670,7 @@ function FunnelChatDrawer({ open, onClose }: { open: boolean; onClose: () => voi
 
   async function send(q: string) {
     if (!q.trim() || loading) return;
+    setError(null);
     setSuggestions([]);
     const userMsg: ChatMsg = { role: "user", content: q };
     const next = [...messages, userMsg];
@@ -682,13 +684,22 @@ function FunnelChatDrawer({ open, onClose }: { open: boolean; onClose: () => voi
         body:    JSON.stringify({ question: q, messages: messages.map(m => ({ role: m.role, content: m.content })) }),
       });
       const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error ?? `HTTP ${res.status}`);
       setMessages([...next, { role: "assistant", content: data.answer ?? "No response." }]);
       if (Array.isArray(data.suggestions)) setSuggestions(data.suggestions);
-    } catch {
-      setMessages([...next, { role: "assistant", content: "Something went wrong. Please try again." }]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong.");
+      setMessages(next);
     } finally {
       setLoading(false);
     }
+  }
+
+  function clearConversation() {
+    setMessages([]);
+    setSuggestions([]);
+    setError(null);
+    setInput("");
   }
 
   if (!open) return null;
@@ -702,6 +713,12 @@ function FunnelChatDrawer({ open, onClose }: { open: boolean; onClose: () => voi
           <p className="text-sm font-semibold text-white leading-none">Mar Ops Agent</p>
           <p className="text-xs text-indigo-200 mt-0.5">Funnel analysis · live data</p>
         </div>
+        {messages.length > 0 && (
+          <button onClick={clearConversation} title="New conversation"
+            className="p-1 rounded hover:bg-indigo-500 transition-colors text-indigo-200 hover:text-white mr-0.5">
+            <RefreshCw className="w-3.5 h-3.5" />
+          </button>
+        )}
         <button onClick={onClose} className="p-1 rounded hover:bg-indigo-500 transition-colors text-indigo-200 hover:text-white">
           <X className="w-4 h-4" />
         </button>
@@ -748,8 +765,13 @@ function FunnelChatDrawer({ open, onClose }: { open: boolean; onClose: () => voi
           </div>
         )}
 
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-xl px-3 py-2 text-xs text-red-700">{error}</div>
+        )}
+
         {suggestions.length > 0 && !loading && (
           <div className="space-y-1 pl-8">
+            <p className="text-[10px] text-slate-400 font-medium">Suggested follow-ups</p>
             {suggestions.map((s, i) => (
               <button key={i} onClick={() => send(s)}
                 className="w-full text-left text-xs text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 rounded-lg px-2 py-1.5 transition-colors">
