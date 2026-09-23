@@ -2,33 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/db";
 import { decrypt } from "@/lib/encryption";
+import { ratio, sum } from "@/lib/agent-auth";
 
 export const dynamic = "force-dynamic";
-
-// ---------------------------------------------------------------------------
-// Internal agent API caller — uses AGENT_API_TOKEN, server-side only
-// ---------------------------------------------------------------------------
-
-// VERCEL_URL is auto-set by Vercel (no https://); NEXTAUTH_URL is the app's
-// canonical URL. Prefer NEXTAUTH_URL, fall back to VERCEL_URL, then localhost.
-const DASHBOARD_BASE =
-  process.env.NEXTAUTH_URL ??
-  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3001");
-
-async function agentFetch(path: string): Promise<unknown> {
-  const token = process.env.AGENT_API_TOKEN;
-  if (!token) return { error: "AGENT_API_TOKEN not configured" };
-  try {
-    const res = await fetch(`${DASHBOARD_BASE}${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
-      next: { revalidate: 0 },
-    });
-    if (!res.ok) return { error: `${path} returned ${res.status}` };
-    return await res.json();
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : "fetch failed" };
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Resolve Anthropic API key
@@ -43,64 +19,266 @@ async function resolveApiKey(): Promise<string | null> {
 }
 
 // ---------------------------------------------------------------------------
-// Pull live context from agent endpoints
+// Pull live context directly from Prisma — no internal HTTP calls
 // ---------------------------------------------------------------------------
 
-async function fetchLiveContext() {
-  const now       = new Date();
-  const quarter   = `${now.getFullYear()}-Q${Math.ceil((now.getMonth() + 1) / 3)}`;
-  const w12Ago    = new Date(now); w12Ago.setDate(w12Ago.getDate() - 84);
-  const m6Ago     = new Date(now); m6Ago.setMonth(m6Ago.getMonth() - 6);
-  const today     = now.toISOString().slice(0, 10);
-  const w12Start  = w12Ago.toISOString().slice(0, 10);
-  const m6Start   = m6Ago.toISOString().slice(0, 10);
+type Grain = "week" | "month";
 
-  const [schema, funnel12w, funnelMonthly, channels, pacing] = await Promise.all([
-    agentFetch("/api/agent/schema"),
-    agentFetch(`/api/agent/funnel?from=${w12Start}&to=${today}&granularity=week&channel=all`),
-    agentFetch(`/api/agent/funnel?from=${m6Start}&to=${today}&granularity=month&channel=all`),
-    agentFetch(`/api/agent/channels?from=${w12Start}&to=${today}`),
-    agentFetch(`/api/agent/pacing?period=${quarter}`),
+function bucketKey(d: Date, grain: Grain): string {
+  if (grain === "month") return d.toISOString().slice(0, 7);
+  const x = new Date(d);
+  const day = (x.getUTCDay() + 6) % 7;
+  x.setUTCDate(x.getUTCDate() - day);
+  return x.toISOString().slice(0, 10);
+}
+
+function currentQuarter(): string {
+  const d = new Date();
+  return `${d.getUTCFullYear()}-Q${Math.floor(d.getUTCMonth() / 3) + 1}`;
+}
+
+function quarterBounds(period: string) {
+  const m = /^(\d{4})-Q([1-4])$/.exec(period);
+  if (!m) return null;
+  const year = parseInt(m[1], 10);
+  const q = parseInt(m[2], 10) - 1;
+  return {
+    start: new Date(Date.UTC(year, q * 3, 1)),
+    end:   new Date(Date.UTC(year, q * 3 + 3, 0, 23, 59, 59, 999)),
+  };
+}
+
+async function fetchLiveContext() {
+  const now      = new Date();
+  const today    = now.toISOString().slice(0, 10);
+  const quarter  = currentQuarter();
+
+  const w12Ago   = new Date(now); w12Ago.setDate(w12Ago.getDate() - 84);
+  const m6Ago    = new Date(now); m6Ago.setMonth(m6Ago.getMonth() - 6);
+
+  const bounds   = quarterBounds(quarter)!;
+  const asOf     = new Date(Math.min(Date.now(), bounds.end.getTime()));
+  const pctElapsed = Math.min(
+    Math.max((asOf.getTime() - bounds.start.getTime()) / (bounds.end.getTime() - bounds.start.getTime()), 0),
+    1,
+  );
+
+  const [
+    integrations,
+    snapshots12w,
+    gaRows12w,
+    adRows12w,
+    snapshots6m,
+    gaRows6m,
+    adRows6m,
+    channelRows,
+    pacingTargets,
+    pacingSnaps,
+  ] = await Promise.all([
+    prisma.integration.findMany({
+      select: { platform: true, connected: true, lastSyncedAt: true, accountName: true },
+      orderBy: { platform: "asc" },
+    }),
+    // 12-week funnel (weekly)
+    prisma.metricSnapshot.findMany({
+      where: { date: { gte: w12Ago, lte: now } },
+      orderBy: { date: "asc" },
+    }),
+    prisma.gaOrganicSnapshot.findMany({
+      where: { date: { gte: w12Ago, lte: now } },
+      select: { date: true, sessions: true },
+    }),
+    prisma.campaignDailySpend.findMany({
+      where: { date: { gte: w12Ago, lte: now } },
+      select: { date: true, clicks: true, impressions: true, spend: true },
+    }),
+    // 6-month funnel (monthly)
+    prisma.metricSnapshot.findMany({
+      where: { date: { gte: m6Ago, lte: now } },
+      orderBy: { date: "asc" },
+    }),
+    prisma.gaOrganicSnapshot.findMany({
+      where: { date: { gte: m6Ago, lte: now } },
+      select: { date: true, sessions: true },
+    }),
+    prisma.campaignDailySpend.findMany({
+      where: { date: { gte: m6Ago, lte: now } },
+      select: { date: true, clicks: true, impressions: true, spend: true },
+    }),
+    // Channel efficiency (12-week)
+    prisma.metricSnapshot.findMany({
+      where: { date: { gte: w12Ago, lte: now } },
+      orderBy: { date: "asc" },
+    }),
+    // Pacing
+    prisma.pacingTarget.findMany({ where: { period: quarter } }),
+    prisma.metricSnapshot.findMany({ where: { date: { gte: bounds.start, lte: asOf } } }),
   ]);
 
-  return { schema, funnel12w, funnelMonthly, channels, pacing, today, quarter, w12Start, m6Start };
+  // Build funnel buckets
+  function buildFunnelPeriods(
+    snaps: typeof snapshots12w,
+    gaR: typeof gaRows12w,
+    adR: typeof adRows12w,
+    grain: Grain,
+  ) {
+    interface Bucket {
+      period: string; organicSessions: number; paidClicks: number;
+      impressions: number; spend: number;
+      leads: number; mqls: number; sqos: number; closedWon: number;
+      revenue: number; pipeline: number;
+    }
+    const buckets = new Map<string, Bucket>();
+    const get = (d: Date): Bucket => {
+      const k = bucketKey(d, grain);
+      let b = buckets.get(k);
+      if (!b) {
+        b = { period: k, organicSessions: 0, paidClicks: 0, impressions: 0, spend: 0,
+              leads: 0, mqls: 0, sqos: 0, closedWon: 0, revenue: 0, pipeline: 0 };
+        buckets.set(k, b);
+      }
+      return b;
+    };
+    for (const r of snaps) {
+      const b = get(r.date);
+      b.leads += r.leads ?? 0; b.mqls += r.mqls ?? 0;
+      b.sqos += r.sqos ?? 0; b.closedWon += r.closedWon ?? 0;
+      b.revenue += r.revenue ?? 0; b.pipeline += r.pipeline ?? 0;
+    }
+    for (const r of gaR) get(r.date).organicSessions += r.sessions;
+    for (const r of adR) {
+      const b = get(r.date);
+      b.paidClicks += r.clicks; b.impressions += r.impressions; b.spend += r.spend;
+    }
+    return [...buckets.values()]
+      .sort((a, b) => a.period.localeCompare(b.period))
+      .map(b => ({
+        ...b,
+        siteVisits: b.organicSessions + b.paidClicks,
+        rates: {
+          visitToLead: ratio(b.leads, b.organicSessions + b.paidClicks),
+          leadToMql: ratio(b.mqls, b.leads),
+          mqlToSqo: ratio(b.sqos, b.mqls),
+          sqoToClosedWon: ratio(b.closedWon, b.sqos),
+        },
+        efficiency: {
+          costPerLead: ratio(b.spend, b.leads),
+          costPerMql: ratio(b.spend, b.mqls),
+          costPerSqo: ratio(b.spend, b.sqos),
+        },
+      }));
+  }
+
+  const funnel12w    = buildFunnelPeriods(snapshots12w, gaRows12w, adRows12w, "week");
+  const funnelMonthly = buildFunnelPeriods(snapshots6m, gaRows6m, adRows6m, "month");
+
+  // Channel efficiency
+  interface ChannelAgg {
+    key: string; impressions: number; clicks: number; sessions: number;
+    leads: number; mqls: number; sqos: number; closedWon: number;
+    spend: number; revenue: number; pipeline: number;
+  }
+  const blank = (key: string): ChannelAgg => ({
+    key, impressions: 0, clicks: 0, sessions: 0, leads: 0, mqls: 0,
+    sqos: 0, closedWon: 0, spend: 0, revenue: 0, pipeline: 0,
+  });
+  const byChannel = new Map<string, ChannelAgg>();
+  for (const r of channelRows) {
+    if (r.channel === "all" || r.platform === "all") continue;
+    const c = byChannel.get(r.channel) ?? blank(r.channel);
+    byChannel.set(r.channel, c);
+    c.impressions += r.impressions ?? 0; c.clicks += r.clicks ?? 0;
+    c.sessions += r.sessions ?? 0; c.leads += r.leads ?? 0;
+    c.mqls += r.mqls ?? 0; c.sqos += r.sqos ?? 0;
+    c.closedWon += r.closedWon ?? 0; c.spend += r.spend ?? 0;
+    c.revenue += r.revenue ?? 0; c.pipeline += r.pipeline ?? 0;
+  }
+  const totalSpend = [...byChannel.values()].reduce((s, c) => s + c.spend, 0);
+  const channels = [...byChannel.values()]
+    .sort((a, b) => b.spend - a.spend)
+    .map(c => ({
+      ...c,
+      shareOfSpend: ratio(c.spend, totalSpend),
+      rates: { leadToMql: ratio(c.mqls, c.leads), mqlToSqo: ratio(c.sqos, c.mqls), sqoToClosedWon: ratio(c.closedWon, c.sqos) },
+      efficiency: { costPerMql: ratio(c.spend, c.mqls), costPerSqo: ratio(c.spend, c.sqos), cac: ratio(c.spend, c.closedWon), returnPerDollar: ratio(c.revenue, c.spend) },
+    }));
+
+  // Pacing
+  const org = pacingTargets.find(t => t.channel === "marketing_org") ?? null;
+  const expensesToDate = org?.targetSpend != null ? org.targetSpend * pctElapsed : null;
+  const actualsAll = {
+    mqls: pacingSnaps.reduce((s, r) => s + (r.mqls ?? 0), 0),
+    sqos: pacingSnaps.reduce((s, r) => s + (r.sqos ?? 0), 0),
+    closedWon: pacingSnaps.reduce((s, r) => s + (r.closedWon ?? 0), 0),
+    revenue: pacingSnaps.reduce((s, r) => s + (r.revenue ?? 0), 0),
+  };
+  const pacingRows = pacingTargets
+    .filter(t => t.channel !== "marketing_org")
+    .map(t => {
+      const rs = pacingSnaps.filter(r => r.channel === t.channel);
+      const actual = {
+        mqls: sum(rs.map(r => r.mqls)), sqos: sum(rs.map(r => r.sqos)),
+        pipeline: sum(rs.map(r => r.pipeline)), closedWon: sum(rs.map(r => r.closedWon)),
+        spend: sum(rs.map(r => r.spend)),
+      };
+      const vs = (a: number, tgt: number | null) => tgt != null && tgt > 0
+        ? { actual: a, target: tgt, attainment: a / tgt, paceIndex: ratio(a / tgt, pctElapsed) }
+        : { actual: a, target: tgt, attainment: null, paceIndex: null };
+      return {
+        channel: t.channel,
+        mqls: vs(actual.mqls, t.targetMqls),
+        sqos: vs(actual.sqos, t.targetSqos),
+        pipeline: vs(actual.pipeline, t.targetPipeline),
+        closedWon: vs(actual.closedWon, t.targetClosedWon),
+        spend: vs(actual.spend, t.targetSpend),
+      };
+    });
+
+  return {
+    today, quarter, pctElapsed,
+    integrations: integrations.map(i => ({
+      platform: i.platform, connected: i.connected, account: i.accountName,
+      lastSyncedAt: i.lastSyncedAt?.toISOString().slice(0, 10) ?? null,
+      staleDays: i.lastSyncedAt ? Math.floor((Date.now() - i.lastSyncedAt.getTime()) / 86_400_000) : null,
+    })),
+    funnel12w,
+    funnelMonthly,
+    channels,
+    pacing: {
+      period: quarter, pctElapsed,
+      rows: pacingRows,
+      derived: {
+        expensesToDate,
+        closedWon: actualsAll.closedWon,
+        revenue: actualsAll.revenue,
+        cac: ratio(expensesToDate, actualsAll.closedWon),
+        gtmEfficiency: ratio(actualsAll.revenue, expensesToDate),
+      },
+    },
+  };
 }
 
 function formatLiveContext(ctx: Awaited<ReturnType<typeof fetchLiveContext>>): string {
-  const { schema, funnel12w, funnelMonthly, channels, pacing, today, quarter } = ctx;
+  const { today, quarter, integrations, funnel12w, funnelMonthly, channels, pacing } = ctx;
 
   let out = `## Live Dashboard Context — pulled ${today}\n\n`;
 
-  // Schema / integration status
-  const s = schema as Record<string, unknown>;
-  if (s && !s.error) {
-    const integrations = (s.integrations as Array<{platform: string; connected: boolean; lastSyncedAt: string | null}>) ?? [];
-    out += `### Integration status\n`;
-    for (const i of integrations) {
-      const synced = i.lastSyncedAt ? `last synced ${i.lastSyncedAt.slice(0, 10)}` : "never synced";
-      out += `- **${i.platform}**: ${i.connected ? "connected" : "NOT connected"} (${synced})\n`;
-    }
-    if (s.caveats) {
-      out += `\n### Known caveats\n${JSON.stringify(s.caveats, null, 2)}\n`;
-    }
-  } else {
-    out += `Schema fetch failed: ${JSON.stringify(schema)}\n`;
+  out += `### Integration status\n`;
+  for (const i of integrations) {
+    const synced = i.lastSyncedAt ? `last synced ${i.lastSyncedAt} (${i.staleDays}d ago)` : "never synced";
+    out += `- **${i.platform}**: ${i.connected ? "connected" : "NOT connected"} (${synced})\n`;
   }
 
-  // Funnel 12-week
   out += `\n### Funnel — trailing 12 weeks (weekly, all channels)\n`;
   out += JSON.stringify(funnel12w, null, 2).slice(0, 4000) + "\n";
 
-  // Funnel 6-month
   out += `\n### Funnel — trailing 6 months (monthly, all channels)\n`;
   out += JSON.stringify(funnelMonthly, null, 2).slice(0, 2000) + "\n";
 
-  // Channel efficiency
   out += `\n### Channel efficiency (trailing 12 weeks)\n`;
   out += JSON.stringify(channels, null, 2).slice(0, 3000) + "\n";
 
-  // Pacing
-  out += `\n### Pacing — ${quarter}\n`;
+  out += `\n### Pacing — ${quarter} (${(ctx.pctElapsed * 100).toFixed(0)}% of quarter elapsed)\n`;
   out += JSON.stringify(pacing, null, 2).slice(0, 2000) + "\n";
 
   return out;
