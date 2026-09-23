@@ -9,7 +9,11 @@ export const dynamic = "force-dynamic";
 // Internal agent API caller — uses AGENT_API_TOKEN, server-side only
 // ---------------------------------------------------------------------------
 
-const DASHBOARD_BASE = process.env.NEXTAUTH_URL ?? "http://localhost:3001";
+// VERCEL_URL is auto-set by Vercel (no https://); NEXTAUTH_URL is the app's
+// canonical URL. Prefer NEXTAUTH_URL, fall back to VERCEL_URL, then localhost.
+const DASHBOARD_BASE =
+  process.env.NEXTAUTH_URL ??
+  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3001");
 
 async function agentFetch(path: string): Promise<unknown> {
   const token = process.env.AGENT_API_TOKEN;
