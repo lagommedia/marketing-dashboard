@@ -4,6 +4,155 @@ import { prisma } from "@/lib/db";
 import { decrypt } from "@/lib/encryption";
 import { ratio, sum } from "@/lib/agent-auth";
 
+const HS_BASE = "https://api.hubapi.com";
+
+async function getHubSpotToken(): Promise<string | null> {
+  const row = await prisma.integration.findUnique({ where: { platform: "hubspot" } });
+  if (!row?.connected || !row.accessToken) return null;
+  return decrypt(row.accessToken);
+}
+
+// Fetch MQL/SQO contacts from HubSpot with lifecycle stage timestamps
+// Returns cohort analysis: how long after MQL did engagement happen, and did they convert?
+async function fetchContactTimingData(): Promise<string> {
+  let token: string | null;
+  try {
+    token = await getHubSpotToken();
+  } catch {
+    return "HubSpot contact timing data: unavailable (integration error)\n";
+  }
+  if (!token) return "HubSpot contact timing data: unavailable (not connected)\n";
+
+  const properties = [
+    "firstname", "lastname", "lifecyclestage",
+    "hs_lifecyclestage_lead_date",
+    "hs_lifecyclestage_marketingqualifiedlead_date",
+    "hs_lifecyclestage_salesqualifiedlead_date",
+    "hs_lifecyclestage_opportunity_date",
+    "first_conversion_date",
+    "notes_last_contacted",
+    "hs_sales_email_last_replied",
+    "hs_email_last_open_date",
+    "createdate",
+    "hs_lead_status",
+  ];
+
+  try {
+    // Fetch up to 200 contacts that have an MQL date (recently)
+    const sixMonthsAgo = Date.now() - 180 * 24 * 60 * 60 * 1000;
+
+    const res = await fetch(`${HS_BASE}/crm/v3/objects/contacts/search`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        filterGroups: [
+          {
+            filters: [
+              {
+                propertyName: "hs_lifecyclestage_marketingqualifiedlead_date",
+                operator: "GTE",
+                value: String(sixMonthsAgo),
+              },
+            ],
+          },
+        ],
+        properties,
+        limit: 200,
+        sorts: [{ propertyName: "hs_lifecyclestage_marketingqualifiedlead_date", direction: "DESCENDING" }],
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      return `HubSpot contact timing data: unavailable (API error ${res.status}: ${body.slice(0, 200)})\n`;
+    }
+
+    const data = await res.json();
+    const contacts: Array<Record<string, string>> = (data.results ?? []).map(
+      (c: { properties: Record<string, string> }) => c.properties,
+    );
+
+    if (contacts.length === 0) {
+      return "HubSpot contact timing data: no MQL contacts found in the last 6 months\n";
+    }
+
+    // Cohort buckets: days from MQL date to first engagement proxy
+    type Cohort = { label: string; total: number; convertedToSqo: number };
+    const cohorts: Cohort[] = [
+      { label: "same-day (0 days)",   total: 0, convertedToSqo: 0 },
+      { label: "1-3 days",            total: 0, convertedToSqo: 0 },
+      { label: "4-7 days",            total: 0, convertedToSqo: 0 },
+      { label: "8-14 days",           total: 0, convertedToSqo: 0 },
+      { label: "15-30 days",          total: 0, convertedToSqo: 0 },
+      { label: "30+ days",            total: 0, convertedToSqo: 0 },
+      { label: "MQL — no engagement", total: 0, convertedToSqo: 0 },
+    ];
+
+    let totalMqls = 0;
+    let totalConverted = 0;
+
+    for (const c of contacts) {
+      const mqlDate = c.hs_lifecyclestage_marketingqualifiedlead_date
+        ? new Date(c.hs_lifecyclestage_marketingqualifiedlead_date).getTime()
+        : null;
+      if (!mqlDate || isNaN(mqlDate)) continue;
+
+      totalMqls++;
+
+      const sqoDate = c.hs_lifecyclestage_salesqualifiedlead_date || c.hs_lifecyclestage_opportunity_date
+        ? new Date(c.hs_lifecyclestage_salesqualifiedlead_date || c.hs_lifecyclestage_opportunity_date!).getTime()
+        : null;
+
+      const convertedToSqo = sqoDate != null && !isNaN(sqoDate) && sqoDate > mqlDate;
+      if (convertedToSqo) totalConverted++;
+
+      // First engagement proxy: earliest of last_contacted, sales_email_replied, email_open after MQL
+      const engagementCandidates = [
+        c.notes_last_contacted,
+        c.hs_sales_email_last_replied,
+        c.hs_email_last_open_date,
+      ]
+        .filter(Boolean)
+        .map(d => new Date(d!).getTime())
+        .filter(t => !isNaN(t) && t >= mqlDate);
+
+      if (engagementCandidates.length === 0) {
+        cohorts[6].total++;
+        if (convertedToSqo) cohorts[6].convertedToSqo++;
+        continue;
+      }
+
+      const firstEngagement = Math.min(...engagementCandidates);
+      const daysToEngage = (firstEngagement - mqlDate) / (1000 * 60 * 60 * 24);
+
+      const idx =
+        daysToEngage < 1  ? 0 :
+        daysToEngage <= 3  ? 1 :
+        daysToEngage <= 7  ? 2 :
+        daysToEngage <= 14 ? 3 :
+        daysToEngage <= 30 ? 4 : 5;
+
+      cohorts[idx].total++;
+      if (convertedToSqo) cohorts[idx].convertedToSqo++;
+    }
+
+    let out = `HubSpot contact timing data (last 6 months, n=${totalMqls} MQLs, ${totalConverted} converted to SQO — overall rate ${totalMqls > 0 ? ((totalConverted / totalMqls) * 100).toFixed(1) : 0}%):\n\n`;
+    out += "Time from MQL to first engagement → MQL→SQO conversion rate:\n";
+    for (const c of cohorts) {
+      if (c.total === 0) continue;
+      const rate = c.total > 0 ? ((c.convertedToSqo / c.total) * 100).toFixed(1) : "0.0";
+      out += `  - ${c.label}: ${c.total} MQLs, ${c.convertedToSqo} converted (${rate}%)\n`;
+    }
+
+    return out;
+  } catch (err) {
+    return `HubSpot contact timing data: unavailable (${err instanceof Error ? err.message : "unknown error"})\n`;
+  }
+}
+
 export const dynamic = "force-dynamic";
 
 // ---------------------------------------------------------------------------
@@ -234,6 +383,8 @@ async function fetchLiveContext() {
       };
     });
 
+  const [contactTiming] = await Promise.all([fetchContactTimingData()]);
+
   return {
     today, quarter, pctElapsed,
     integrations: integrations.map(i => ({
@@ -255,6 +406,7 @@ async function fetchLiveContext() {
         gtmEfficiency: ratio(actualsAll.revenue, expensesToDate),
       },
     },
+    contactTiming,
   };
 }
 
@@ -280,6 +432,9 @@ function formatLiveContext(ctx: Awaited<ReturnType<typeof fetchLiveContext>>): s
 
   out += `\n### Pacing — ${quarter} (${(ctx.pctElapsed * 100).toFixed(0)}% of quarter elapsed)\n`;
   out += JSON.stringify(pacing, null, 2).slice(0, 2000) + "\n";
+
+  out += `\n### MQL → SQO conversion timing (HubSpot contact-level)\n`;
+  out += ctx.contactTiming + "\n";
 
   return out;
 }
@@ -329,6 +484,8 @@ A number without a baseline is not a finding. Every figure is compared against i
 **Mode 2 — Anomaly diagnosis:** Work the funnel top-down. Confirm it's real → localise by channel/page/device/geo → rule out measurement issues → rule out human changes → then external causes. Deliver: what happened, when, size in % and absolute, where concentrated, ranked causes with evidence, what would confirm the leading one, confidence level.
 
 **Mode 3 — Channel efficiency:** Per channel: spend, share of spend, cost per MQL/SQO/Closed Won, CAC, return per $1, pace index. Lead with the marginal question: where should the next dollar go?
+
+**Mode 6 — MQL timing analysis:** Use the "MQL → SQO conversion timing" section of the live data. Group by days-to-first-engagement cohort, compare conversion rates across cohorts, identify whether faster engagement correlates with higher SQO conversion, and flag cohorts with large populations but low conversion rates as the highest-leverage intervention points.
 
 **Mode 4 — Landing page audit:** High traffic, low conversion → Declining sessions → High impressions, low CTR (GSC) → Orphaned/missing pages. Rank by opportunity size (sessions × conversion-rate gap vs site median).
 
