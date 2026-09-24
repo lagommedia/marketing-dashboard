@@ -18,8 +18,8 @@ export async function GET() {
     }
     const token = decrypt(row.accessToken);
 
-    // Fetch first email
-    const listRes = await fetch(`${HS_BASE}/marketing/v3/emails?limit=1`, {
+    // Fetch first page of emails
+    const listRes = await fetch(`${HS_BASE}/marketing/v3/emails?limit=20`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     const listBody = await listRes.text();
@@ -28,24 +28,29 @@ export async function GET() {
     }
 
     const listData = tryParse(listBody);
-    const firstEmail = listData?.results?.[0];
-    if (!firstEmail) {
-      return NextResponse.json({ step: "list_empty", raw: listBody.slice(0, 1000) });
+    const allEmails = listData?.results ?? [];
+
+    // Find a non-AUTOMATED email to test stats against
+    const batchEmail = allEmails.find(
+      (e: { type?: string; state?: string }) => e.type !== "AUTOMATED" && e.state !== "AUTOMATED"
+    ) ?? allEmails[0];
+
+    if (!batchEmail) {
+      return NextResponse.json({ step: "list_empty", typesSeen: [], raw: listBody.slice(0, 500) });
     }
 
     // Fetch stats for that email
     const statsRes = await fetch(
-      `${HS_BASE}/marketing/v3/emails/${firstEmail.id}/statistics/summary`,
+      `${HS_BASE}/marketing/v3/emails/${batchEmail.id}/statistics/summary`,
       { headers: { Authorization: `Bearer ${token}` } }
     );
     const statsBody = await statsRes.text();
 
     return NextResponse.json({
-      email: {
-        id: firstEmail.id,
-        name: firstEmail.name ?? firstEmail.properties?.name,
-        state: firstEmail.state ?? firstEmail.properties?.state,
-      },
+      email_types_in_page: allEmails.map((e: { id: string; name?: string; type?: string; state?: string }) => ({
+        id: e.id, name: e.name, type: e.type, state: e.state,
+      })),
+      testing_email: { id: batchEmail.id, name: batchEmail.name, type: batchEmail.type, state: batchEmail.state },
       stats_status: statsRes.status,
       stats_body: tryParse(statsBody),
     });

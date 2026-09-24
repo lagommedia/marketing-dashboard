@@ -40,7 +40,12 @@ async function fetchAllEmails(token: string): Promise<HsEmail[]> {
     }
 
     const data = await res.json();
-    emails.push(...(data.results ?? []));
+    // Exclude AUTOMATED workflow emails — the statistics/summary endpoint returns
+    // 404 for those; only batch campaign sends have delivery stats.
+    const batch = (data.results ?? []).filter(
+      (e: HsEmail) => e.type !== "AUTOMATED" && e.state !== "AUTOMATED"
+    );
+    emails.push(...batch);
     after = data.paging?.next?.after ?? undefined;
   } while (after && emails.length < 1000);
 
@@ -159,6 +164,8 @@ interface HsEmail {
   publishDate?: string;
   scheduledAt?: string;
   updatedAt?:   string;
+  type?:        string;
+  state?:       string;
 }
 
 // Statistics field names vary slightly across HubSpot API versions
