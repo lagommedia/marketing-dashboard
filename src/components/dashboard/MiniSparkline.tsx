@@ -49,7 +49,9 @@ export function MiniSparkline({
   const nonNull = data.filter((d) => d.value != null);
   if (nonNull.length < 2) return null;
 
-  const chartData = data.map((d) => ({ ...d, v: d.value ?? 0 }));
+  // Keep null as null — recharts skips null bars and line points,
+  // so missing-data periods don't render as deceptive zero-height stubs.
+  const chartData = data.map((d) => ({ ...d, v: d.value }));
 
   return (
     <div>
@@ -58,7 +60,10 @@ export function MiniSparkline({
           <Tooltip content={(p: any) => <SparkTooltip {...p} format={format} />} cursor={false} />
           <Bar dataKey="v" maxBarSize={20} radius={[2, 2, 0, 0]} isAnimationActive={false}>
             {chartData.map((d, i) => (
-              <Cell key={i} fill={d.isCurrent ? "#6366f1" : "#e2e8f0"} />
+              <Cell
+                key={i}
+                fill={d.value == null ? "transparent" : d.isCurrent ? "#6366f1" : "#e2e8f0"}
+              />
             ))}
           </Bar>
           <Line
@@ -67,6 +72,7 @@ export function MiniSparkline({
             stroke="#a5b4fc"
             strokeWidth={1.5}
             dot={{ r: 2, fill: "#6366f1", strokeWidth: 0 }}
+            connectNulls={false}
             isAnimationActive={false}
           />
         </ComposedChart>
