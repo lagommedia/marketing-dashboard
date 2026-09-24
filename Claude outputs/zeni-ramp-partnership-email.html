@@ -1,0 +1,298 @@
+<!--
+  templateType: email
+  isAvailableForNewContent: true
+  label: Zeni - Ramp partnership announcement
+-->
+<!--
+  ZENI x RAMP PARTNERSHIP EMAIL (HubSpot custom-coded email template)
+    Images are hosted in HubSpot File Manager (hubfs/5991084/Zeni Ramp/).
+-->
+<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<!--[if mso]>
+<noscript>
+<xml>
+<o:OfficeDocumentSettings>
+<o:PixelsPerInch>96</o:PixelsPerInch>
+</o:OfficeDocumentSettings>
+</xml>
+</noscript>
+<![endif]-->
+<title>Zeni + Ramp: Books by Zeni. Cards by Ramp.</title>
+
+<!-- HubSpot auto-inlines everything in this block onto its matching
+     tags at send time. Keep per-element look-and-feel styles here. -->
+<style id="hs-inline-css" type="text/css">
+  body { margin:0; padding:0; background-color:#F3F7F7; }
+  table { border-collapse:collapse; }
+  img { border:0; display:block; line-height:100%; outline:none; text-decoration:none; }
+  a[x-apple-data-detectors] { color:inherit !important; text-decoration:inherit !important; }
+  #MessageViewBody a { color:inherit; text-decoration:none; }
+
+  .email-body-copy, .email-body-copy p {
+    font-family: Manrope, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.55;
+    color: #162324; /* --onyx */
+    margin: 0 0 16px;
+  }
+  .step-number {
+    font-family: Manrope, Arial, sans-serif;
+    font-weight: 700;
+    font-size: 12px;
+    color: #FFFFFF;
+    background-color: #366170; /* --sapphire */
+    width: 24px; height: 24px;
+    border-radius: 12px;
+    text-align: center;
+    line-height: 24px;
+  }
+  .step-title { font-family: Manrope, Arial, sans-serif; font-weight: 700; font-size: 15px; color: #162324; }
+  .step-desc  { font-family: Manrope, Arial, sans-serif; font-size: 13px; color: #757D7E; }
+
+  .btn-live-cell {
+    background-color: #162324; /* --onyx */
+    border-radius: 10px;
+  }
+  .btn-live-link {
+    display: inline-block;
+    font-family: Manrope, Arial, sans-serif;
+    font-weight: 700;
+    font-size: 15px;
+    color: #FFFFFF !important;
+    text-decoration: none;
+    padding: 14px 24px;
+  }
+
+  .signoff-name { font-family: Manrope, Arial, sans-serif; font-weight: 700; font-size: 14px; color: #162324; }
+  .signoff-role { font-family: Roboto, Arial, sans-serif; font-weight: 400; font-size: 13px; color: #757D7E; }
+
+  .footer-text, .footer-text a {
+    font-family: Manrope, Arial, sans-serif;
+    font-size: 12px;
+    line-height: 1.6;
+    color: #757D7E; /* --hero */
+  }
+  .footer-text a { color: #366170; text-decoration: underline; }
+</style>
+
+<!-- Media queries CANNOT be inlined by hs-inline-css — keep them in a
+     normal <style> tag; HubSpot leaves this block intact in <head>. -->
+<style type="text/css">
+  @media only screen and (max-width: 660px) {
+    .email-container { width: 100% !important; }
+    .stack-column { display: block !important; width: 100% !important; padding: 0 0 12px 0 !important; }
+    .hide-mobile { display: none !important; }
+    .full-img { width: 100% !important; height: auto !important; }
+  }
+</style>
+
+<!-- REQUIRED HubSpot tag for custom-coded email templates — injects
+     HubSpot's combined/minified CSS. Publish fails without it. Source:
+     see reference/hubspot-requirements.md. -->
+{{ standard_header_includes }}
+</head>
+
+<body style="margin:0; padding:0; background-color:#F3F7F7;">
+
+  <!-- Inbox preview snippet (not shown in the rendered email itself) -->
+  <div id="preview_text" style="display:none; max-height:0; overflow:hidden; mso-hide:all;">
+    {% text "preview_text" label="Preview text", value="We're going all-in on AI accounting, and bringing in the best in corporate cards." %}
+  </div>
+  <div style="display:none; max-height:0; overflow:hidden; mso-hide:all;">
+    &nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;
+  </div>
+
+  <center>
+  <!--[if mso]>
+  <table role="presentation" width="680" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td>
+  <![endif]-->
+  <table role="presentation" class="email-container" width="100%" style="max-width:680px;" cellpadding="0" cellspacing="0" border="0" align="center">
+
+    <!-- ===== HERO (flattened image, whole thing clickable) ===== -->
+    <tr>
+      <td style="padding: 32px 24px 0;">
+        <a href="https://ramp-com.chilipiper.com/round-robin/round-robin-zeni?utm_source=hs_email&amp;utm_medium=email" target="_blank" style="display:block;">
+          <img class="full-img" src="https://5991084.fs1.hubspotusercontent-na1.net/hubfs/5991084/Zeni%20Ramp/hero-banner.png" width="632" height="488" alt="Zeni x Ramp. Books by Zeni. Cards by Ramp." style="width:100%; height:auto; border-radius:20px;" />
+        </a>
+      </td>
+    </tr>
+
+    <!-- ===== GREETING + INTRO (live text — personalized, accessible, keeps the email out of spam filters) ===== -->
+    <tr>
+      <td class="email-body-copy" style="padding: 32px 24px 8px;">
+        <p style="font-weight:700;">Hi {{ contact.firstname }},</p>
+        <p>We have big news, and we wanted you to hear it from us first: <strong>Zeni is partnering with Ramp.</strong></p>
+        <p>Every month, you trust us with the numbers you run your company on. That deserves every ounce of our focus. So we're going all-in on what we do best: AI-powered bookkeeping and accounting that gets faster, sharper, and more accurate with every close.</p>
+        <p>And for corporate cards? &ldquo;Good enough&rdquo; wasn&rsquo;t good enough for you. We wanted the best in the business. That's Ramp.</p>
+      </td>
+    </tr>
+
+    <!-- ===== WHAT CHANGES / WHAT STAYS (live text, 2 columns, stacks on mobile) ===== -->
+    <tr>
+      <td style="padding: 8px 24px 8px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td class="stack-column" width="50%" valign="top" style="padding: 0 8px 12px 0;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;"><tr>
+                <td height="150" valign="top" style="background-color:#FFFFFF; border:1px solid #D4DCDD; border-radius:14px; padding:20px; height:150px;">
+                  <div style="font-family:Manrope, Arial, sans-serif; font-size:11px; font-weight:700; letter-spacing:0.08em; color:#508B7E; text-transform:uppercase; margin:0 0 10px;">What stays the same</div>
+                  <div style="font-family:Manrope, Arial, sans-serif; font-size:14px; line-height:1.6; color:#162324;">
+                    &#10003;&nbsp; The Zeni team you know<br>
+                    &#10003;&nbsp; Your bookkeeping &amp; monthly close<br>
+                    &#10003;&nbsp; Your Zeni dashboard &amp; reports<br>
+                    &#10003;&nbsp; Your Zeni subscription
+                  </div>
+                </td>
+              </tr></table>
+            </td>
+            <td class="stack-column" width="50%" valign="top" style="padding: 0 0 12px 8px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;"><tr>
+                <td height="150" valign="top" style="background-color:#FFFFFF; border:1px solid #D4DCDD; border-radius:14px; padding:20px; height:150px;">
+                  <div style="font-family:Manrope, Arial, sans-serif; font-size:11px; font-weight:700; letter-spacing:0.08em; color:#366170; text-transform:uppercase; margin:0 0 10px;">What's changing</div>
+                  <div style="font-family:Manrope, Arial, sans-serif; font-size:14px; line-height:1.6; color:#162324;">
+                    &rarr;&nbsp; Corporate cards move to Ramp<br>
+                    &rarr;&nbsp; Ramp sets you up 1:1<br>
+                    &rarr;&nbsp; Zeni Cards retire on <strong>October 10</strong>
+                  </div>
+                </td>
+              </tr></table>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    <!-- ===== ZENI CARD CALLOUT ===== -->
+    <tr>
+      <td style="padding: 4px 24px 28px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;"><tr>
+          <td style="background-color:#F7E0C4; border-radius:14px; padding:18px 20px; font-family:Manrope, Arial, sans-serif; font-size:14px; line-height:1.6; color:#162324;">
+            <strong>Using a Zeni Card today?</strong> It keeps working through <strong>October 10</strong>. Book your Ramp onboarding now so your team's new cards are live well before then. No gaps, no scramble.
+          </td>
+        </tr></table>
+      </td>
+    </tr>
+
+    <tr>
+      <td class="email-body-copy" style="padding: 0 24px 12px;">
+        <p style="font-family:Manrope, Arial, sans-serif; font-size:20px; font-weight:700; color:#162324; margin:0;">Switching is simple</p>
+      </td>
+    </tr>
+
+    <!-- ===== HOW IT WORKS (live text — numbered steps, bulletproof rounded badge) ===== -->
+    <tr>
+      <td style="padding: 8px 24px 32px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                    <tr>
+            <td width="24" valign="top" style="padding: 0 12px 20px 0;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+                <td class="step-number">1</td>
+              </tr></table>
+            </td>
+            <td valign="top" style="padding: 0 0 20px 0;">
+              <div class="step-title">Watch your inbox for Ramp</div>
+              <div class="step-desc" style="line-height:1.5; font-size:14px;">Ramp will reach out directly with everything you need.</div>
+            </td>
+          </tr>
+          <tr>
+            <td width="24" valign="top" style="padding: 0 12px 20px 0;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+                <td class="step-number">2</td>
+              </tr></table>
+            </td>
+            <td valign="top" style="padding: 0 0 20px 0;">
+              <div class="step-title">Book time with Ramp</div>
+              <div class="step-desc" style="line-height:1.5; font-size:14px;"><a href="https://ramp-com.chilipiper.com/round-robin/round-robin-zeni?utm_source=hs_email&amp;utm_medium=email" target="_blank" style="color:#366170; font-weight:700;">Pick a time here</a>. A Ramp specialist will set up your account, cards, and spend controls with you.</div>
+            </td>
+          </tr>
+          <tr>
+            <td width="24" valign="top" style="padding: 0 12px 20px 0;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+                <td class="step-number">3</td>
+              </tr></table>
+            </td>
+            <td valign="top" style="padding: 0 0 20px 0;">
+              <div class="step-title">Move your card spend over</div>
+              <div class="step-desc" style="line-height:1.5; font-size:14px;">Issue Ramp cards to your team, then update any subscriptions or vendors billed to your Zeni Card before October 10.</div>
+            </td>
+          </tr>
+          <tr>
+            <td width="24" valign="top" style="padding: 0 12px 0 0;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+                <td class="step-number">4</td>
+              </tr></table>
+            </td>
+            <td valign="top" style="padding: 0 0 0 0;">
+              <div class="step-title">Leave the books to us</div>
+              <div class="step-desc" style="line-height:1.5; font-size:14px;">Nothing changes on our side, except that we get even better at it.</div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    <!-- ===== CTA BANNER (flattened image, whole thing clickable) + real live button beneath for accessibility/deliverability ===== -->
+    <tr>
+      <td style="padding: 0 24px 8px;">
+        <a href="https://ramp-com.chilipiper.com/round-robin/round-robin-zeni?utm_source=hs_email&amp;utm_medium=email" target="_blank" style="display:block;">
+          <img class="full-img" src="https://5991084.fs1.hubspotusercontent-na1.net/hubfs/5991084/Zeni%20Ramp/cta-banner.png" width="632" height="261" alt="Zeni runs your books. Ramp runs your cards. Book time with Ramp." style="width:100%; height:auto; border-radius:20px;" />
+        </a>
+      </td>
+    </tr>
+
+    <!-- ===== CLOSING NOTE + TEAM SIGN-OFF ===== -->
+    <tr>
+      <td class="email-body-copy" style="padding: 24px 24px 8px;">
+        <p>We know any change to how your team spends is a real change. We made this call because it means two things for you: better books from us, and a better card from Ramp. You deserve both.</p>
+        <p style="margin:0 0 24px;">With gratitude,<br><strong>The Zeni Team</strong></p>
+      </td>
+    </tr>
+
+    <tr><td style="padding: 0 24px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="border-top:1px solid #E9F0F0; font-size:0; line-height:0;">&nbsp;</td></tr></table></td></tr>
+
+    <!-- ===== P.S. LINE ===== -->
+    <tr>
+      <td class="email-body-copy" style="padding: 16px 24px;">
+        <p style="margin:0;">P.S. Questions about the switch? Just hit reply. A real human on our team will get back to you. Ready now? <a href="https://ramp-com.chilipiper.com/round-robin/round-robin-zeni?utm_source=hs_email&amp;utm_medium=email" target="_blank" style="color:#366170; font-weight:700;">Book your Ramp onboarding</a>.</p>
+      </td>
+    </tr>
+
+    <tr><td style="padding: 0 24px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="border-top:1px solid #E9F0F0; font-size:0; line-height:0;">&nbsp;</td></tr></table></td></tr>
+
+    <!-- ===== REQUIRED HUBSPOT / CAN-SPAM COMPLIANCE FOOTER ===== -->
+    <!-- Do not remove or rewrite these tokens — they are HubSpot's
+         required variables for email sends (verified against HubSpot's
+         own docs, see reference/hubspot-requirements.md). -->
+    <tr>
+      <td class="footer-text" align="center" style="padding: 20px 24px 32px;">
+        <p style="margin:0 0 8px;">You're receiving this because you're a {{ site_settings.company_name }} customer. &hearts;</p>
+        <p style="margin:0 0 8px;">
+          <a href="https://app.zeni.ai/preferences">Update Preferences</a>
+          &nbsp;&middot;&nbsp;
+          <a href="{{ unsubscribe_link }}">Unsubscribe</a>
+        </p>
+        <p style="margin:0;">
+          {{ site_settings.company_name }},
+          {{ site_settings.company_street_address_1 }},
+          {{ site_settings.company_city }}, {{ site_settings.company_state }} {{ site_settings.company_zip }}
+        </p>
+      </td>
+    </tr>
+
+  </table>
+  <!--[if mso]>
+  </td></tr></table>
+  <![endif]-->
+  </center>
+
+  <!-- REQUIRED HubSpot tag for custom-coded email templates — injects
+       HubSpot's tracking JS and module functionality. Publish fails
+       without it. Source: see reference/hubspot-requirements.md. -->
+  {{ standard_footer_includes }}
+</body>
+</html>
