@@ -52,16 +52,16 @@ async function fetchAllEmails(token: string): Promise<HsEmail[]> {
   return emails;
 }
 
-// Fetch statistics for a single email from the summary endpoint
-async function fetchEmailStats(token: string, emailId: string): Promise<HsStats> {
+// Fetch statistics via v1 campaigns API using the email's primaryEmailCampaignId.
+// The v3 /statistics/summary endpoint returns 404 for this account; v1 works correctly.
+async function fetchEmailStats(token: string, campaignId: string): Promise<HsStats> {
   try {
-    const res = await fetch(`${HS_BASE}/marketing/v3/emails/${emailId}/statistics/summary`, {
+    const res = await fetch(`${HS_BASE}/email/public/v1/campaigns/${campaignId}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) return {};
     const data = await res.json();
-    // HubSpot returns { counters: { sent, open, click, unsubscribed, bounce, … } }
-    return (data.counters ?? data.statistics ?? data) as HsStats;
+    return (data.counters ?? {}) as HsStats;
   } catch {
     return {};
   }
@@ -94,9 +94,14 @@ export async function GET(req: Request) {
     });
 
     // Fetch statistics for each matched email (parallel, max 50 to avoid rate limits)
+    // Use primaryEmailCampaignId with the v1 campaigns API — v3 stats endpoint is unavailable.
     const slice = filtered.slice(0, 50);
     const statsArr = await Promise.all(
-      slice.map((e) => fetchEmailStats(token, e.id))
+      slice.map((e) =>
+        e.primaryEmailCampaignId
+          ? fetchEmailStats(token, e.primaryEmailCampaignId)
+          : Promise.resolve({} as HsStats)
+      )
     );
 
     const campaigns: EmailCampaign[] = slice.map((e, i) => {
@@ -158,14 +163,15 @@ export async function GET(req: Request) {
 // ── HubSpot shapes ─────────────────────────────────────────────────────────────
 
 interface HsEmail {
-  id:           string;
-  name?:        string;
-  subject?:     string;
-  publishDate?: string;
-  scheduledAt?: string;
-  updatedAt?:   string;
-  type?:        string;
-  state?:       string;
+  id:                      string;
+  name?:                   string;
+  subject?:                string;
+  publishDate?:            string;
+  scheduledAt?:            string;
+  updatedAt?:              string;
+  type?:                   string;
+  state?:                  string;
+  primaryEmailCampaignId?: string;
 }
 
 // Statistics field names vary slightly across HubSpot API versions
