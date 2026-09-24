@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { ExternalLink, X, Bell, ChevronRight, Loader2, AlertTriangle, Globe, Bot, Send, Sparkles, RefreshCw } from "lucide-react";
+import { ExternalLink, X, Bell, ChevronRight, ChevronLeft, Loader2, AlertTriangle, Globe, Bot, Send, Sparkles, RefreshCw, Clock, Trash2 } from "lucide-react";
+import { useChatHistory, relativeTime, type ChatSession } from "@/lib/use-chat-history";
 import { cn } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -657,7 +658,11 @@ function SimpleMarkdown({ content }: { content: string }) {
 }
 
 function FunnelChatDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [messages,    setMessages]    = useState<ChatMsg[]>([]);
+  // Conversation + archived sessions live in localStorage so the panel keeps
+  // its history across closes and reloads (see src/lib/use-chat-history.ts).
+  const { messages, setMessages, sessions, archiveAndClear, restoreSession, deleteSession, clearAll } =
+    useChatHistory("funnel");
+  const [showHistory, setShowHistory] = useState(false);
   const [input,       setInput]       = useState("");
   const [loading,     setLoading]     = useState(false);
   const [error,       setError]       = useState<string | null>(null);
@@ -695,11 +700,18 @@ function FunnelChatDrawer({ open, onClose }: { open: boolean; onClose: () => voi
     }
   }
 
-  function clearConversation() {
-    setMessages([]);
+  function startNewConversation() {
+    archiveAndClear();
     setSuggestions([]);
     setError(null);
     setInput("");
+  }
+
+  function openSession(session: ChatSession) {
+    restoreSession(session);
+    setSuggestions([]);
+    setError(null);
+    setShowHistory(false);
   }
 
   if (!open) return null;
@@ -713,19 +725,65 @@ function FunnelChatDrawer({ open, onClose }: { open: boolean; onClose: () => voi
           <p className="text-sm font-semibold text-white leading-none">Mar Ops Agent</p>
           <p className="text-xs text-indigo-200 mt-0.5">Funnel analysis · live data</p>
         </div>
-        {messages.length > 0 && (
-          <button onClick={clearConversation} title="New conversation"
-            className="p-1 rounded hover:bg-indigo-500 transition-colors text-indigo-200 hover:text-white mr-0.5">
-            <RefreshCw className="w-3.5 h-3.5" />
-          </button>
-        )}
+        <button onClick={() => setShowHistory(h => !h)} title="Conversation history"
+          className={cn("p-1 rounded transition-colors mr-0.5",
+            showHistory ? "bg-indigo-500 text-white" : "hover:bg-indigo-500 text-indigo-200 hover:text-white")}>
+          <Clock className="w-3.5 h-3.5" />
+        </button>
+        <button onClick={startNewConversation} title="Save & start a new conversation"
+          disabled={messages.length === 0}
+          className="p-1 rounded hover:bg-indigo-500 transition-colors text-indigo-200 hover:text-white mr-0.5 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent">
+          <RefreshCw className="w-3.5 h-3.5" />
+        </button>
         <button onClick={onClose} className="p-1 rounded hover:bg-indigo-500 transition-colors text-indigo-200 hover:text-white">
           <X className="w-4 h-4" />
         </button>
       </div>
 
+      {/* History */}
+      {showHistory && (
+        <div className="flex-1 overflow-y-auto min-h-0 bg-slate-50">
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-200 bg-white sticky top-0">
+            <button onClick={() => setShowHistory(false)} className="p-1 rounded hover:bg-slate-100 text-slate-500">
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+            <span className="text-xs font-semibold text-slate-700">Past conversations</span>
+            <span className="ml-auto text-[10px] text-slate-400">{sessions.length} saved</span>
+            {sessions.length > 0 && (
+              <button onClick={() => { clearAll(); setSuggestions([]); setError(null); }}
+                title="Delete all conversations"
+                className="text-[10px] text-slate-400 hover:text-red-600 transition-colors">
+                Clear all
+              </button>
+            )}
+          </div>
+          {sessions.length === 0 ? (
+            <p className="text-xs text-slate-400 text-center py-8 px-4">
+              No saved conversations yet. Chats are saved when you start a new one.
+            </p>
+          ) : (
+            <ul className="divide-y divide-slate-200">
+              {sessions.map(sn => (
+                <li key={sn.id} className="flex items-start gap-2 px-3 py-2.5 hover:bg-white transition-colors">
+                  <button onClick={() => openSession(sn)} className="flex-1 text-left min-w-0">
+                    <p className="text-xs text-slate-700 truncate">{sn.title}</p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">
+                      {relativeTime(sn.startedAt)} · {sn.messages.length} messages
+                    </p>
+                  </button>
+                  <button onClick={() => deleteSession(sn.id)} title="Delete conversation"
+                    className="p-1 rounded text-slate-300 hover:text-red-600 hover:bg-red-50 transition-colors shrink-0">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 min-h-0">
+      <div className={cn("flex-1 overflow-y-auto px-4 py-3 space-y-3 min-h-0", showHistory && "hidden")}>
         {messages.length === 0 && (
           <div className="space-y-2">
             <p className="text-xs text-slate-400 text-center py-2">Ask anything about your funnel</p>
@@ -784,7 +842,7 @@ function FunnelChatDrawer({ open, onClose }: { open: boolean; onClose: () => voi
       </div>
 
       {/* Input */}
-      <div className="shrink-0 px-3 py-2 border-t border-slate-100">
+      <div className={cn("shrink-0 px-3 py-2 border-t border-slate-100", showHistory && "hidden")}>
         <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100 transition-all">
           <input
             value={input}
