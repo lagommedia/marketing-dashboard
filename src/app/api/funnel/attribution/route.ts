@@ -34,7 +34,6 @@ async function fetchMqlContacts(token: string, fromMs: number, toMs: number): Pr
     "hs_analytics_source_data_2",
     "hs_lifecyclestage_marketingqualifiedlead_date",
     "hs_lifecyclestage_salesqualifiedlead_date",
-    "hs_lifecyclestage_opportunity_date",
   ];
 
   do {
@@ -61,7 +60,8 @@ async function fetchMqlContacts(token: string, fromMs: number, toMs: number): Pr
 
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(`HubSpot contacts error ${res.status}: ${text.slice(0, 300)}`);
+      // Include full body so 400 validation errors are debuggable
+      throw new Error(`HubSpot contacts ${res.status}: ${text.slice(0, 500)}`);
     }
 
     const data = await res.json();
@@ -117,7 +117,7 @@ export async function GET(req: Request) {
         .join(" / ") || null;
 
       const mqlDate = p.hs_lifecyclestage_marketingqualifiedlead_date;
-      const sqoDate = p.hs_lifecyclestage_salesqualifiedlead_date || p.hs_lifecyclestage_opportunity_date;
+      const sqoDate = p.hs_lifecyclestage_salesqualifiedlead_date;
       const isSqo   = sqoDate != null && mqlDate != null && new Date(sqoDate) > new Date(mqlDate);
 
       if (!groups.has(src)) {
