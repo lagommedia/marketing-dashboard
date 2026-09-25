@@ -377,25 +377,7 @@ async function getEfficiencySparklines(
       const elapsed = Math.min(Math.max(now.getTime() - qs.getTime(), 0), total);
       return elapsed / total;
     };
-    // Returns first day of NEXT month after the last month with cost data.
-    // Combined with Math.min(today, ...) this ensures:
-    //   - Past quarters → asOf > qEnd → pctElapsed = 100%
-    //   - Current quarter → asOf capped at today, never inflated by future WIP months
-    const lastCachedDateFor = (periodMonths: string[]): Date => {
-      for (let i = periodMonths.length - 1; i >= 0; i--) {
-        const row = sheetCache.get(norm(periodMonths[i]));
-        if (row && (row.grossCosts > 0 || row.sharedAllocation > 0)) {
-          const [mon, yr] = periodMonths[i].split(" ");
-          const mIdx = SHORT.indexOf(mon);
-          return new Date(Number(yr), mIdx + 1, 1); // first day of NEXT month
-        }
-      }
-      return new Date();
-    };
-
-    // Gather all month labels needed across every spark period.
-    // Use the full quarter (not just elapsed months) so cost totals don't
-    // step-jump when a new month starts mid-quarter.
+    // Gather all month labels needed across every spark period for LTV.
     const quarterMonthsFor = (from: Date): string[] => {
       const q = Math.floor(from.getMonth() / 3);
       const out: string[] = [];
@@ -412,17 +394,28 @@ async function getEfficiencySparklines(
       }
     }
 
-    // Load from ReferenceSheetMonth cache
+    // Load Sheets cache (used for LTV only — GTM/CAC cost basis comes from PacingTarget)
     const sheetRows = await prisma.referenceSheetMonth.findMany({
       where: { month: { in: [...allMonthLabels] } },
     });
-    if (sheetRows.length === 0) return null; // cache not yet seeded — sync first
 
     type CacheRow = { grossCosts: number; sharedAllocation: number; arpu: number; grossMargin: number; churnRate: number };
     const sheetCache = new Map<string, CacheRow>(
       sheetRows.map(r => [r.month, { grossCosts: r.grossCosts, sharedAllocation: r.sharedAllocation,
                                      arpu: r.arpu, grossMargin: r.grossMargin, churnRate: r.churnRate }])
     );
+
+    // Load PacingTarget budgets for each quarter period — same source as the GTM Efficiency card.
+    const quarterPeriods = [...new Set(rawPeriods.map(p => {
+      const d = new Date(p.from + "T00:00:00");
+      const q = Math.floor(d.getMonth() / 3);
+      return `${d.getFullYear()}-Q${q + 1}`;
+    }))];
+    const pacingRows = await prisma.pacingTarget.findMany({
+      where: { period: { in: quarterPeriods }, channel: "marketing_org" },
+      select: { period: true, targetSpend: true },
+    });
+    const pacingMap = new Map(pacingRows.map(r => [r.period, r.targetSpend]));
 
     // 3. Compute per period
     const gtmPts: SparkPoint[] = [], cacPts: SparkPoint[] = [],
@@ -432,21 +425,19 @@ async function getEfficiencySparklines(
       const from = new Date(p.from + "T00:00:00");
       const to   = new Date(p.to   + "T00:00:00");
 
-      // GTM + CAC: sum across the full quarter so crossing a month boundary
-      // mid-quarter doesn't cause a step-jump in the cost denominator.
-      const periodMonths = quarterMonthsFor(from);
-      let gross = 0, shared = 0, anyMonth = false;
-      for (const m of periodMonths) {
-        const cached = sheetCache.get(norm(m));
-        if (cached) { gross += cached.grossCosts; shared += cached.sharedAllocation; anyMonth = true; }
-      }
+      // GTM + CAC: use PacingTarget.targetSpend as the cost basis — same as the
+      // GTM Efficiency card — so sparkline and card always agree for the current quarter.
+      // pctElapsed caps at qEnd (not at last Sheets month) to match the card's logic.
+      const q       = Math.floor(from.getMonth() / 3);
+      const period  = `${from.getFullYear()}-Q${q + 1}`;
+      const qEnd    = new Date(from.getFullYear(), q * 3 + 3, 0); // last day of quarter
+      const asOf    = new Date(Math.min(Date.now(), qEnd.getTime() + 86_400_000));
+      const budget  = pacingMap.get(period) ?? null;
 
       let gtmVal: number | null = null, cacVal: number | null = null, ltvVal: number | null = null;
 
-      if (anyMonth) {
-        const lastData = lastCachedDateFor(periodMonths);
-        const asOf     = new Date(Math.min(new Date().getTime(), lastData.getTime()));
-        const denom = (gross + shared) * pctElapsed(from, asOf);
+      if (budget != null && budget > 0) {
+        const denom = budget * pctElapsed(from, asOf);
         if (denom > 0) {
           if (p.revenue   != null && p.revenue   > 0) gtmVal = p.revenue / denom;
           if (p.closedWon != null && p.closedWon > 0) cacVal = denom / p.closedWon;
