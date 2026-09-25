@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { ExternalLink, X, Bell, ChevronRight, ChevronLeft, Loader2, AlertTriangle, Globe, Bot, Send, Sparkles, RefreshCw, Clock, Trash2 } from "lucide-react";
+import { ExternalLink, X, Bell, ChevronRight, ChevronLeft, Loader2, AlertTriangle, Globe, Bot, Send, Sparkles, RefreshCw, Clock, Trash2, ChevronDown, Search, MousePointerClick } from "lucide-react";
 import { useChatHistory, relativeTime, type ChatSession } from "@/lib/use-chat-history";
 import { cn } from "@/lib/utils";
 
@@ -64,6 +64,183 @@ function getCount(counts: FunnelCounts, stage: Stage): number {
          stage === "mqls"      ? counts.mqls      :
          stage === "sqos"      ? counts.sqos      :
                                  counts.closedWon;
+}
+
+// ---------------------------------------------------------------------------
+// Attribution Panel — HubSpot first-touch source breakdown for MQL contacts
+// ---------------------------------------------------------------------------
+
+interface AttributionRow {
+  source:    string;
+  label:     string;
+  type:      "paid" | "organic" | "other";
+  mqls:      number;
+  sqos:      number;
+  convRate:  number;
+  topDetail: { label: string; count: number }[];
+}
+
+interface AttributionData {
+  total: number;
+  rows:  AttributionRow[];
+}
+
+const TYPE_COLOR: Record<string, string> = {
+  paid:    "bg-violet-50 text-violet-700 border-violet-200",
+  organic: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  other:   "bg-slate-100 text-slate-600 border-slate-200",
+};
+
+function AttributionPanel({ from, to }: { from: string; to: string }) {
+  const [open,    setOpen]    = useState(false);
+  const [data,    setData]    = useState<AttributionData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open || data) return;
+    setLoading(true);
+    setError(null);
+    fetch(`/api/funnel/attribution?from=${from}&to=${to}`)
+      .then(r => r.json())
+      .then((d: AttributionData & { error?: string }) => {
+        if (d.error) { setError(d.error); return; }
+        setData(d);
+      })
+      .catch(() => setError("Failed to load attribution data"))
+      .finally(() => setLoading(false));
+  }, [open, from, to, data]);
+
+  // Reset when date range changes
+  useEffect(() => { setData(null); }, [from, to]);
+
+  const paid    = data?.rows.filter(r => r.type === "paid")    ?? [];
+  const organic = data?.rows.filter(r => r.type === "organic") ?? [];
+  const other   = data?.rows.filter(r => r.type === "other")   ?? [];
+
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-5 py-4 hover:bg-slate-50 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <Search className="w-4 h-4 text-indigo-500" />
+          <span className="text-sm font-semibold text-slate-700">MQL Source Attribution</span>
+          {data && (
+            <span className="text-xs text-slate-400 font-normal ml-1">
+              {data.total} MQLs across {data.rows.length} sources
+            </span>
+          )}
+        </div>
+        <ChevronDown className={cn("w-4 h-4 text-slate-400 transition-transform", open && "rotate-180")} />
+      </button>
+
+      {open && (
+        <div className="border-t border-slate-100 px-5 pb-5 pt-4">
+          {loading && (
+            <div className="flex items-center gap-2 text-slate-400 text-sm py-4">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Loading HubSpot attribution…
+            </div>
+          )}
+
+          {error && (
+            <div className="text-sm text-red-500 bg-red-50 rounded-lg p-3">{error}</div>
+          )}
+
+          {data && data.rows.length === 0 && (
+            <p className="text-sm text-slate-400 py-4">No MQL contacts found for this date range.</p>
+          )}
+
+          {data && data.rows.length > 0 && (
+            <div className="space-y-5">
+              {[
+                { label: "Paid",    icon: MousePointerClick, rows: paid    },
+                { label: "Organic", icon: Globe,             rows: organic },
+                { label: "Other",   icon: ChevronRight,      rows: other   },
+              ].filter(g => g.rows.length > 0).map(group => (
+                <div key={group.label}>
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <group.icon className="w-3.5 h-3.5 text-slate-400" />
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                      {group.label}
+                    </p>
+                  </div>
+
+                  <div className="rounded-lg border border-slate-100 overflow-hidden">
+                    {/* Header */}
+                    <div className="grid grid-cols-[1fr_auto_auto_auto] bg-slate-50 px-4 py-2 text-[11px] font-semibold text-slate-400 uppercase tracking-wide">
+                      <span>Source</span>
+                      <span className="w-16 text-right">MQLs</span>
+                      <span className="w-16 text-right">SQOs</span>
+                      <span className="w-20 text-right">MQL→SQO</span>
+                    </div>
+
+                    {group.rows.map(row => (
+                      <div key={row.source} className="border-t border-slate-100">
+                        <button
+                          onClick={() => setExpanded(expanded === row.source ? null : row.source)}
+                          className="w-full grid grid-cols-[1fr_auto_auto_auto] items-center px-4 py-2.5 hover:bg-slate-50 transition-colors text-left"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-slate-700">{row.label}</span>
+                            {row.topDetail.length > 0 && (
+                              <ChevronDown className={cn(
+                                "w-3 h-3 text-slate-300 transition-transform",
+                                expanded === row.source && "rotate-180"
+                              )} />
+                            )}
+                          </div>
+                          <span className="w-16 text-right text-sm font-semibold tabular-nums text-slate-700">{row.mqls}</span>
+                          <span className="w-16 text-right text-sm tabular-nums text-slate-500">{row.sqos}</span>
+                          <span className={cn(
+                            "w-20 text-right text-xs font-semibold tabular-nums",
+                            row.convRate >= 0.3 ? "text-emerald-600" :
+                            row.convRate >= 0.1 ? "text-indigo-500"  : "text-slate-400"
+                          )}>
+                            {row.mqls > 0 ? (row.convRate * 100).toFixed(0) + "%" : "—"}
+                          </span>
+                        </button>
+
+                        {/* Expanded detail: top campaigns / referrers */}
+                        {expanded === row.source && row.topDetail.length > 0 && (
+                          <div className="bg-slate-50 border-t border-slate-100 px-4 py-3 space-y-1.5">
+                            <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-2">
+                              Top campaigns / referrers
+                            </p>
+                            {row.topDetail.map((d, i) => (
+                              <div key={i} className="flex items-center justify-between gap-3">
+                                <span className="text-xs text-slate-600 truncate max-w-xs">{d.label || "(none)"}</span>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <div className="w-20 bg-slate-200 rounded-full h-1.5 overflow-hidden">
+                                    <div
+                                      className="h-full bg-indigo-400 rounded-full"
+                                      style={{ width: `${(d.count / row.mqls) * 100}%` }}
+                                    />
+                                  </div>
+                                  <span className="text-xs tabular-nums text-slate-500 w-6 text-right">{d.count}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+
+              <p className="text-[10px] text-slate-400 mt-2">
+                Source = HubSpot first-touch channel. Detail = campaign name + medium (from UTM parameters captured on form submission).
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -568,6 +745,9 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
           </div>
         </div>
       )}
+
+      {/* MQL Source Attribution */}
+      <AttributionPanel from={from} to={to} />
 
       {/* Drawer */}
       {openDrawer && (
