@@ -71,13 +71,15 @@ function getCount(counts: FunnelCounts, stage: Stage): number {
 // ---------------------------------------------------------------------------
 
 interface AttributionRow {
-  source:    string;
-  label:     string;
-  type:      "paid" | "organic" | "other";
-  mqls:      number;
-  sqos:      number;
-  convRate:  number;
-  topDetail: { label: string; count: number }[];
+  source:        string;
+  label:         string;
+  type:          "paid" | "organic" | "other";
+  mqls:          number;
+  sqos:          number;
+  closedWon:     number;
+  convRate:      number;
+  closedWonRate: number;
+  topDetail:     { label: string; count: number }[];
 }
 
 interface AttributionData {
@@ -171,18 +173,19 @@ function AttributionPanel({ from, to }: { from: string; to: string }) {
 
                   <div className="rounded-lg border border-slate-100 overflow-hidden">
                     {/* Header */}
-                    <div className="grid grid-cols-[1fr_auto_auto_auto] bg-slate-50 px-4 py-2 text-[11px] font-semibold text-slate-400 uppercase tracking-wide">
+                    <div className="grid grid-cols-[1fr_auto_auto_auto_auto] bg-slate-50 px-4 py-2 text-[11px] font-semibold text-slate-400 uppercase tracking-wide">
                       <span>Source</span>
-                      <span className="w-16 text-right">MQLs</span>
-                      <span className="w-16 text-right">SQOs</span>
-                      <span className="w-20 text-right">MQL→SQO</span>
+                      <span className="w-14 text-right">MQLs</span>
+                      <span className="w-14 text-right">SQOs</span>
+                      <span className="w-16 text-right">Closed Won</span>
+                      <span className="w-20 text-right">MQL→CW</span>
                     </div>
 
                     {group.rows.map(row => (
                       <div key={row.source} className="border-t border-slate-100">
                         <button
                           onClick={() => setExpanded(expanded === row.source ? null : row.source)}
-                          className="w-full grid grid-cols-[1fr_auto_auto_auto] items-center px-4 py-2.5 hover:bg-slate-50 transition-colors text-left"
+                          className="w-full grid grid-cols-[1fr_auto_auto_auto_auto] items-center px-4 py-2.5 hover:bg-slate-50 transition-colors text-left"
                         >
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-medium text-slate-700">{row.label}</span>
@@ -193,14 +196,15 @@ function AttributionPanel({ from, to }: { from: string; to: string }) {
                               )} />
                             )}
                           </div>
-                          <span className="w-16 text-right text-sm font-semibold tabular-nums text-slate-700">{row.mqls}</span>
-                          <span className="w-16 text-right text-sm tabular-nums text-slate-500">{row.sqos}</span>
+                          <span className="w-14 text-right text-sm font-semibold tabular-nums text-slate-700">{row.mqls}</span>
+                          <span className="w-14 text-right text-sm tabular-nums text-slate-500">{row.sqos}</span>
+                          <span className="w-16 text-right text-sm font-semibold tabular-nums text-emerald-700">{row.closedWon}</span>
                           <span className={cn(
                             "w-20 text-right text-xs font-semibold tabular-nums",
-                            row.convRate >= 0.3 ? "text-emerald-600" :
-                            row.convRate >= 0.1 ? "text-indigo-500"  : "text-slate-400"
+                            row.closedWonRate >= 0.2  ? "text-emerald-600" :
+                            row.closedWonRate >= 0.05 ? "text-indigo-500"  : "text-slate-400"
                           )}>
-                            {row.mqls > 0 ? (row.convRate * 100).toFixed(0) + "%" : "—"}
+                            {row.mqls > 0 ? (row.closedWonRate * 100).toFixed(0) + "%" : "—"}
                           </span>
                         </button>
 
@@ -248,11 +252,13 @@ function AttributionPanel({ from, to }: { from: string; to: string }) {
 // ---------------------------------------------------------------------------
 
 interface PaidKeywordRow {
-  keyword:  string;
-  network:  string | null;
-  mqls:     number;
-  sqos:     number;
-  mqlToSqo: number;
+  keyword:   string;
+  campaign:  string | null;
+  mqls:      number;
+  sqos:      number;
+  closedWon: number;
+  mqlToSqo:  number;
+  mqlToCw:   number;
 }
 
 interface PaidKeywordData {
@@ -332,17 +338,18 @@ function PaidKeywordsPanel({ from, to }: { from: string; to: string }) {
             <div className="space-y-4">
               <div className="rounded-lg border border-slate-100 overflow-hidden">
                 {/* Header */}
-                <div className="grid grid-cols-[1fr_auto_auto_auto] bg-slate-50 px-4 py-2 text-[11px] font-semibold text-slate-400 uppercase tracking-wide gap-x-3">
+                <div className="grid grid-cols-[1fr_auto_auto_auto_auto] bg-slate-50 px-4 py-2 text-[11px] font-semibold text-slate-400 uppercase tracking-wide gap-x-3">
                   <span>Keyword</span>
                   <span className="w-14 text-right">MQLs</span>
                   <span className="w-14 text-right">SQOs</span>
-                  <span className="w-20 text-right">MQL→SQO</span>
+                  <span className="w-16 text-right">Closed Won</span>
+                  <span className="w-20 text-right">MQL→CW</span>
                 </div>
 
                 {data.paidKeywords.map((row, i) => (
                   <div key={i} className="border-t border-slate-100">
-                    <div className="grid grid-cols-[1fr_auto_auto_auto] items-center px-4 py-2.5 gap-x-3 hover:bg-slate-50 transition-colors">
-                      {/* Keyword + network badge + volume bar */}
+                    <div className="grid grid-cols-[1fr_auto_auto_auto_auto] items-center px-4 py-2.5 gap-x-3 hover:bg-slate-50 transition-colors">
+                      {/* Keyword + campaign badge + volume bar */}
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           <span className={cn(
@@ -351,9 +358,9 @@ function PaidKeywordsPanel({ from, to }: { from: string; to: string }) {
                           )}>
                             {row.keyword}
                           </span>
-                          {row.network && (
-                            <span className="shrink-0 text-[10px] bg-violet-50 text-violet-600 border border-violet-200 rounded px-1.5 py-0.5 font-medium">
-                              {row.network}
+                          {row.campaign && (
+                            <span className="shrink-0 text-[10px] bg-slate-100 text-slate-500 border border-slate-200 rounded px-1.5 py-0.5 font-medium truncate max-w-[120px]">
+                              {row.campaign}
                             </span>
                           )}
                         </div>
@@ -368,8 +375,9 @@ function PaidKeywordsPanel({ from, to }: { from: string; to: string }) {
 
                       <span className="w-14 text-right text-sm font-semibold tabular-nums text-slate-700">{row.mqls}</span>
                       <span className="w-14 text-right text-sm tabular-nums text-slate-500">{row.sqos}</span>
-                      <span className={cn("w-20 text-right text-xs font-semibold tabular-nums", rateColor(row.mqlToSqo))}>
-                        {fmtRate(row.mqlToSqo)}
+                      <span className="w-16 text-right text-sm font-semibold tabular-nums text-emerald-700">{row.closedWon}</span>
+                      <span className={cn("w-20 text-right text-xs font-semibold tabular-nums", rateColor(row.mqlToCw))}>
+                        {fmtRate(row.mqlToCw)}
                       </span>
                     </div>
                   </div>
@@ -377,9 +385,8 @@ function PaidKeywordsPanel({ from, to }: { from: string; to: string }) {
               </div>
 
               <p className="text-[10px] text-slate-400">
-                Source: HubSpot first-touch. Keyword = paid search query captured at form submission.
-                MQL date defines the period window; SQO and Closed Won may occur after.
-                Unknown keyword = UTM term not captured.
+                Source: HubSpot first-touch. Keyword = search query at form submission (campaign name shown as tag).
+                MQL date defines the period window; SQO and Closed Won counts include conversions at any time after.
               </p>
             </div>
           )}

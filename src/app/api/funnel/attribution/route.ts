@@ -11,14 +11,14 @@ interface HsContact {
   properties: Record<string, string | null>;
 }
 
-// Custom properties discovered for this HubSpot portal — replace the standard
-// hs_analytics_source / hs_lifecyclestage_* fields entirely.
+// Custom properties for this HubSpot portal.
 const SEARCH_PROPERTIES = [
-  "became_an_mql_date",                    // custom "MQL Date" (type: date)
-  "mql_source",                            // custom "MQL Source" (enumeration)
-  "mql_source_details_1",                  // custom "MQL Source Details 1" — keyword
-  "mql_source_details_2",                  // custom "MQL Source Details 2" — network/detail
-  "hs_v2_date_entered_salesqualifiedlead", // pipeline "Date entered Sales Qualified Lead"
+  "became_an_mql_date",
+  "mql_source",
+  "mql_source_details_1",
+  "mql_source_details_2",
+  "hs_v2_date_entered_salesqualifiedlead",
+  "hs_v2_date_entered_customer",
 ];
 
 function classifySource(src: string): "paid" | "organic" | "other" {
@@ -26,6 +26,40 @@ function classifySource(src: string): "paid" | "organic" | "other" {
   if (/paid|cpc|ppc|sem|adwords|google ads|bing ads/.test(s)) return "paid";
   if (/organic|seo|search(?! ad)|content|blog|referral|social(?! paid)/.test(s)) return "organic";
   return "other";
+}
+
+// Returns true if the string looks like a campaign/tracking identifier rather
+// than a human search query (snake_case, UUID, pure number, URL, system label).
+function isTrackingIdentifier(s: string): boolean {
+  if (!s) return true;
+  if (/^https?:\/\/|^www\./i.test(s)) return true;                         // URL
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(s)) return true;                  // UUID
+  if (/^\d+$/.test(s)) return true;                                         // pure number
+  if (/_/.test(s) && !/ /.test(s)) return true;                            // snake_case
+  if (/auto.?tagged/i.test(s)) return true;                                 // HubSpot label
+  if (/^[a-z0-9]+(-[a-z0-9]+){3,}$/i.test(s) && s.length > 20) return true; // long kebab-case ID
+  return false;
+}
+
+// Resolves the "real" search keyword and campaign name from the two detail fields.
+// details_1 can be either a campaign name (snake_case) or the keyword itself;
+// details_2 is the complementary field. We prefer the natural-language value as
+// the keyword and the tracking-identifier value as the campaign label.
+function resolveKeywordAndCampaign(
+  d1: string | null,
+  d2: string | null,
+): { keyword: string; campaign: string | null } {
+  const s1 = d1?.trim() || null;
+  const s2 = d2?.trim() || null;
+
+  const s1IsTracking = !s1 || isTrackingIdentifier(s1);
+  const s2IsTracking = !s2 || isTrackingIdentifier(s2);
+
+  if (s1IsTracking && s2IsTracking) return { keyword: "(unknown keyword)", campaign: s1 };
+  if (s1IsTracking && !s2IsTracking) return { keyword: s2!, campaign: s1 };
+  if (!s1IsTracking && s2IsTracking) return { keyword: s1!, campaign: null };
+  // Both look like natural language — prefer d1, include d2 only if different
+  return { keyword: s1!, campaign: s2 !== s1 ? s2 : null };
 }
 
 async function fetchMqlContacts(token: string, from: string, to: string): Promise<HsContact[]> {
@@ -56,7 +90,6 @@ async function fetchMqlContacts(token: string, from: string, to: string): Promis
 
     if (!res.ok) {
       const text = await res.text();
-      // If became_an_mql_date is not filterable, fall back to createdate + client filter
       if (res.status === 400 && text.includes("became_an_mql_date")) {
         return fetchMqlContactsViaCreatedate(token, from, to);
       }
@@ -72,13 +105,11 @@ async function fetchMqlContacts(token: string, from: string, to: string): Promis
   return all;
 }
 
-// Fallback: filter by createdate with 18-month lookback, then filter client-side
-// on became_an_mql_date if the property isn't filterable via search.
 async function fetchMqlContactsViaCreatedate(
   token: string, from: string, to: string,
 ): Promise<HsContact[]> {
-  const toMs      = new Date(to   + "T23:59:59").getTime();
-  const fromMs    = new Date(from + "T00:00:00").getTime();
+  const toMs       = new Date(to   + "T23:59:59").getTime();
+  const fromMs     = new Date(from + "T00:00:00").getTime();
   const lookbackMs = fromMs - 18 * 30 * 24 * 60 * 60 * 1000;
 
   const all: HsContact[] = [];
@@ -114,7 +145,6 @@ async function fetchMqlContactsViaCreatedate(
 
   } while (after && all.length < 5000);
 
-  // Client-side filter: only contacts whose MQL date is in [from, to]
   return all.filter(c => {
     const d = c.properties.became_an_mql_date;
     if (!d) return false;
@@ -142,61 +172,77 @@ export async function GET(req: Request) {
     const contacts = await fetchMqlContacts(token, from, to);
 
     type SourceGroup = {
-      source:  string;
-      label:   string;
-      type:    "paid" | "organic" | "other";
-      mqls:    number;
-      sqos:    number;
-      detail:  Map<string, number>;
+      source:     string;
+      label:      string;
+      type:       "paid" | "organic" | "other";
+      mqls:       number;
+      sqos:       number;
+      closedWon:  number;
+      detail:     Map<string, number>;
     };
 
     const groups   = new Map<string, SourceGroup>();
-    type KwGroup   = { keyword: string; network: string | null; mqls: number; sqos: number };
+
+    type KwGroup = {
+      keyword:   string;
+      campaign:  string | null;
+      mqls:      number;
+      sqos:      number;
+      closedWon: number;
+    };
     const kwGroups = new Map<string, KwGroup>();
 
     for (const c of contacts) {
-      const p       = c.properties;
-      const src     = p.mql_source ?? "UNKNOWN";
-      const srcType = classifySource(src);
-      const mqlDate = p.became_an_mql_date;
-      const sqoDate = p.hs_v2_date_entered_salesqualifiedlead;
-      const isSqo   = sqoDate != null && mqlDate != null && new Date(sqoDate) > new Date(mqlDate);
+      const p        = c.properties;
+      const src      = p.mql_source ?? "UNKNOWN";
+      const srcType  = classifySource(src);
+      const mqlDate  = p.became_an_mql_date;
+      const sqoDate  = p.hs_v2_date_entered_salesqualifiedlead;
+      const cwDate   = p.hs_v2_date_entered_customer;
+      const isSqo    = sqoDate != null && mqlDate != null && new Date(sqoDate) >= new Date(mqlDate);
+      const isCw     = cwDate  != null && mqlDate != null && new Date(cwDate)  >= new Date(mqlDate);
 
       if (!groups.has(src)) {
-        groups.set(src, { source: src, label: src || "Unknown", type: srcType, mqls: 0, sqos: 0, detail: new Map() });
+        groups.set(src, {
+          source: src, label: src || "Unknown", type: srcType,
+          mqls: 0, sqos: 0, closedWon: 0, detail: new Map(),
+        });
       }
       const g = groups.get(src)!;
       g.mqls++;
       if (isSqo) g.sqos++;
+      if (isCw)  g.closedWon++;
 
-      // topDetail: keyword (details_1) per source
-      const detailKey = p.mql_source_details_1?.trim() || null;
+      const { keyword, campaign } = resolveKeywordAndCampaign(
+        p.mql_source_details_1 ?? null,
+        p.mql_source_details_2 ?? null,
+      );
+      const detailKey = keyword !== "(unknown keyword)" ? keyword : null;
       if (detailKey) g.detail.set(detailKey, (g.detail.get(detailKey) ?? 0) + 1);
 
-      // Keyword-level breakdown for paid contacts
       if (srcType === "paid") {
-        const raw     = p.mql_source_details_1?.trim() || null;
-        const keyword = raw && raw !== "(not provided)" && raw !== "not provided" ? raw : "(unknown keyword)";
-        const network = p.mql_source_details_2?.trim() || null;
         if (!kwGroups.has(keyword)) {
-          kwGroups.set(keyword, { keyword, network, mqls: 0, sqos: 0 });
+          kwGroups.set(keyword, { keyword, campaign, mqls: 0, sqos: 0, closedWon: 0 });
         }
         const kw = kwGroups.get(keyword)!;
         kw.mqls++;
         if (isSqo) kw.sqos++;
+        if (isCw)  kw.closedWon++;
       }
     }
 
     const rows = [...groups.values()]
       .sort((a, b) => b.mqls - a.mqls)
       .map(g => ({
-        source:    g.source,
-        label:     g.label,
-        type:      g.type,
-        mqls:      g.mqls,
-        sqos:      g.sqos,
-        convRate:  g.mqls > 0 ? g.sqos / g.mqls : 0,
-        topDetail: [...g.detail.entries()]
+        source:        g.source,
+        label:         g.label,
+        type:          g.type,
+        mqls:          g.mqls,
+        sqos:          g.sqos,
+        closedWon:     g.closedWon,
+        convRate:      g.mqls > 0 ? g.sqos / g.mqls : 0,
+        closedWonRate: g.mqls > 0 ? g.closedWon / g.mqls : 0,
+        topDetail:     [...g.detail.entries()]
           .sort((a, b) => b[1] - a[1])
           .slice(0, 5)
           .map(([label, count]) => ({ label, count })),
@@ -205,11 +251,13 @@ export async function GET(req: Request) {
     const paidKeywords = [...kwGroups.values()]
       .sort((a, b) => b.mqls - a.mqls)
       .map(kw => ({
-        keyword:  kw.keyword,
-        network:  kw.network,
-        mqls:     kw.mqls,
-        sqos:     kw.sqos,
-        mqlToSqo: kw.mqls > 0 ? kw.sqos / kw.mqls : 0,
+        keyword:      kw.keyword,
+        campaign:     kw.campaign,
+        mqls:         kw.mqls,
+        sqos:         kw.sqos,
+        closedWon:    kw.closedWon,
+        mqlToSqo:     kw.mqls > 0 ? kw.sqos  / kw.mqls : 0,
+        mqlToCw:      kw.mqls > 0 ? kw.closedWon / kw.mqls : 0,
       }));
 
     return NextResponse.json({ from, to, total: contacts.length, rows, paidKeywords });
