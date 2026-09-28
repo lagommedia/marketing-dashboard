@@ -47,8 +47,7 @@ async function fetchMqlContacts(token: string, fromMs: number, toMs: number): Pr
         },
       ],
       properties,
-      limit: 200,
-      sorts: [],
+      limit: 100,
     };
     if (after) body.after = after;
 
