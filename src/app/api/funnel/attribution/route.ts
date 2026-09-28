@@ -28,16 +28,25 @@ function classifySource(src: string): "paid" | "organic" | "other" {
   return "other";
 }
 
-// Returns true if the string looks like a campaign/tracking identifier rather
-// than a human search query (snake_case, UUID, pure number, URL, system label).
+// Known source/platform names that appear in details fields but are not search keywords.
+const PLATFORM_NAMES = new Set([
+  "linkedin", "facebook", "instagram", "twitter", "x", "youtube",
+  "tiktok", "pinterest", "snapchat", "reddit", "quora", "google",
+  "bing", "yelp", "direct", "email", "offline",
+]);
+
+// Returns true if the string looks like a campaign/tracking identifier or
+// system label rather than a human search query.
 function isTrackingIdentifier(s: string): boolean {
   if (!s) return true;
-  if (/^https?:\/\/|^www\./i.test(s)) return true;                         // URL
-  if (/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(s)) return true;                  // UUID
-  if (/^\d+$/.test(s)) return true;                                         // pure number
-  if (/_/.test(s) && !/ /.test(s)) return true;                            // snake_case
-  if (/auto.?tagged/i.test(s)) return true;                                 // HubSpot label
+  if (/^https?:\/\/|^www\./i.test(s)) return true;                           // URL
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(s)) return true;                    // UUID
+  if (/^\d+$/.test(s)) return true;                                           // pure number
+  if (/_/.test(s) && !/ /.test(s)) return true;                              // snake_case
+  if (/auto.?tagged/i.test(s)) return true;                                   // HubSpot label
+  if (/^unknown\b/i.test(s)) return true;                                     // "Unknown keywords (SSL)" etc.
   if (/^[a-z0-9]+(-[a-z0-9]+){3,}$/i.test(s) && s.length > 20) return true; // long kebab-case ID
+  if (PLATFORM_NAMES.has(s.toLowerCase())) return true;                       // source/platform name
   return false;
 }
 
@@ -221,10 +230,12 @@ export async function GET(req: Request) {
       if (detailKey) g.detail.set(detailKey, (g.detail.get(detailKey) ?? 0) + 1);
 
       if (srcType === "paid") {
-        if (!kwGroups.has(keyword)) {
-          kwGroups.set(keyword, { keyword, campaign, mqls: 0, sqos: 0, closedWon: 0 });
+        // Normalize to lowercase so "zeni" and "Zeni" are the same bucket.
+        const kwKey = keyword.toLowerCase();
+        if (!kwGroups.has(kwKey)) {
+          kwGroups.set(kwKey, { keyword: kwKey, campaign, mqls: 0, sqos: 0, closedWon: 0 });
         }
-        const kw = kwGroups.get(keyword)!;
+        const kw = kwGroups.get(kwKey)!;
         kw.mqls++;
         if (isSqo) kw.sqos++;
         if (isCw)  kw.closedWon++;
@@ -249,7 +260,12 @@ export async function GET(req: Request) {
       }));
 
     const paidKeywords = [...kwGroups.values()]
-      .sort((a, b) => b.mqls - a.mqls)
+      .sort((a, b) => {
+        const aUnk = a.keyword === "(unknown keyword)";
+        const bUnk = b.keyword === "(unknown keyword)";
+        if (aUnk !== bUnk) return aUnk ? 1 : -1;
+        return b.mqls - a.mqls;
+      })
       .map(kw => ({
         keyword:      kw.keyword,
         campaign:     kw.campaign,
