@@ -895,9 +895,6 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
         </div>
       )}
 
-      {/* MQL Source Attribution */}
-      <AttributionPanel from={from} to={to} />
-
       {/* Paid Search Keyword Funnel */}
       <PaidKeywordsPanel from={from} to={to} />
 

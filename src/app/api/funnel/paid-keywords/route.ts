@@ -24,7 +24,7 @@ async function fetchPaidSearchContacts(
     "hs_analytics_source_data_2",
     "hs_lifecyclestage_marketingqualifiedlead_date",
     "hs_lifecyclestage_salesqualifiedlead_date",
-    "hs_lifecyclestage_customer_date",
+    "hs_lifecyclestage",
   ];
 
   do {
@@ -34,7 +34,6 @@ async function fetchPaidSearchContacts(
           filters: [
             { propertyName: "hs_lifecyclestage_marketingqualifiedlead_date", operator: "GTE", value: String(fromMs) },
             { propertyName: "hs_lifecyclestage_marketingqualifiedlead_date", operator: "LTE", value: String(toMs)   },
-            { propertyName: "hs_analytics_source", operator: "EQ", value: "PAID_SEARCH" },
           ],
         },
       ],
@@ -97,17 +96,20 @@ export async function GET(req: Request) {
     for (const c of contacts) {
       const p = c.properties;
 
+      // Only process paid search contacts (filter server-side date range, source client-side)
+      if (p.hs_analytics_source !== "PAID_SEARCH") continue;
+
       // hs_analytics_source_data_2 = keyword for paid search
       const raw     = p.hs_analytics_source_data_2?.trim() || null;
       const keyword = raw && raw !== "(not provided)" && raw !== "not provided" ? raw : "(unknown keyword)";
       const network = p.hs_analytics_source_data_1?.trim() || null;
 
-      const mqlDate      = p.hs_lifecyclestage_marketingqualifiedlead_date;
-      const sqoDate      = p.hs_lifecyclestage_salesqualifiedlead_date;
-      const customerDate = p.hs_lifecyclestage_customer_date;
+      const mqlDate = p.hs_lifecyclestage_marketingqualifiedlead_date;
+      const sqoDate = p.hs_lifecyclestage_salesqualifiedlead_date;
 
-      const isSqo      = sqoDate      != null && mqlDate != null && new Date(sqoDate)      >= new Date(mqlDate);
-      const isCustomer = customerDate != null && mqlDate != null && new Date(customerDate) >= new Date(mqlDate);
+      const isSqo      = sqoDate != null && mqlDate != null && new Date(sqoDate) >= new Date(mqlDate);
+      // Use current lifecycle stage as a proxy for closed/won status
+      const isCustomer = p.hs_lifecyclestage === "customer" || p.hs_lifecyclestage === "evangelist";
 
       if (!groups.has(keyword)) {
         groups.set(keyword, { keyword, network, mqls: 0, sqos: 0, customers: 0 });
@@ -130,7 +132,8 @@ export async function GET(req: Request) {
         sqoToCustomer:  g.sqos > 0 ? g.customers / g.sqos  : 0,
       }));
 
-    return NextResponse.json({ from, to, total: contacts.length, rows });
+    const paidTotal = contacts.filter(c => c.properties.hs_analytics_source === "PAID_SEARCH").length;
+    return NextResponse.json({ from, to, total: paidTotal, rows });
   } catch (err) {
     console.error("[funnel/paid-keywords]", err);
     return NextResponse.json(
