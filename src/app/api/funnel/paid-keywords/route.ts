@@ -24,7 +24,6 @@ async function fetchPaidSearchContacts(
     "hs_analytics_source_data_2",
     "hs_lifecyclestage_marketingqualifiedlead_date",
     "hs_lifecyclestage_salesqualifiedlead_date",
-    "hs_lifecyclestage",
   ];
 
   do {
@@ -84,11 +83,10 @@ export async function GET(req: Request) {
     const contacts = await fetchPaidSearchContacts(token, fromMs, toMs);
 
     type KeywordRow = {
-      keyword:   string;
-      network:   string | null; // hs_analytics_source_data_1 (e.g. "google", "bing")
-      mqls:      number;
-      sqos:      number;
-      customers: number;
+      keyword: string;
+      network: string | null;
+      mqls:    number;
+      sqos:    number;
     };
 
     const groups = new Map<string, KeywordRow>();
@@ -96,7 +94,7 @@ export async function GET(req: Request) {
     for (const c of contacts) {
       const p = c.properties;
 
-      // Only process paid search contacts (filter server-side date range, source client-side)
+      // Filter to paid search contacts client-side (date range filtered server-side)
       if (p.hs_analytics_source !== "PAID_SEARCH") continue;
 
       // hs_analytics_source_data_2 = keyword for paid search
@@ -106,30 +104,24 @@ export async function GET(req: Request) {
 
       const mqlDate = p.hs_lifecyclestage_marketingqualifiedlead_date;
       const sqoDate = p.hs_lifecyclestage_salesqualifiedlead_date;
-
-      const isSqo      = sqoDate != null && mqlDate != null && new Date(sqoDate) >= new Date(mqlDate);
-      // Use current lifecycle stage as a proxy for closed/won status
-      const isCustomer = p.hs_lifecyclestage === "customer" || p.hs_lifecyclestage === "evangelist";
+      const isSqo   = sqoDate != null && mqlDate != null && new Date(sqoDate) >= new Date(mqlDate);
 
       if (!groups.has(keyword)) {
-        groups.set(keyword, { keyword, network, mqls: 0, sqos: 0, customers: 0 });
+        groups.set(keyword, { keyword, network, mqls: 0, sqos: 0 });
       }
       const g = groups.get(keyword)!;
       g.mqls++;
-      if (isSqo)      g.sqos++;
-      if (isCustomer) g.customers++;
+      if (isSqo) g.sqos++;
     }
 
     const rows = [...groups.values()]
       .sort((a, b) => b.mqls - a.mqls)
       .map(g => ({
-        keyword:        g.keyword,
-        network:        g.network,
-        mqls:           g.mqls,
-        sqos:           g.sqos,
-        customers:      g.customers,
-        mqlToSqo:       g.mqls > 0 ? g.sqos      / g.mqls : 0,
-        sqoToCustomer:  g.sqos > 0 ? g.customers / g.sqos  : 0,
+        keyword:  g.keyword,
+        network:  g.network,
+        mqls:     g.mqls,
+        sqos:     g.sqos,
+        mqlToSqo: g.mqls > 0 ? g.sqos / g.mqls : 0,
       }));
 
     const paidTotal = contacts.filter(c => c.properties.hs_analytics_source === "PAID_SEARCH").length;

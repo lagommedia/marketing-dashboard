@@ -248,13 +248,11 @@ function AttributionPanel({ from, to }: { from: string; to: string }) {
 // ---------------------------------------------------------------------------
 
 interface PaidKeywordRow {
-  keyword:       string;
-  network:       string | null;
-  mqls:          number;
-  sqos:          number;
-  customers:     number;
-  mqlToSqo:      number;
-  sqoToCustomer: number;
+  keyword:  string;
+  network:  string | null;
+  mqls:     number;
+  sqos:     number;
+  mqlToSqo: number;
 }
 
 interface PaidKeywordData {
@@ -329,18 +327,16 @@ function PaidKeywordsPanel({ from, to }: { from: string; to: string }) {
             <div className="space-y-4">
               <div className="rounded-lg border border-slate-100 overflow-hidden">
                 {/* Header */}
-                <div className="grid grid-cols-[1fr_auto_auto_auto_auto_auto] bg-slate-50 px-4 py-2 text-[11px] font-semibold text-slate-400 uppercase tracking-wide gap-x-3">
+                <div className="grid grid-cols-[1fr_auto_auto_auto] bg-slate-50 px-4 py-2 text-[11px] font-semibold text-slate-400 uppercase tracking-wide gap-x-3">
                   <span>Keyword</span>
                   <span className="w-14 text-right">MQLs</span>
                   <span className="w-14 text-right">SQOs</span>
-                  <span className="w-16 text-right">Customers</span>
                   <span className="w-20 text-right">MQL→SQO</span>
-                  <span className="w-20 text-right">SQO→Close</span>
                 </div>
 
                 {data.rows.map((row, i) => (
                   <div key={i} className="border-t border-slate-100">
-                    <div className="grid grid-cols-[1fr_auto_auto_auto_auto_auto] items-center px-4 py-2.5 gap-x-3 hover:bg-slate-50 transition-colors">
+                    <div className="grid grid-cols-[1fr_auto_auto_auto] items-center px-4 py-2.5 gap-x-3 hover:bg-slate-50 transition-colors">
                       {/* Keyword + network badge + volume bar */}
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
@@ -367,12 +363,8 @@ function PaidKeywordsPanel({ from, to }: { from: string; to: string }) {
 
                       <span className="w-14 text-right text-sm font-semibold tabular-nums text-slate-700">{row.mqls}</span>
                       <span className="w-14 text-right text-sm tabular-nums text-slate-500">{row.sqos}</span>
-                      <span className="w-16 text-right text-sm tabular-nums text-emerald-700 font-medium">{row.customers || "—"}</span>
                       <span className={cn("w-20 text-right text-xs font-semibold tabular-nums", rateColor(row.mqlToSqo))}>
                         {fmtRate(row.mqlToSqo)}
-                      </span>
-                      <span className={cn("w-20 text-right text-xs font-semibold tabular-nums", rateColor(row.sqoToCustomer))}>
-                        {row.sqos > 0 ? fmtRate(row.sqoToCustomer) : "—"}
                       </span>
                     </div>
                   </div>
