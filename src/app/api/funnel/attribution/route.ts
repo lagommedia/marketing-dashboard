@@ -108,6 +108,10 @@ export async function GET(req: Request) {
 
     const groups = new Map<string, SourceGroup>();
 
+    // Paid keyword breakdown: data_2 = search keyword, data_1 = network (google/bing)
+    type KwGroup = { keyword: string; network: string | null; mqls: number; sqos: number };
+    const kwGroups = new Map<string, KwGroup>();
+
     for (const c of contacts) {
       const p      = c.properties;
       const src    = p.hs_analytics_source ?? "UNKNOWN";
@@ -127,6 +131,19 @@ export async function GET(req: Request) {
       g.mqls++;
       if (isSqo) g.sqos++;
       if (detail) g.detail.set(detail, (g.detail.get(detail) ?? 0) + 1);
+
+      // Keyword-level breakdown for paid search contacts
+      if (src === "PAID_SEARCH") {
+        const raw     = p.hs_analytics_source_data_2?.trim() || null;
+        const keyword = raw && raw !== "(not provided)" && raw !== "not provided" ? raw : "(unknown keyword)";
+        const network = p.hs_analytics_source_data_1?.trim() || null;
+        if (!kwGroups.has(keyword)) {
+          kwGroups.set(keyword, { keyword, network, mqls: 0, sqos: 0 });
+        }
+        const kw = kwGroups.get(keyword)!;
+        kw.mqls++;
+        if (isSqo) kw.sqos++;
+      }
     }
 
     // Serialize — sort by MQL count desc
@@ -139,14 +156,23 @@ export async function GET(req: Request) {
         mqls:        g.mqls,
         sqos:        g.sqos,
         convRate:    g.mqls > 0 ? g.sqos / g.mqls : 0,
-        // top 5 detail values
         topDetail:   [...g.detail.entries()]
           .sort((a, b) => b[1] - a[1])
           .slice(0, 5)
           .map(([label, count]) => ({ label, count })),
       }));
 
-    return NextResponse.json({ from, to, total: contacts.length, rows });
+    const paidKeywords = [...kwGroups.values()]
+      .sort((a, b) => b.mqls - a.mqls)
+      .map(kw => ({
+        keyword:  kw.keyword,
+        network:  kw.network,
+        mqls:     kw.mqls,
+        sqos:     kw.sqos,
+        mqlToSqo: kw.mqls > 0 ? kw.sqos / kw.mqls : 0,
+      }));
+
+    return NextResponse.json({ from, to, total: contacts.length, rows, paidKeywords });
   } catch (err) {
     console.error("[funnel/attribution]", err);
     return NextResponse.json(

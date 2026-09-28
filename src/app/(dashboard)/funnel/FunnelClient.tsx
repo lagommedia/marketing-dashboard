@@ -256,8 +256,8 @@ interface PaidKeywordRow {
 }
 
 interface PaidKeywordData {
-  total: number;
-  rows:  PaidKeywordRow[];
+  total:        number;
+  paidKeywords: PaidKeywordRow[];
 }
 
 function PaidKeywordsPanel({ from, to }: { from: string; to: string }) {
@@ -270,7 +270,8 @@ function PaidKeywordsPanel({ from, to }: { from: string; to: string }) {
     if (!open || data) return;
     setLoading(true);
     setError(null);
-    fetch(`/api/funnel/paid-keywords?from=${from}&to=${to}`)
+    // Reuse the attribution endpoint (same HubSpot call) — paidKeywords extracted server-side
+    fetch(`/api/funnel/attribution?from=${from}&to=${to}`)
       .then(r => r.json())
       .then((d: PaidKeywordData & { error?: string }) => {
         if (d.error) { setError(d.error); return; }
@@ -282,7 +283,7 @@ function PaidKeywordsPanel({ from, to }: { from: string; to: string }) {
 
   useEffect(() => { setData(null); }, [from, to]);
 
-  const maxMqls = Math.max(...(data?.rows.map(r => r.mqls) ?? [1]), 1);
+  const maxMqls = Math.max(...(data?.paidKeywords.map(r => r.mqls) ?? [1]), 1);
 
   const fmtRate = (n: number) => n > 0 ? (n * 100).toFixed(0) + "%" : "—";
   const rateColor = (n: number) =>
@@ -299,7 +300,7 @@ function PaidKeywordsPanel({ from, to }: { from: string; to: string }) {
           <span className="text-sm font-semibold text-slate-700">Paid Search Keywords</span>
           {data && (
             <span className="text-xs text-slate-400 font-normal ml-1">
-              {data.total} paid MQLs · {data.rows.filter(r => r.keyword !== "(unknown keyword)").length} keywords
+              {data.paidKeywords.reduce((s, r) => s + r.mqls, 0)} paid MQLs · {data.paidKeywords.filter(r => r.keyword !== "(unknown keyword)").length} keywords
             </span>
           )}
         </div>
@@ -319,11 +320,11 @@ function PaidKeywordsPanel({ from, to }: { from: string; to: string }) {
             <div className="text-sm text-red-500 bg-red-50 rounded-lg p-3">{error}</div>
           )}
 
-          {data && data.rows.length === 0 && (
+          {data && data.paidKeywords.length === 0 && (
             <p className="text-sm text-slate-400 py-4">No paid search MQLs found for this date range.</p>
           )}
 
-          {data && data.rows.length > 0 && (
+          {data && data.paidKeywords.length > 0 && (
             <div className="space-y-4">
               <div className="rounded-lg border border-slate-100 overflow-hidden">
                 {/* Header */}
@@ -334,7 +335,7 @@ function PaidKeywordsPanel({ from, to }: { from: string; to: string }) {
                   <span className="w-20 text-right">MQL→SQO</span>
                 </div>
 
-                {data.rows.map((row, i) => (
+                {data.paidKeywords.map((row, i) => (
                   <div key={i} className="border-t border-slate-100">
                     <div className="grid grid-cols-[1fr_auto_auto_auto] items-center px-4 py-2.5 gap-x-3 hover:bg-slate-50 transition-colors">
                       {/* Keyword + network badge + volume bar */}
