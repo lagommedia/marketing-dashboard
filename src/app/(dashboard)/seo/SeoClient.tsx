@@ -72,6 +72,51 @@ interface AiVisibilityData {
 }
 
 // ---------------------------------------------------------------------------
+// HubSpot AEO types
+// ---------------------------------------------------------------------------
+
+interface HsAeoPrompt {
+  id: string;
+  prompt: string;
+  buyingJourneyPhase: string;
+  language: string;
+  byModel: Record<string, { ownedMentions: number; competitorMentions: number; totalCitations: number; completedAt: string }>;
+  ownedMentions: number;
+  competitorMentions: number;
+  totalCitations: number;
+  visibility: boolean;
+}
+
+interface HsAeoRecommendation {
+  id: string;
+  priority: string;
+  status: string;
+  actionCategory: string;
+  contentTopic: string;
+  recommendationSummary: string;
+  domain: string | null;
+  url: string | null;
+}
+
+interface HsAeoData {
+  hasData: boolean;
+  summary: {
+    totalPrompts: number;
+    promptsWithData: number;
+    promptsWithMention: number;
+    visibilityRate: number | null;
+    totalCitations: number;
+    ownedCitations: number;
+    competitorCitations: number;
+  };
+  byPhase: Record<string, { total: number; withMention: number }>;
+  byModel: Record<string, { total: number; withMention: number; ownedCitations: number }>;
+  prompts: HsAeoPrompt[];
+  recommendations: HsAeoRecommendation[];
+  error?: string;
+}
+
+// ---------------------------------------------------------------------------
 // GEO types
 // ---------------------------------------------------------------------------
 
@@ -572,6 +617,11 @@ export function SeoClient({ from, to }: { from: string; to: string }) {
   const [aeoSyncMsg, setAeoSyncMsg]         = useState<string | null>(null);
   const [aeoRefreshing, setAeoRefreshing]   = useState(false);
 
+  // HubSpot AEO state
+  const [hsAeo, setHsAeo]               = useState<HsAeoData | null>(null);
+  const [hsAeoLoading, setHsAeoLoading] = useState(false);
+  const [hsAeoExpanded, setHsAeoExpanded] = useState(false);
+
   // AEO pillar URL editing
   const [editingPillarId, setEditingPillarId] = useState<string | null>(null);
   const [pillarUrlDraft, setPillarUrlDraft]   = useState("");
@@ -667,6 +717,17 @@ export function SeoClient({ from, to }: { from: string; to: string }) {
       setAiOverviewChecks(json.checks ?? []);
     } finally {
       setAiOverviewLoading(false);
+    }
+  }, []);
+
+  const loadHsAeo = useCallback(async () => {
+    setHsAeoLoading(true);
+    try {
+      const res  = await fetch("/api/seo/hs-aeo");
+      const json = await res.json();
+      setHsAeo(json);
+    } finally {
+      setHsAeoLoading(false);
     }
   }, []);
 
@@ -892,13 +953,14 @@ export function SeoClient({ from, to }: { from: string; to: string }) {
     if (channel === "aeo") {
       if (!aeoOverview)   loadAeoOverview();
       if (!aeoReadiness)  loadAeoReadiness();
+      if (!hsAeo)         loadHsAeo();
       loadCustomQueries();
       loadAiOverviewChecks();
     }
     if (channel === "geo") {
       loadGeoResults();
     }
-  }, [channel, aeoOverview, aeoReadiness, loadAeoOverview, loadAeoReadiness, loadGeoResults, loadCustomQueries, loadAiOverviewChecks]);
+  }, [channel, aeoOverview, aeoReadiness, hsAeo, loadAeoOverview, loadAeoReadiness, loadHsAeo, loadGeoResults, loadCustomQueries, loadAiOverviewChecks]);
 
   async function handleSync() {
     setSyncing(true);
@@ -1207,6 +1269,170 @@ export function SeoClient({ from, to }: { from: string; to: string }) {
       {/* ── AEO view ── */}
       {channel === "aeo" && (
         <div className="space-y-8">
+
+          {/* ── HubSpot AI Visibility ── */}
+          <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-indigo-500" />
+                <h2 className="text-sm font-semibold text-slate-700">HubSpot AI Visibility</h2>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">BETA</span>
+              </div>
+              <button
+                onClick={() => setHsAeoExpanded(v => !v)}
+                className="text-xs text-slate-400 hover:text-slate-600 flex items-center gap-1"
+              >
+                {hsAeoExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                {hsAeoExpanded ? "Collapse" : "Expand"}
+              </button>
+            </div>
+
+            {hsAeoLoading && (
+              <div className="px-5 py-8 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                Loading HubSpot AEO data…
+              </div>
+            )}
+
+            {!hsAeoLoading && hsAeo?.error && (
+              <div className="px-5 py-4 text-xs text-rose-500">{hsAeo.error}</div>
+            )}
+
+            {!hsAeoLoading && hsAeo && !hsAeo.error && (
+              <div>
+                {/* Summary KPIs */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-y sm:divide-y-0 divide-slate-100">
+                  <div className="px-5 py-4">
+                    <p className="text-xs text-slate-400 mb-1">Brand Visibility</p>
+                    <p className="text-2xl font-bold text-slate-900">
+                      {hsAeo.summary.visibilityRate != null ? `${hsAeo.summary.visibilityRate}%` : "—"}
+                    </p>
+                    <p className="text-[11px] text-slate-400 mt-0.5">of prompts w/ mention</p>
+                  </div>
+                  <div className="px-5 py-4">
+                    <p className="text-xs text-slate-400 mb-1">Tracked Prompts</p>
+                    <p className="text-2xl font-bold text-slate-900">{hsAeo.summary.totalPrompts}</p>
+                    <p className="text-[11px] text-slate-400 mt-0.5">{hsAeo.summary.promptsWithData} with data</p>
+                  </div>
+                  <div className="px-5 py-4">
+                    <p className="text-xs text-slate-400 mb-1">Owned Citations</p>
+                    <p className="text-2xl font-bold text-emerald-600">{hsAeo.summary.ownedCitations}</p>
+                    <p className="text-[11px] text-slate-400 mt-0.5">of {hsAeo.summary.totalCitations} total</p>
+                  </div>
+                  <div className="px-5 py-4">
+                    <p className="text-xs text-slate-400 mb-1">Competitor Citations</p>
+                    <p className="text-2xl font-bold text-rose-500">{hsAeo.summary.competitorCitations}</p>
+                    <p className="text-[11px] text-slate-400 mt-0.5">across all prompts</p>
+                  </div>
+                </div>
+
+                {/* By AI Model */}
+                {Object.keys(hsAeo.byModel).length > 0 && (
+                  <div className="px-5 py-4 border-t border-slate-100">
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">By AI Model</p>
+                    <div className="flex flex-wrap gap-2">
+                      {Object.entries(hsAeo.byModel)
+                        .sort((a, b) => b[1].total - a[1].total)
+                        .map(([model, data]) => {
+                          const rate = data.total > 0 ? Math.round((data.withMention / data.total) * 100) : 0;
+                          return (
+                            <div key={model} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-slate-50">
+                              <Bot className="w-3.5 h-3.5 text-indigo-400" />
+                              <div>
+                                <p className="text-xs font-semibold text-slate-700">{model.replace(/_/g, " ")}</p>
+                                <p className="text-[11px] text-slate-400">{rate}% · {data.withMention}/{data.total} prompts</p>
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Prompt table (expanded) */}
+                {hsAeoExpanded && hsAeo.prompts.length > 0 && (
+                  <div className="border-t border-slate-100">
+                    <div className="px-5 py-3 bg-slate-50 border-b border-slate-100">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Prompt Breakdown</p>
+                    </div>
+                    <div className="divide-y divide-slate-100 max-h-96 overflow-y-auto">
+                      {hsAeo.prompts
+                        .sort((a, b) => Number(b.visibility) - Number(a.visibility) || b.ownedMentions - a.ownedMentions)
+                        .map(p => (
+                          <div key={p.id} className="px-5 py-3 flex items-start gap-3">
+                            <div className={cn("mt-0.5 w-2 h-2 rounded-full shrink-0",
+                              p.visibility ? "bg-emerald-500" : Object.keys(p.byModel).length === 0 ? "bg-slate-300" : "bg-rose-400"
+                            )} />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs text-slate-700 leading-snug">{p.prompt}</p>
+                              <div className="flex items-center gap-3 mt-1">
+                                <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-medium",
+                                  p.buyingJourneyPhase === "AWARENESS"    ? "bg-blue-50 text-blue-600" :
+                                  p.buyingJourneyPhase === "CONSIDERATION" ? "bg-purple-50 text-purple-600" :
+                                  p.buyingJourneyPhase === "EVALUATION"   ? "bg-amber-50 text-amber-600" :
+                                  "bg-emerald-50 text-emerald-600"
+                                )}>{p.buyingJourneyPhase}</span>
+                                {Object.keys(p.byModel).length > 0 && (
+                                  <span className="text-[10px] text-slate-400">
+                                    {p.ownedMentions} owned · {p.competitorMentions} competitor · {p.totalCitations} total citations
+                                  </span>
+                                )}
+                                {Object.keys(p.byModel).length === 0 && (
+                                  <span className="text-[10px] text-slate-300">No run data yet</span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="shrink-0 flex flex-col items-end gap-1">
+                              {Object.entries(p.byModel).map(([model, data]) => (
+                                <div key={model} className="flex items-center gap-1">
+                                  <span className="text-[10px] text-slate-400">{model.split("_")[0]}</span>
+                                  <span className={cn("text-[10px] font-semibold", data.ownedMentions > 0 ? "text-emerald-600" : "text-slate-300")}>
+                                    {data.ownedMentions > 0 ? "✓" : "✗"}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Recommendations */}
+                {hsAeoExpanded && hsAeo.recommendations.length > 0 && (
+                  <div className="border-t border-slate-100">
+                    <div className="px-5 py-3 bg-slate-50 border-b border-slate-100">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Content Recommendations</p>
+                    </div>
+                    <div className="divide-y divide-slate-100">
+                      {hsAeo.recommendations.map(r => (
+                        <div key={r.id} className="px-5 py-3">
+                          <div className="flex items-start gap-2">
+                            <span className={cn("mt-0.5 text-[10px] px-1.5 py-0.5 rounded font-semibold shrink-0",
+                              r.priority === "HIGH"     ? "bg-rose-100 text-rose-700" :
+                              r.priority === "CRITICAL" ? "bg-red-100 text-red-700" :
+                              r.priority === "MEDIUM"   ? "bg-amber-100 text-amber-700" :
+                              "bg-slate-100 text-slate-500"
+                            )}>{r.priority}</span>
+                            <div className="min-w-0">
+                              <p className="text-xs font-medium text-slate-700">{r.actionCategory} · {r.contentTopic.slice(0, 100)}{r.contentTopic.length > 100 ? "…" : ""}</p>
+                              <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">{r.recommendationSummary.slice(0, 200)}{r.recommendationSummary.length > 200 ? "…" : ""}</p>
+                              {r.url && (
+                                <a href={r.url} target="_blank" rel="noopener noreferrer"
+                                   className="text-[10px] text-indigo-500 hover:underline mt-1 block truncate">
+                                  {r.domain ?? r.url}
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
           {/* ── Layer 2: AEO Content Readiness Score ── */}
           <div>
