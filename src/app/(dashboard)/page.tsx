@@ -702,9 +702,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       {/* Funnel metrics grid */}
       <div>
         <h2 className="text-sm font-semibold text-slate-700 mb-3">Funnel Performance</h2>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          <TrendableMetricCard label="Impressions" value={formatNumber(metrics.impressions, true)} metric="impressions" from={fromStr} to={toStr} channel={channel} format="number" />
-          <TrendableMetricCard label="Clicks"      value={formatNumber(metrics.clicks, true)}      metric="clicks"      from={fromStr} to={toStr} channel={channel} format="number" />
+        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <TrendableMetricCard label="Leads"       value={formatNumber(metrics.leads, true)}       metric="leads"       from={fromStr} to={toStr} channel={channel} format="number" />
           <TrendableMetricCard label="MQLs"        value={formatNumber(metrics.mqls, true)}        metric="mqls"        from={fromStr} to={toStr} channel={channel} format="number" pace={pacing.mqls} />
           <TrendableMetricCard label="SQOs"        value={formatNumber(metrics.sqos, true)}        metric="sqos"        from={fromStr} to={toStr} channel={channel} format="number" pace={pacing.sqos} />

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { RefreshCw, TrendingUp, MousePointerClick, Eye, Crosshair, ChevronDown, ChevronUp, Star, Search, Bot, Globe, Plus, Pencil, Trash2, Play, ExternalLink, BarChart2, Sparkles, Users, FileText } from "lucide-react";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { cn } from "@/lib/utils";
 import { KEYWORD_PILLARS } from "@/lib/seo-pillars";
 
@@ -110,7 +111,9 @@ interface HsAeoData {
     competitorCitations: number;
   };
   byPhase: Record<string, { total: number; withMention: number }>;
-  byModel: Record<string, { total: number; withMention: number; ownedCitations: number }>;
+  byModel: Record<string, { total: number; withMention: number; visibilityRate: number }>;
+  weeklySeries: Record<string, number | string>[];
+  allModels: string[];
   prompts: HsAeoPrompt[];
   recommendations: HsAeoRecommendation[];
   error?: string;
@@ -621,6 +624,7 @@ export function SeoClient({ from, to }: { from: string; to: string }) {
   const [hsAeo, setHsAeo]               = useState<HsAeoData | null>(null);
   const [hsAeoLoading, setHsAeoLoading] = useState(false);
   const [hsAeoExpanded, setHsAeoExpanded] = useState(false);
+  const [hsAeoTab, setHsAeoTab]         = useState<"brand" | "competitor">("brand");
 
   // AEO pillar URL editing
   const [editingPillarId, setEditingPillarId] = useState<string | null>(null);
@@ -1300,52 +1304,187 @@ export function SeoClient({ from, to }: { from: string; to: string }) {
 
             {!hsAeoLoading && hsAeo && !hsAeo.error && (
               <div>
-                {/* Summary KPIs */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-y sm:divide-y-0 divide-slate-100">
-                  <div className="px-5 py-4">
-                    <p className="text-xs text-slate-400 mb-1">Brand Visibility</p>
-                    <p className="text-2xl font-bold text-slate-900">
-                      {hsAeo.summary.visibilityRate != null ? `${hsAeo.summary.visibilityRate}%` : "—"}
-                    </p>
-                    <p className="text-[11px] text-slate-400 mt-0.5">of prompts w/ mention</p>
-                  </div>
-                  <div className="px-5 py-4">
-                    <p className="text-xs text-slate-400 mb-1">Tracked Prompts</p>
-                    <p className="text-2xl font-bold text-slate-900">{hsAeo.summary.totalPrompts}</p>
-                    <p className="text-[11px] text-slate-400 mt-0.5">{hsAeo.summary.promptsWithData} with data</p>
-                  </div>
-                  <div className="px-5 py-4">
-                    <p className="text-xs text-slate-400 mb-1">Owned Citations</p>
-                    <p className="text-2xl font-bold text-emerald-600">{hsAeo.summary.ownedCitations}</p>
-                    <p className="text-[11px] text-slate-400 mt-0.5">of {hsAeo.summary.totalCitations} total</p>
-                  </div>
-                  <div className="px-5 py-4">
-                    <p className="text-xs text-slate-400 mb-1">Competitor Citations</p>
-                    <p className="text-2xl font-bold text-rose-500">{hsAeo.summary.competitorCitations}</p>
-                    <p className="text-[11px] text-slate-400 mt-0.5">across all prompts</p>
-                  </div>
+                {/* Tab bar */}
+                <div className="flex border-b border-slate-100">
+                  {(["brand", "competitor"] as const).map(tab => (
+                    <button
+                      key={tab}
+                      onClick={() => setHsAeoTab(tab)}
+                      className={cn(
+                        "px-5 py-3 text-xs font-semibold border-b-2 -mb-px transition-colors",
+                        hsAeoTab === tab
+                          ? "border-indigo-500 text-indigo-600"
+                          : "border-transparent text-slate-400 hover:text-slate-600"
+                      )}
+                    >
+                      {tab === "brand" ? "Brand Visibility" : "Competitor Landscape"}
+                    </button>
+                  ))}
                 </div>
 
-                {/* By AI Model */}
-                {Object.keys(hsAeo.byModel).length > 0 && (
-                  <div className="px-5 py-4 border-t border-slate-100">
-                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">By AI Model</p>
-                    <div className="flex flex-wrap gap-2">
-                      {Object.entries(hsAeo.byModel)
-                        .sort((a, b) => b[1].total - a[1].total)
-                        .map(([model, data]) => {
-                          const rate = data.total > 0 ? Math.round((data.withMention / data.total) * 100) : 0;
+                {/* ── Brand Visibility tab ── */}
+                {hsAeoTab === "brand" && (
+                  <div>
+                    <div className="flex flex-col sm:flex-row gap-0 sm:gap-6 p-5">
+                      {/* SVG Semi-circle gauge */}
+                      <div className="flex flex-col items-center justify-center shrink-0">
+                        {(() => {
+                          const rate = hsAeo.summary.visibilityRate ?? 0;
+                          const r = 70;
+                          const cx = 90;
+                          const cy = 90;
+                          const startAngle = 180;
+                          const endAngle = 0;
+                          const toRad = (deg: number) => (deg * Math.PI) / 180;
+                          const arcX = (deg: number) => cx + r * Math.cos(toRad(deg));
+                          const arcY = (deg: number) => cy + r * Math.sin(toRad(deg));
+                          const filledEnd = 180 - (rate / 100) * 180;
+                          const trackPath = `M ${arcX(startAngle)} ${arcY(startAngle)} A ${r} ${r} 0 0 1 ${arcX(endAngle)} ${arcY(endAngle)}`;
+                          const filledPath = `M ${arcX(startAngle)} ${arcY(startAngle)} A ${r} ${r} 0 ${rate > 50 ? 1 : 0} 1 ${arcX(filledEnd)} ${arcY(filledEnd)}`;
                           return (
-                            <div key={model} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-slate-50">
-                              <Bot className="w-3.5 h-3.5 text-indigo-400" />
-                              <div>
-                                <p className="text-xs font-semibold text-slate-700">{model.replace(/_/g, " ")}</p>
-                                <p className="text-[11px] text-slate-400">{rate}% · {data.withMention}/{data.total} prompts</p>
+                            <div className="relative">
+                              <svg width="180" height="100" viewBox="0 0 180 100">
+                                <path d={trackPath} fill="none" stroke="#e2e8f0" strokeWidth="14" strokeLinecap="round" />
+                                {rate > 0 && (
+                                  <path d={filledPath} fill="none" stroke="#6366f1" strokeWidth="14" strokeLinecap="round" />
+                                )}
+                                <text x={cx} y={cy - 10} textAnchor="middle" className="fill-slate-900" style={{ fontSize: 26, fontWeight: 700, fill: "#0f172a" }}>
+                                  {rate}%
+                                </text>
+                                <text x={cx} y={cy + 12} textAnchor="middle" style={{ fontSize: 10, fill: "#94a3b8" }}>
+                                  Brand Visibility
+                                </text>
+                              </svg>
+                              <div className="flex justify-between text-[10px] text-slate-400 -mt-1 px-1">
+                                <span>0%</span><span>100%</span>
                               </div>
                             </div>
                           );
-                        })}
+                        })()}
+                        <div className="mt-2 text-center">
+                          <p className="text-[11px] text-slate-400">{hsAeo.summary.promptsWithMention} of {hsAeo.summary.promptsWithData} prompts</p>
+                        </div>
+                      </div>
+
+                      {/* By-model breakdown */}
+                      {Object.keys(hsAeo.byModel).length > 0 && (
+                        <div className="flex-1 min-w-0 flex flex-col justify-center gap-2 pt-2 sm:pt-0">
+                          <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">By AI Model</p>
+                          {Object.entries(hsAeo.byModel)
+                            .sort((a, b) => b[1].visibilityRate - a[1].visibilityRate)
+                            .map(([model, data]) => (
+                              <div key={model} className="flex items-center gap-3">
+                                <span className="text-xs text-slate-600 w-28 shrink-0 truncate">{model.replace(/_/g, " ")}</span>
+                                <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                                  <div
+                                    className="h-full bg-indigo-400 rounded-full"
+                                    style={{ width: `${data.visibilityRate}%` }}
+                                  />
+                                </div>
+                                <span className="text-xs font-semibold text-slate-700 w-10 text-right">{data.visibilityRate}%</span>
+                              </div>
+                            ))}
+                        </div>
+                      )}
                     </div>
+
+                    {/* Brand visibility over time line chart */}
+                    {hsAeo.weeklySeries.length > 1 && (
+                      <div className="px-5 pb-5 border-t border-slate-100 pt-4">
+                        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-3">Brand visibility over time</p>
+                        <ResponsiveContainer width="100%" height={180}>
+                          <LineChart data={hsAeo.weeklySeries} margin={{ top: 4, right: 16, bottom: 0, left: -8 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                            <XAxis
+                              dataKey="week"
+                              tick={{ fontSize: 10, fill: "#94a3b8" }}
+                              tickFormatter={(v: string) => {
+                                const d = new Date(v);
+                                return `${d.toLocaleString("default", { month: "short" })} ${d.getDate()}`;
+                              }}
+                            />
+                            <YAxis
+                              tick={{ fontSize: 10, fill: "#94a3b8" }}
+                              domain={[0, 100]}
+                              tickFormatter={(v: number) => `${v}%`}
+                            />
+                            <Tooltip
+                              formatter={(value: unknown, name: unknown) => [`${value}%`, String(name).replace(/_/g, " ")]}
+                              labelFormatter={(label: unknown) => {
+                                const d = new Date(String(label));
+                                return `Week of ${d.toLocaleString("default", { month: "short" })} ${d.getDate()}`;
+                              }}
+                            />
+                            <Legend formatter={(value: string) => value.replace(/_/g, " ")} wrapperStyle={{ fontSize: 10 }} />
+                            {hsAeo.allModels.map((model, i) => {
+                              const colors = ["#6366f1", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"];
+                              return (
+                                <Line
+                                  key={model}
+                                  type="monotone"
+                                  dataKey={model}
+                                  stroke={colors[i % colors.length]}
+                                  strokeWidth={2}
+                                  dot={{ r: 3, fill: colors[i % colors.length] }}
+                                  activeDot={{ r: 5 }}
+                                />
+                              );
+                            })}
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ── Competitor Landscape tab ── */}
+                {hsAeoTab === "competitor" && (
+                  <div className="p-5">
+                    {/* Citation share bar */}
+                    {hsAeo.summary.totalCitations > 0 && (
+                      <div className="mb-5">
+                        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-3">Share of voice (citations)</p>
+                        <div className="flex rounded-full overflow-hidden h-4">
+                          <div
+                            className="bg-indigo-500 flex items-center justify-center text-[9px] text-white font-semibold transition-all"
+                            style={{ width: `${Math.round((hsAeo.summary.ownedCitations / hsAeo.summary.totalCitations) * 100)}%` }}
+                          >
+                            {Math.round((hsAeo.summary.ownedCitations / hsAeo.summary.totalCitations) * 100)}%
+                          </div>
+                          <div
+                            className="bg-rose-300 flex items-center justify-center text-[9px] text-white font-semibold"
+                            style={{ width: `${Math.round((hsAeo.summary.competitorCitations / hsAeo.summary.totalCitations) * 100)}%` }}
+                          >
+                            {Math.round((hsAeo.summary.competitorCitations / hsAeo.summary.totalCitations) * 100)}%
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-4 mt-2">
+                          <div className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-indigo-500 inline-block" /><span className="text-[11px] text-slate-500">Zeni ({hsAeo.summary.ownedCitations} citations)</span></div>
+                          <div className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-rose-300 inline-block" /><span className="text-[11px] text-slate-500">Competitors ({hsAeo.summary.competitorCitations} citations)</span></div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Summary stats */}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
+                      <div className="rounded-lg border border-slate-200 px-4 py-3">
+                        <p className="text-[10px] text-slate-400 mb-0.5">Tracked Prompts</p>
+                        <p className="text-xl font-bold text-slate-900">{hsAeo.summary.totalPrompts}</p>
+                        <p className="text-[10px] text-slate-400">{hsAeo.summary.promptsWithData} with run data</p>
+                      </div>
+                      <div className="rounded-lg border border-slate-200 px-4 py-3">
+                        <p className="text-[10px] text-slate-400 mb-0.5">Owned Citations</p>
+                        <p className="text-xl font-bold text-emerald-600">{hsAeo.summary.ownedCitations}</p>
+                        <p className="text-[10px] text-slate-400">of {hsAeo.summary.totalCitations} total</p>
+                      </div>
+                      <div className="rounded-lg border border-slate-200 px-4 py-3">
+                        <p className="text-[10px] text-slate-400 mb-0.5">Competitor Citations</p>
+                        <p className="text-xl font-bold text-rose-500">{hsAeo.summary.competitorCitations}</p>
+                        <p className="text-[10px] text-slate-400">across all prompts</p>
+                      </div>
+                    </div>
+
+                    <p className="text-[11px] text-slate-400 italic">Named competitor breakdown is not yet available in the HubSpot AEO public beta API.</p>
                   </div>
                 )}
 
