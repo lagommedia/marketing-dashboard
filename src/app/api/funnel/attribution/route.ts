@@ -21,20 +21,24 @@ const SOURCE_META: Record<string, { label: string; type: "paid" | "organic" | "o
 };
 
 interface HsContact {
+  id: string;
   properties: Record<string, string | null>;
 }
+
+// Search-safe properties (no hs_analytics_source_data_* — those are not
+// indexable on this portal and cause a 400 in the search endpoint).
+const SEARCH_PROPERTIES = [
+  "hs_analytics_source",
+  "hs_lifecyclestage_marketingqualifiedlead_date",
+  "hs_lifecyclestage_salesqualifiedlead_date",
+];
+
+// Extra properties fetched via batch-read for PAID_SEARCH contacts only.
+const KEYWORD_PROPERTIES = ["hs_analytics_source_data_1", "hs_analytics_source_data_2"];
 
 async function fetchMqlContacts(token: string, fromMs: number, toMs: number): Promise<HsContact[]> {
   const all: HsContact[] = [];
   let after: string | undefined;
-
-  const properties = [
-    "hs_analytics_source",
-    "hs_analytics_source_data_1",
-    "hs_analytics_source_data_2",
-    "hs_lifecyclestage_marketingqualifiedlead_date",
-    "hs_lifecyclestage_salesqualifiedlead_date",
-  ];
 
   do {
     const body: Record<string, unknown> = {
@@ -46,7 +50,7 @@ async function fetchMqlContacts(token: string, fromMs: number, toMs: number): Pr
           ],
         },
       ],
-      properties,
+      properties: SEARCH_PROPERTIES,
       limit: 100,
     };
     if (after) body.after = after;
@@ -59,7 +63,6 @@ async function fetchMqlContacts(token: string, fromMs: number, toMs: number): Pr
 
     if (!res.ok) {
       const text = await res.text();
-      // Include full body so 400 validation errors are debuggable
       throw new Error(`HubSpot contacts ${res.status}: ${text.slice(0, 500)}`);
     }
 
@@ -67,10 +70,48 @@ async function fetchMqlContacts(token: string, fromMs: number, toMs: number): Pr
     all.push(...(data.results ?? []));
     after = data.paging?.next?.after ?? undefined;
 
-    // Cap at 1 000 contacts to stay within reasonable API usage
   } while (after && all.length < 1000);
 
   return all;
+}
+
+// Batch-read keyword properties for a subset of contact IDs.
+// Uses the CRM v3 batch read endpoint which supports all properties.
+async function enrichWithKeywordProps(
+  token: string,
+  contacts: HsContact[],
+): Promise<void> {
+  if (contacts.length === 0) return;
+
+  // Process in chunks of 100 (API limit)
+  const ids = contacts.map((c) => c.id);
+  for (let i = 0; i < ids.length; i += 100) {
+    const chunk = ids.slice(i, i + 100);
+    const res = await fetch(`${HS_BASE}/crm/v3/objects/contacts/batch/read`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        properties: KEYWORD_PROPERTIES,
+        inputs: chunk.map((id) => ({ id })),
+      }),
+    });
+
+    if (!res.ok) continue; // best-effort — don't fail the whole request
+
+    const data = await res.json();
+    const byId = new Map<string, Record<string, string | null>>(
+      (data.results ?? []).map((r: { id: string; properties: Record<string, string | null> }) => [r.id, r.properties]),
+    );
+
+    for (let j = i; j < Math.min(i + 100, contacts.length); j++) {
+      const c = contacts[j];
+      const extra = byId.get(c.id);
+      if (extra) {
+        c.properties.hs_analytics_source_data_1 = extra.hs_analytics_source_data_1 ?? null;
+        c.properties.hs_analytics_source_data_2 = extra.hs_analytics_source_data_2 ?? null;
+      }
+    }
+  }
 }
 
 export async function GET(req: Request) {
@@ -93,6 +134,10 @@ export async function GET(req: Request) {
 
   try {
     const contacts = await fetchMqlContacts(token, fromMs, toMs);
+
+    // Enrich PAID_SEARCH contacts with keyword properties via batch read
+    const paidContacts = contacts.filter(c => c.properties.hs_analytics_source === "PAID_SEARCH");
+    await enrichWithKeywordProps(token, paidContacts);
 
     // Aggregate by source
     type SourceGroup = {
