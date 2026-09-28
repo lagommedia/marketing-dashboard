@@ -36,27 +36,18 @@ const SEARCH_PROPERTIES = [
 // Extra properties fetched via batch-read for PAID_SEARCH contacts only.
 const KEYWORD_PROPERTIES = ["hs_analytics_source_data_1", "hs_analytics_source_data_2"];
 
-// Probe the contacts search API with a minimal known-good request to confirm
-// API access works, then return a diagnostic string if it also fails.
-async function probeContactsSearch(token: string): Promise<string> {
-  const body = {
-    filterGroups: [
-      { filters: [{ propertyName: "createdate", operator: "GTE", value: "0" }] },
-    ],
-    properties: ["createdate"],
-    limit: 1,
-  };
-  const res = await fetch(`${HS_BASE}/crm/v3/objects/contacts/search`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (res.ok) return "probe:OK";
-  const txt = await res.text();
-  return `probe:${res.status} ${txt.slice(0, 200)}`;
-}
 
+// hs_lifecyclestage_marketingqualifiedlead_date is NOT filterable on this portal
+// (returns 400 in filterGroups). Instead we filter by createdate with an
+// 18-month lookback and discard contacts whose MQL date falls outside [from, to]
+// on the client side.
 async function fetchMqlContacts(token: string, from: string, to: string): Promise<HsContact[]> {
+  const toMs      = new Date(to   + "T23:59:59").getTime();
+  const fromMs    = new Date(from + "T00:00:00").getTime();
+  // 18-month lookback so contacts created before `from` who became MQL during
+  // the window are still included.
+  const lookbackMs = fromMs - 18 * 30 * 24 * 60 * 60 * 1000;
+
   const all: HsContact[] = [];
   let after: string | undefined;
 
@@ -65,8 +56,8 @@ async function fetchMqlContacts(token: string, from: string, to: string): Promis
       filterGroups: [
         {
           filters: [
-            { propertyName: "hs_lifecyclestage_marketingqualifiedlead_date", operator: "GTE", value: from },
-            { propertyName: "hs_lifecyclestage_marketingqualifiedlead_date", operator: "LTE", value: to   },
+            { propertyName: "createdate", operator: "GTE", value: String(lookbackMs) },
+            { propertyName: "createdate", operator: "LTE", value: String(toMs) },
           ],
         },
       ],
@@ -83,19 +74,22 @@ async function fetchMqlContacts(token: string, from: string, to: string): Promis
 
     if (!res.ok) {
       const text = await res.text();
-      const probe = await probeContactsSearch(token);
-      throw new Error(
-        `HubSpot contacts ${res.status}: ${text.slice(0, 500)} | sent: ${JSON.stringify(body).slice(0, 400)} | ${probe}`,
-      );
+      throw new Error(`HubSpot contacts ${res.status}: ${text.slice(0, 500)}`);
     }
 
     const data = await res.json();
     all.push(...(data.results ?? []));
     after = data.paging?.next?.after ?? undefined;
 
-  } while (after && all.length < 1000);
+  } while (after && all.length < 5000);
 
-  return all;
+  // Client-side filter: only contacts whose MQL date falls in [from, to]
+  return all.filter(c => {
+    const d = c.properties.hs_lifecyclestage_marketingqualifiedlead_date;
+    if (!d) return false;
+    const ms = new Date(d).getTime();
+    return ms >= fromMs && ms <= toMs;
+  });
 }
 
 // Batch-read keyword properties for a subset of contact IDs.
