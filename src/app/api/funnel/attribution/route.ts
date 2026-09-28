@@ -36,7 +36,27 @@ const SEARCH_PROPERTIES = [
 // Extra properties fetched via batch-read for PAID_SEARCH contacts only.
 const KEYWORD_PROPERTIES = ["hs_analytics_source_data_1", "hs_analytics_source_data_2"];
 
-async function fetchMqlContacts(token: string, fromMs: number, toMs: number): Promise<HsContact[]> {
+// Probe the contacts search API with a minimal known-good request to confirm
+// API access works, then return a diagnostic string if it also fails.
+async function probeContactsSearch(token: string): Promise<string> {
+  const body = {
+    filterGroups: [
+      { filters: [{ propertyName: "createdate", operator: "GTE", value: "0" }] },
+    ],
+    properties: ["createdate"],
+    limit: 1,
+  };
+  const res = await fetch(`${HS_BASE}/crm/v3/objects/contacts/search`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (res.ok) return "probe:OK";
+  const txt = await res.text();
+  return `probe:${res.status} ${txt.slice(0, 200)}`;
+}
+
+async function fetchMqlContacts(token: string, from: string, to: string): Promise<HsContact[]> {
   const all: HsContact[] = [];
   let after: string | undefined;
 
@@ -45,8 +65,8 @@ async function fetchMqlContacts(token: string, fromMs: number, toMs: number): Pr
       filterGroups: [
         {
           filters: [
-            { propertyName: "hs_lifecyclestage_marketingqualifiedlead_date", operator: "GTE", value: String(fromMs) },
-            { propertyName: "hs_lifecyclestage_marketingqualifiedlead_date", operator: "LTE", value: String(toMs)   },
+            { propertyName: "hs_lifecyclestage_marketingqualifiedlead_date", operator: "GTE", value: from },
+            { propertyName: "hs_lifecyclestage_marketingqualifiedlead_date", operator: "LTE", value: to   },
           ],
         },
       ],
@@ -63,7 +83,10 @@ async function fetchMqlContacts(token: string, fromMs: number, toMs: number): Pr
 
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(`HubSpot contacts ${res.status}: ${text.slice(0, 500)}`);
+      const probe = await probeContactsSearch(token);
+      throw new Error(
+        `HubSpot contacts ${res.status}: ${text.slice(0, 500)} | sent: ${JSON.stringify(body).slice(0, 400)} | ${probe}`,
+      );
     }
 
     const data = await res.json();
@@ -123,9 +146,6 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "from and to are required" }, { status: 400 });
   }
 
-  const fromMs = new Date(from + "T00:00:00").getTime();
-  const toMs   = new Date(to   + "T23:59:59").getTime();
-
   const row = await prisma.integration.findUnique({ where: { platform: "hubspot" } });
   if (!row?.connected || !row.accessToken) {
     return NextResponse.json({ error: "HubSpot not connected" }, { status: 503 });
@@ -133,7 +153,7 @@ export async function GET(req: Request) {
   const token = decrypt(row.accessToken);
 
   try {
-    const contacts = await fetchMqlContacts(token, fromMs, toMs);
+    const contacts = await fetchMqlContacts(token, from, to);
 
     // Enrich PAID_SEARCH contacts with keyword properties via batch read
     const paidContacts = contacts.filter(c => c.properties.hs_analytics_source === "PAID_SEARCH");
