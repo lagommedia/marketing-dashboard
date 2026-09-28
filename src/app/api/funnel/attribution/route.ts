@@ -48,7 +48,7 @@ async function fetchMqlContacts(token: string, fromMs: number, toMs: number): Pr
       ],
       properties,
       limit: 200,
-      sorts: [{ propertyName: "hs_lifecyclestage_marketingqualifiedlead_date", direction: "DESCENDING" }],
+      sorts: [],
     };
     if (after) body.after = after;
 

@@ -14,12 +14,13 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
-    const sp   = req.nextUrl.searchParams;
-    const days = parseInt(sp.get("days") ?? "90", 10);
+    const sp      = req.nextUrl.searchParams;
+    const fromStr = sp.get("from");
+    const toStr   = sp.get("to");
+    const days    = parseInt(sp.get("days") ?? "90", 10);
 
-    const from = new Date();
-    from.setDate(from.getDate() - days);
-    from.setHours(0, 0, 0, 0);
+    const from = fromStr ? new Date(fromStr + "T00:00:00") : (() => { const d = new Date(); d.setDate(d.getDate() - days); d.setHours(0, 0, 0, 0); return d; })();
+    const to   = toStr   ? new Date(toStr   + "T23:59:59") : undefined;
 
     // Check integration status
     const integration = await prisma.integration.findUnique({
@@ -28,7 +29,7 @@ export async function GET(req: NextRequest) {
     });
 
     const rows = await prisma.gaOrganicSnapshot.findMany({
-      where: { date: { gte: from } },
+      where: { date: { gte: from, ...(to ? { lte: to } : {}) } },
       orderBy: { date: "desc" },
     });
 

@@ -551,7 +551,7 @@ function fmtSec(sec: number | null | undefined): string {
   return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
-export function SeoClient() {
+export function SeoClient({ from, to }: { from: string; to: string }) {
   const [channel, setChannel]   = useState<Channel>("seo");
   const [segment, setSegment]   = useState<Segment>("non-branded");
   const [data, setData]         = useState<ApiResponse | null>(null);
@@ -828,24 +828,24 @@ export function SeoClient() {
   const load = useCallback(async (seg: Segment) => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/seo/pillars?segment=${seg}`);
+      const res = await fetch(`/api/seo/pillars?segment=${seg}&from=${from}&to=${to}`);
       const json = await res.json();
       setData(json);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [from, to]);
 
   const loadGa = useCallback(async () => {
     setGaLoading(true);
     try {
-      const res = await fetch("/api/seo/organic-traffic?days=90");
+      const res = await fetch(`/api/seo/organic-traffic?from=${from}&to=${to}`);
       const json = await res.json();
       setGaData(json);
     } finally {
       setGaLoading(false);
     }
-  }, []);
+  }, [from, to]);
 
   useEffect(() => { load(segment); }, [segment, load]);
   useEffect(() => { loadGa(); }, [loadGa]);
