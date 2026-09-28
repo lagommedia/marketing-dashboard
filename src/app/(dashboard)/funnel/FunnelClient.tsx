@@ -397,6 +397,133 @@ function PaidKeywordsPanel({ from, to }: { from: string; to: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// Organic Keywords Panel
+// ---------------------------------------------------------------------------
+
+interface OrganicKeywordData {
+  total:           number;
+  organicKeywords: PaidKeywordRow[]; // same shape, reuse interface
+}
+
+function OrganicKeywordsPanel({ from, to }: { from: string; to: string }) {
+  const [open,    setOpen]    = useState(false);
+  const [data,    setData]    = useState<OrganicKeywordData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open || data) return;
+    setLoading(true);
+    setError(null);
+    fetch(`/api/funnel/attribution?from=${from}&to=${to}`)
+      .then(async r => {
+        const text = await r.text();
+        try { return JSON.parse(text) as OrganicKeywordData & { error?: string }; }
+        catch { throw new Error(`Server error ${r.status}: ${text.slice(0, 300)}`); }
+      })
+      .then(d => {
+        if (d.error) { setError(d.error); return; }
+        setData({ total: d.total, organicKeywords: d.organicKeywords ?? [] });
+      })
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : "Failed to load keyword data"))
+      .finally(() => setLoading(false));
+  }, [open, from, to, data]);
+
+  useEffect(() => { setData(null); }, [from, to]);
+
+  const maxMqls   = Math.max(...(data?.organicKeywords.map(r => r.mqls) ?? [1]), 1);
+  const fmtRate   = (n: number) => n > 0 ? (n * 100).toFixed(0) + "%" : "—";
+  const rateColor = (n: number) =>
+    n >= 0.2 ? "text-emerald-600" : n >= 0.05 ? "text-indigo-500" : "text-slate-400";
+
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-5 py-4 hover:bg-slate-50 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <Globe className="w-4 h-4 text-emerald-500" />
+          <span className="text-sm font-semibold text-slate-700">Organic Search Keywords</span>
+          {data && (
+            <span className="text-xs text-slate-400 font-normal ml-1">
+              {data.organicKeywords.reduce((s, r) => s + r.mqls, 0)} organic MQLs · {data.organicKeywords.filter(r => r.keyword !== "(unknown keyword)").length} keywords
+            </span>
+          )}
+        </div>
+        <ChevronDown className={cn("w-4 h-4 text-slate-400 transition-transform", open && "rotate-180")} />
+      </button>
+
+      {open && (
+        <div className="border-t border-slate-100 px-5 pb-5 pt-4">
+          {loading && (
+            <div className="flex items-center gap-2 text-slate-400 text-sm py-4">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Loading organic keyword data from HubSpot…
+            </div>
+          )}
+          {error && (
+            <div className="text-sm text-red-500 bg-red-50 rounded-lg p-3">{error}</div>
+          )}
+          {data && data.organicKeywords.length === 0 && (
+            <p className="text-sm text-slate-400 py-4">No organic search MQLs found for this date range.</p>
+          )}
+          {data && data.organicKeywords.length > 0 && (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-slate-100 overflow-hidden">
+                <div className="grid grid-cols-[1fr_auto_auto_auto_auto] bg-slate-50 px-4 py-2 text-[11px] font-semibold text-slate-400 uppercase tracking-wide gap-x-3">
+                  <span>Keyword</span>
+                  <span className="w-14 text-right">MQLs</span>
+                  <span className="w-14 text-right">SQOs</span>
+                  <span className="w-16 text-right">Closed Won</span>
+                  <span className="w-20 text-right">MQL→CW</span>
+                </div>
+                {data.organicKeywords.map((row, i) => (
+                  <div key={i} className="border-t border-slate-100">
+                    <div className="grid grid-cols-[1fr_auto_auto_auto_auto] items-center px-4 py-2.5 gap-x-3 hover:bg-slate-50 transition-colors">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className={cn(
+                            "text-sm font-medium truncate",
+                            row.keyword === "(unknown keyword)" ? "text-slate-400 italic" : "text-slate-800"
+                          )}>
+                            {row.keyword}
+                          </span>
+                          {row.campaign && (
+                            <span className="shrink-0 text-[10px] bg-slate-100 text-slate-500 border border-slate-200 rounded px-1.5 py-0.5 font-medium truncate max-w-[120px]">
+                              {row.campaign}
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-1 h-1 w-full bg-slate-100 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-emerald-300 rounded-full"
+                            style={{ width: `${(row.mqls / maxMqls) * 100}%` }}
+                          />
+                        </div>
+                      </div>
+                      <span className="w-14 text-right text-sm font-semibold tabular-nums text-slate-700">{row.mqls}</span>
+                      <span className="w-14 text-right text-sm tabular-nums text-slate-500">{row.sqos}</span>
+                      <span className="w-16 text-right text-sm font-semibold tabular-nums text-emerald-700">{row.closedWon}</span>
+                      <span className={cn("w-20 text-right text-xs font-semibold tabular-nums", rateColor(row.mqlToCw))}>
+                        {fmtRate(row.mqlToCw)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[10px] text-slate-400">
+                Source: HubSpot first-touch organic. Note: Google hides most search queries (SSL) — many MQLs will show as unknown keyword.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Stage Drawer
 // ---------------------------------------------------------------------------
 
@@ -901,6 +1028,9 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
 
       {/* Paid Search Keyword Funnel */}
       <PaidKeywordsPanel from={from} to={to} />
+
+      {/* Organic Search Keyword Funnel */}
+      <OrganicKeywordsPanel from={from} to={to} />
 
       {/* Drawer */}
       {openDrawer && (

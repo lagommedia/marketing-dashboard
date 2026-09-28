@@ -199,7 +199,8 @@ export async function GET(req: Request) {
       sqos:      number;
       closedWon: number;
     };
-    const kwGroups = new Map<string, KwGroup>();
+    const kwGroups    = new Map<string, KwGroup>(); // paid
+    const orgKwGroups = new Map<string, KwGroup>(); // organic
 
     for (const c of contacts) {
       const p        = c.properties;
@@ -229,13 +230,14 @@ export async function GET(req: Request) {
       const detailKey = keyword !== "(unknown keyword)" ? keyword : null;
       if (detailKey) g.detail.set(detailKey, (g.detail.get(detailKey) ?? 0) + 1);
 
-      if (srcType === "paid") {
+      const targetMap = srcType === "paid" ? kwGroups : srcType === "organic" ? orgKwGroups : null;
+      if (targetMap) {
         // Normalize to lowercase so "zeni" and "Zeni" are the same bucket.
         const kwKey = keyword.toLowerCase();
-        if (!kwGroups.has(kwKey)) {
-          kwGroups.set(kwKey, { keyword: kwKey, campaign, mqls: 0, sqos: 0, closedWon: 0 });
+        if (!targetMap.has(kwKey)) {
+          targetMap.set(kwKey, { keyword: kwKey, campaign, mqls: 0, sqos: 0, closedWon: 0 });
         }
-        const kw = kwGroups.get(kwKey)!;
+        const kw = targetMap.get(kwKey)!;
         kw.mqls++;
         if (isSqo) kw.sqos++;
         if (isCw)  kw.closedWon++;
@@ -259,24 +261,28 @@ export async function GET(req: Request) {
           .map(([label, count]) => ({ label, count })),
       }));
 
-    const paidKeywords = [...kwGroups.values()]
-      .sort((a, b) => {
-        const aUnk = a.keyword === "(unknown keyword)";
-        const bUnk = b.keyword === "(unknown keyword)";
-        if (aUnk !== bUnk) return aUnk ? 1 : -1;
-        return b.mqls - a.mqls;
-      })
-      .map(kw => ({
-        keyword:      kw.keyword,
-        campaign:     kw.campaign,
-        mqls:         kw.mqls,
-        sqos:         kw.sqos,
-        closedWon:    kw.closedWon,
-        mqlToSqo:     kw.mqls > 0 ? kw.sqos  / kw.mqls : 0,
-        mqlToCw:      kw.mqls > 0 ? kw.closedWon / kw.mqls : 0,
-      }));
+    const serializeKw = (map: Map<string, KwGroup>) =>
+      [...map.values()]
+        .sort((a, b) => {
+          const aUnk = a.keyword === "(unknown keyword)";
+          const bUnk = b.keyword === "(unknown keyword)";
+          if (aUnk !== bUnk) return aUnk ? 1 : -1;
+          return b.mqls - a.mqls;
+        })
+        .map(kw => ({
+          keyword:   kw.keyword,
+          campaign:  kw.campaign,
+          mqls:      kw.mqls,
+          sqos:      kw.sqos,
+          closedWon: kw.closedWon,
+          mqlToSqo:  kw.mqls > 0 ? kw.sqos       / kw.mqls : 0,
+          mqlToCw:   kw.mqls > 0 ? kw.closedWon   / kw.mqls : 0,
+        }));
 
-    return NextResponse.json({ from, to, total: contacts.length, rows, paidKeywords });
+    const paidKeywords    = serializeKw(kwGroups);
+    const organicKeywords = serializeKw(orgKwGroups);
+
+    return NextResponse.json({ from, to, total: contacts.length, rows, paidKeywords, organicKeywords });
   } catch (err) {
     console.error("[funnel/attribution]", err);
     return NextResponse.json(
