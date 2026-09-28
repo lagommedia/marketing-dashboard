@@ -272,12 +272,16 @@ function PaidKeywordsPanel({ from, to }: { from: string; to: string }) {
     setError(null);
     // Reuse the attribution endpoint (same HubSpot call) — paidKeywords extracted server-side
     fetch(`/api/funnel/attribution?from=${from}&to=${to}`)
-      .then(r => r.json())
-      .then((d: PaidKeywordData & { error?: string }) => {
-        if (d.error) { setError(d.error); return; }
-        setData(d);
+      .then(async r => {
+        const text = await r.text();
+        try { return JSON.parse(text) as PaidKeywordData & { error?: string }; }
+        catch { throw new Error(`Server error ${r.status}: ${text.slice(0, 300)}`); }
       })
-      .catch(() => setError("Failed to load keyword data"))
+      .then(d => {
+        if (d.error) { setError(d.error); return; }
+        setData({ total: d.total, paidKeywords: d.paidKeywords ?? [] });
+      })
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : "Failed to load keyword data"))
       .finally(() => setLoading(false));
   }, [open, from, to, data]);
 
