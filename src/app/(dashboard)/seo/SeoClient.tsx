@@ -599,6 +599,49 @@ function fmtSec(sec: number | null | undefined): string {
   return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
+function AeoGauge({ rate, promptsWithMention, promptsWithData }: { rate: number; promptsWithMention: number; promptsWithData: number }) {
+  // Semi-circle: arc from 180° to 0° (left to right), filled proportion = rate/100
+  const R = 58, CX = 80, CY = 72;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  // Track: full 180° arc
+  const tx1 = CX + R * Math.cos(toRad(180)), ty1 = CY + R * Math.sin(toRad(180));
+  const tx2 = CX + R * Math.cos(toRad(0)),   ty2 = CY + R * Math.sin(toRad(0));
+  const trackPath = `M ${tx1} ${ty1} A ${R} ${R} 0 0 1 ${tx2} ${ty2}`;
+  // Fill: arc from 180° to (180° - rate*1.8°)
+  const fillEndDeg = 180 - (rate / 100) * 180;
+  const fx2 = CX + R * Math.cos(toRad(fillEndDeg));
+  const fy2 = CY + R * Math.sin(toRad(fillEndDeg));
+  const largeArc = rate > 50 ? 1 : 0;
+  const fillPath = rate > 0 ? `M ${tx1} ${ty1} A ${R} ${R} 0 ${largeArc} 1 ${fx2} ${fy2}` : null;
+
+  return (
+    <div className="flex flex-col items-center shrink-0">
+      <svg width="160" height="90" viewBox="0 0 160 82">
+        <defs>
+          <linearGradient id="gaugeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#818cf8" />
+            <stop offset="100%" stopColor="#6366f1" />
+          </linearGradient>
+        </defs>
+        {/* Track */}
+        <path d={trackPath} fill="none" stroke="#e2e8f0" strokeWidth="10" strokeLinecap="round" />
+        {/* Fill */}
+        {fillPath && (
+          <path d={fillPath} fill="none" stroke="url(#gaugeGrad)" strokeWidth="10" strokeLinecap="round" />
+        )}
+        {/* Center label */}
+        <text x={CX} y={CY - 8} textAnchor="middle" style={{ fontSize: 22, fontWeight: 700, fill: "#0f172a" }}>
+          {rate}%
+        </text>
+        <text x={CX} y={CY + 10} textAnchor="middle" style={{ fontSize: 9, fill: "#94a3b8", letterSpacing: "0.05em" }}>
+          BRAND VISIBILITY
+        </text>
+      </svg>
+      <p className="text-[11px] text-slate-400 -mt-1">{promptsWithMention} of {promptsWithData} prompts</p>
+    </div>
+  );
+}
+
 export function SeoClient({ from, to }: { from: string; to: string }) {
   const [channel, setChannel]   = useState<Channel>("seo");
   const [segment, setSegment]   = useState<Segment>("non-branded");
@@ -727,13 +770,13 @@ export function SeoClient({ from, to }: { from: string; to: string }) {
   const loadHsAeo = useCallback(async () => {
     setHsAeoLoading(true);
     try {
-      const res  = await fetch("/api/seo/hs-aeo");
+      const res  = await fetch(`/api/seo/hs-aeo?from=${from}&to=${to}`);
       const json = await res.json();
       setHsAeo(json);
     } finally {
       setHsAeoLoading(false);
     }
-  }, []);
+  }, [from, to]);
 
   const loadCustomQueries = useCallback(async () => {
     setCustomLoading(true);
@@ -952,6 +995,11 @@ export function SeoClient({ from, to }: { from: string; to: string }) {
       setAiOverviewRunningQuery(null);
     }
   }
+
+  // Reset hsAeo when date range changes so it reloads with the new window
+  useEffect(() => {
+    setHsAeo(null);
+  }, [from, to]);
 
   useEffect(() => {
     if (channel === "aeo") {
@@ -1327,44 +1375,7 @@ export function SeoClient({ from, to }: { from: string; to: string }) {
                   <div>
                     <div className="flex flex-col sm:flex-row gap-0 sm:gap-6 p-5">
                       {/* SVG Semi-circle gauge */}
-                      <div className="flex flex-col items-center justify-center shrink-0">
-                        {(() => {
-                          const rate = hsAeo.summary.visibilityRate ?? 0;
-                          const r = 70;
-                          const cx = 90;
-                          const cy = 90;
-                          const startAngle = 180;
-                          const endAngle = 0;
-                          const toRad = (deg: number) => (deg * Math.PI) / 180;
-                          const arcX = (deg: number) => cx + r * Math.cos(toRad(deg));
-                          const arcY = (deg: number) => cy + r * Math.sin(toRad(deg));
-                          const filledEnd = 180 - (rate / 100) * 180;
-                          const trackPath = `M ${arcX(startAngle)} ${arcY(startAngle)} A ${r} ${r} 0 0 1 ${arcX(endAngle)} ${arcY(endAngle)}`;
-                          const filledPath = `M ${arcX(startAngle)} ${arcY(startAngle)} A ${r} ${r} 0 ${rate > 50 ? 1 : 0} 1 ${arcX(filledEnd)} ${arcY(filledEnd)}`;
-                          return (
-                            <div className="relative">
-                              <svg width="180" height="100" viewBox="0 0 180 100">
-                                <path d={trackPath} fill="none" stroke="#e2e8f0" strokeWidth="14" strokeLinecap="round" />
-                                {rate > 0 && (
-                                  <path d={filledPath} fill="none" stroke="#6366f1" strokeWidth="14" strokeLinecap="round" />
-                                )}
-                                <text x={cx} y={cy - 10} textAnchor="middle" className="fill-slate-900" style={{ fontSize: 26, fontWeight: 700, fill: "#0f172a" }}>
-                                  {rate}%
-                                </text>
-                                <text x={cx} y={cy + 12} textAnchor="middle" style={{ fontSize: 10, fill: "#94a3b8" }}>
-                                  Brand Visibility
-                                </text>
-                              </svg>
-                              <div className="flex justify-between text-[10px] text-slate-400 -mt-1 px-1">
-                                <span>0%</span><span>100%</span>
-                              </div>
-                            </div>
-                          );
-                        })()}
-                        <div className="mt-2 text-center">
-                          <p className="text-[11px] text-slate-400">{hsAeo.summary.promptsWithMention} of {hsAeo.summary.promptsWithData} prompts</p>
-                        </div>
-                      </div>
+                      <AeoGauge rate={hsAeo.summary.visibilityRate ?? 0} promptsWithMention={hsAeo.summary.promptsWithMention} promptsWithData={hsAeo.summary.promptsWithData} />
 
                       {/* By-model breakdown */}
                       {Object.keys(hsAeo.byModel).length > 0 && (

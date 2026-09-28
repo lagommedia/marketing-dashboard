@@ -86,10 +86,10 @@ async function fetchAllPrompts(token: string): Promise<HsPrompt[]> {
   return all;
 }
 
-// Fetch all recent runs for a prompt (up to 20 for time-series coverage)
+// Fetch all recent runs for a prompt (up to 50 for time-series coverage)
 async function fetchRunsForPrompt(token: string, promptId: string): Promise<HsRun[]> {
   try {
-    const data = await hsGet<{ results: HsRun[] }>(token, `/prompts/${promptId}/runs?limit=20`);
+    const data = await hsGet<{ results: HsRun[] }>(token, `/prompts/${promptId}/runs?limit=50`);
     return (data.results ?? []).filter(r => r.state === "COMPLETED");
   } catch {
     return [];
@@ -114,7 +114,10 @@ function isoWeek(dateStr: string): string {
   return monday.toISOString().slice(0, 10);
 }
 
-export async function GET() {
+export async function GET(req: Request) {
+  const sp   = new URL(req.url).searchParams;
+  const from = sp.get("from") ? new Date(sp.get("from")! + "T00:00:00Z") : null;
+  const to   = sp.get("to")   ? new Date(sp.get("to")!   + "T23:59:59Z") : null;
   const row = await prisma.integration.findUnique({ where: { platform: "hubspot" } });
   if (!row?.connected || !row.accessToken) {
     return NextResponse.json({ error: "HubSpot not connected", hasData: false }, { status: 503 });
@@ -204,9 +207,16 @@ export async function GET() {
     }
 
     // ── Weekly time-series by AI model ──────────────────────────────────────
-    // Structure: { week: { model: { total, withMention } } }
+    // Filter runs to the requested date window before bucketing
+    const runsInWindow = allRuns.filter(r => {
+      const t = new Date(r.completedAt).getTime();
+      if (from && t < from.getTime()) return false;
+      if (to   && t > to.getTime())   return false;
+      return true;
+    });
+
     const weekModelMap: Record<string, Record<string, { total: number; withMention: number }>> = {};
-    for (const run of allRuns) {
+    for (const run of runsInWindow) {
       const week = isoWeek(run.completedAt);
       if (!weekModelMap[week]) weekModelMap[week] = {};
       if (!weekModelMap[week][run.aiModel]) weekModelMap[week][run.aiModel] = { total: 0, withMention: 0 };
@@ -217,7 +227,6 @@ export async function GET() {
     const allModels = [...new Set(allRuns.map(r => r.aiModel))].sort();
     const weeklySeries = Object.entries(weekModelMap)
       .sort(([a], [b]) => a.localeCompare(b))
-      .slice(-8) // last 8 weeks
       .map(([week, modelData]) => {
         const entry: Record<string, number | string> = { week };
         for (const model of allModels) {
