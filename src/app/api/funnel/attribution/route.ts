@@ -71,6 +71,36 @@ function resolveKeywordAndCampaign(
   return { keyword: s1!, campaign: s2 !== s1 ? s2 : null };
 }
 
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+// Wraps a single HubSpot search page with retry-on-429 and a pacing delay.
+// HubSpot's OAuth CRM search limit is 5 req/sec; 220ms between pages keeps
+// us safely under that when paginating through large contact sets.
+async function hsSearchPage(
+  token: string,
+  body: Record<string, unknown>,
+  attempt = 0,
+): Promise<{ results: HsContact[]; paging?: { next?: { after: string } } }> {
+  const res = await fetch(`${HS_BASE}/crm/v3/objects/contacts/search`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (res.status === 429) {
+    const wait = Math.min(1500 * 2 ** attempt, 12000);
+    await sleep(wait);
+    return hsSearchPage(token, body, attempt + 1);
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`HubSpot contacts ${res.status}: ${text.slice(0, 500)}`);
+  }
+
+  return res.json();
+}
+
 async function fetchMqlContacts(token: string, from: string, to: string): Promise<HsContact[]> {
   const toMs   = new Date(to   + "T23:59:59").getTime();
   const fromMs = new Date(from + "T00:00:00").getTime();
@@ -91,23 +121,20 @@ async function fetchMqlContacts(token: string, from: string, to: string): Promis
     };
     if (after) body.after = after;
 
-    const res = await fetch(`${HS_BASE}/crm/v3/objects/contacts/search`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-
-    if (!res.ok) {
-      const text = await res.text();
-      if (res.status === 400 && text.includes("became_an_mql_date")) {
+    let data: Awaited<ReturnType<typeof hsSearchPage>>;
+    try {
+      data = await hsSearchPage(token, body);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("HubSpot contacts 400") && msg.includes("became_an_mql_date")) {
         return fetchMqlContactsViaCreatedate(token, from, to);
       }
-      throw new Error(`HubSpot contacts ${res.status}: ${text.slice(0, 500)}`);
+      throw err;
     }
 
-    const data = await res.json();
     all.push(...(data.results ?? []));
     after = data.paging?.next?.after ?? undefined;
+    if (after) await sleep(220); // pace to ~4.5 pages/sec, well under the 5/sec limit
 
   } while (after && all.length < 5000);
 
@@ -137,20 +164,10 @@ async function fetchMqlContactsViaCreatedate(
     };
     if (after) body.after = after;
 
-    const res = await fetch(`${HS_BASE}/crm/v3/objects/contacts/search`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`HubSpot contacts ${res.status}: ${text.slice(0, 500)}`);
-    }
-
-    const data = await res.json();
+    const data = await hsSearchPage(token, body);
     all.push(...(data.results ?? []));
     after = data.paging?.next?.after ?? undefined;
+    if (after) await sleep(220);
 
   } while (after && all.length < 5000);
 

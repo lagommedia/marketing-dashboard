@@ -255,10 +255,6 @@ const ROLLING_COLS: RollingColDef[] = [
   { key: "searchAbsTopIS",    label: "Abs. Top IS",        fmt: (v) => fmtPct(v), searchOnly: true },
   { key: "searchLostISRank",  label: "Lost IS (Rank)",     fmt: (v) => fmtPct(v), searchOnly: true, lowerBetter: true },
   { key: "searchLostISBudget",label: "Lost IS (Budget)",   fmt: (v) => fmtPct(v), searchOnly: true, lowerBetter: true },
-  { key: "leads",             label: "Leads",              fmt: (v) => fmtN(v, 0), funnelOnly: true },
-  { key: "mqls",              label: "MQLs",               fmt: (v) => fmtN(v, 0), funnelOnly: true },
-  { key: "sqos",              label: "SQOs",               fmt: (v) => fmtN(v, 0), funnelOnly: true },
-  { key: "closedWon",         label: "Closed Won",         fmt: (v) => fmtN(v, 0), funnelOnly: true },
 ];
 
 function rollingVal(row: RollingRow | RollingDelta, key: string): number | null {
@@ -1491,8 +1487,7 @@ function SortIcon({ col, active, dir }: { col: string; active: string; dir: Sort
 // Main component
 // ---------------------------------------------------------------------------
 
-export default function PaidMediaClient() {
-  const [days,         setDays]        = useState<30 | 90>(30);
+export default function PaidMediaClient({ from, to, children }: { from: string; to: string; children?: React.ReactNode }) {
   const [data,         setData]        = useState<PaidMediaData | null>(null);
   const [loading,      setLoading]     = useState(true);
   const [syncing,      setSyncing]     = useState(false);
@@ -1529,10 +1524,10 @@ export default function PaidMediaClient() {
   const [pendingQ,           setPendingQ]           = useState<string | null>(null);
   const [pendingAnnotId,     setPendingAnnotId]     = useState<string | null>(null);
 
-  const load = useCallback(async (d: 30 | 90) => {
+  const load = useCallback(async (f: string, t: string) => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/paid-media/campaigns?days=${d}`);
+      const res = await fetch(`/api/paid-media/campaigns?from=${f}&to=${t}`);
       if (res.ok) setData(await res.json());
     } finally {
       setLoading(false);
@@ -1674,7 +1669,7 @@ export default function PaidMediaClient() {
     await loadAnnotations();
   }
 
-  useEffect(() => { load(days); }, [days, load]);
+  useEffect(() => { load(from, to); }, [from, to, load]);
   useEffect(() => { loadRolling(rollingView, anchorMode); }, [rollingView, anchorMode, loadRolling]);
   useEffect(() => { loadAnnotations(); }, [loadAnnotations]);
   useEffect(() => {
@@ -1683,17 +1678,17 @@ export default function PaidMediaClient() {
 
   async function runSync(daysBack: number, label: string) {
     setSyncMsg(null);
-    const from = new Date();
-    from.setUTCDate(from.getUTCDate() - daysBack);
+    const syncFrom = new Date();
+    syncFrom.setUTCDate(syncFrom.getUTCDate() - daysBack);
     const res  = await fetch("/api/integrations/google_ads/campaign-sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ from: from.toISOString().slice(0, 10) }),
+      body:    JSON.stringify({ from: syncFrom.toISOString().slice(0, 10) }),
     });
     const json = await res.json();
     if (!res.ok) throw new Error(json.error ?? `${label} failed`);
     setSyncMsg(`${label}: synced ${json.rows} rows across campaigns.`);
-    await load(days);
+    await load(from, to);
     await loadRolling(rollingView, anchorMode);
   }
 
@@ -1756,23 +1751,8 @@ export default function PaidMediaClient() {
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
-          {/* Date range toggle */}
-          <div className="flex rounded-lg border border-slate-200 bg-slate-50 overflow-hidden text-sm">
-            {([30, 90] as const).map(d => (
-              <button
-                key={d}
-                onClick={() => setDays(d)}
-                className={cn(
-                  "px-3 py-1.5 font-medium transition-colors",
-                  days === d
-                    ? "bg-white text-slate-900 shadow-sm"
-                    : "text-slate-500 hover:text-slate-700",
-                )}
-              >
-                {d}d
-              </button>
-            ))}
-          </div>
+          {/* Date range picker */}
+          {children}
 
           {/* Sync button */}
           <button
@@ -1855,7 +1835,7 @@ export default function PaidMediaClient() {
           {/* KPI Cards                                                        */}
           {/* -------------------------------------------------------------- */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
-            <KpiCard label="Total Spend"   value={fmt$$(summary?.spend)}       sub={`Last ${days} days`}  icon={DollarSign}         accent />
+            <KpiCard label="Total Spend"   value={fmt$$(summary?.spend)}       sub={`${from} – ${to}`}    icon={DollarSign}         accent />
             <KpiCard label="Impressions"   value={fmtN(summary?.impressions)}  sub="Ad views"             icon={Eye} />
             <KpiCard label="Clicks"        value={fmtN(summary?.clicks)}       sub="Link clicks"          icon={MousePointerClick} />
             <KpiCard label="Avg CTR"       value={fmtPct(summary?.ctr)}        sub="Click-through rate"   icon={TrendingUp} />
@@ -1876,7 +1856,7 @@ export default function PaidMediaClient() {
             <div className="flex items-center justify-between mb-6">
               <div>
                 <h2 className="text-sm font-semibold text-slate-900">Daily Performance</h2>
-                <p className="text-xs text-slate-400 mt-0.5">Last {days} days</p>
+                <p className="text-xs text-slate-400 mt-0.5">{from} – {to}</p>
               </div>
               <div className="flex rounded-lg border border-slate-200 bg-slate-50 overflow-hidden text-xs">
                 {(["spend", "clicks"] as const).map(v => (
@@ -1994,7 +1974,7 @@ export default function PaidMediaClient() {
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
               <div>
                 <h2 className="text-sm font-semibold text-slate-900">Campaign Breakdown</h2>
-                <p className="text-xs text-slate-400 mt-0.5">{ACTIVE_CAMPAIGNS.length} campaigns · last {days} days</p>
+                <p className="text-xs text-slate-400 mt-0.5">{ACTIVE_CAMPAIGNS.length} campaigns · {from} – {to}</p>
               </div>
             </div>
 

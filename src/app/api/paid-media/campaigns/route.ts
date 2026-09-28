@@ -10,14 +10,29 @@ import { prisma } from "@/lib/db";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  const days = Math.min(Number(new URL(req.url).searchParams.get("days") ?? 30), 365);
+  const sp     = new URL(req.url).searchParams;
+  const fromParam = sp.get("from");
+  const toParam   = sp.get("to");
 
-  const from = new Date();
-  from.setDate(from.getDate() - days);
-  from.setHours(0, 0, 0, 0);
+  let from: Date;
+  let to: Date;
+  let days: number;
+
+  if (fromParam && toParam) {
+    from = new Date(fromParam + "T00:00:00");
+    to   = new Date(toParam   + "T23:59:59");
+    days = Math.round((to.getTime() - from.getTime()) / 86_400_000) + 1;
+  } else {
+    days = Math.min(Number(sp.get("days") ?? 30), 365);
+    from = new Date();
+    from.setDate(from.getDate() - days);
+    from.setHours(0, 0, 0, 0);
+    to = new Date();
+    to.setHours(23, 59, 59, 999);
+  }
 
   const rows = await prisma.campaignDailySpend.findMany({
-    where: { date: { gte: from } },
+    where: { date: { gte: from, lte: to } },
     orderBy: { date: "asc" },
   });
 
