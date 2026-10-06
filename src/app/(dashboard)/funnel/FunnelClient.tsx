@@ -1,9 +1,33 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { ExternalLink, X, Bell, ChevronRight, ChevronLeft, Loader2, AlertTriangle, Globe, Bot, Send, Sparkles, RefreshCw, Clock, Trash2, ChevronDown, Search, MousePointerClick } from "lucide-react";
+import { useRouter, usePathname } from "next/navigation";
+import { ExternalLink, X, Bell, ChevronRight, ChevronLeft, Loader2, AlertTriangle, Globe, Bot, Send, Sparkles, RefreshCw, Clock, Trash2, ChevronDown, Search, MousePointerClick, GitCompare } from "lucide-react";
 import { useChatHistory, relativeTime, type ChatSession } from "@/lib/use-chat-history";
 import { cn } from "@/lib/utils";
+
+// ---------------------------------------------------------------------------
+// Quarter helpers
+// ---------------------------------------------------------------------------
+
+interface Quarter { label: string; q: number; year: number; from: string; to: string }
+
+function quartersForYear(year: number): Quarter[] {
+  return [1, 2, 3, 4].map(q => ({
+    label: `Q${q} ${year}`,
+    q,
+    year,
+    from: `${year}-${String((q - 1) * 3 + 1).padStart(2, "0")}-01`,
+    to:   new Date(year, q * 3, 0).toISOString().slice(0, 10),
+  }));
+}
+
+function detectQuarter(from: string, to: string): Quarter | null {
+  const d = new Date(from + "T00:00:00");
+  const year = d.getFullYear();
+  const qs = quartersForYear(year);
+  return qs.find(q => q.from === from && (to === q.to || new Date(to) <= new Date(q.to))) ?? null;
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -626,14 +650,37 @@ const CHANNEL_OPTIONS: { key: Channel; label: string }[] = [
 ];
 
 export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Props) {
-  const [counts,       setCounts]       = useState<FunnelCounts | null>(null);
-  const [loading,      setLoading]      = useState(true);
-  const [error,        setError]        = useState<string | null>(null);
-  const [openDrawer,   setOpenDrawer]   = useState<Stage | null>(null);
-  const [showNotifs,   setShowNotifs]   = useState(false);
-  const [notifCount,   setNotifCount]   = useState(initialNotifCount);
-  const [channel,      setChannel]      = useState<Channel>("all");
-  const [chatOpen,     setChatOpen]     = useState(false);
+  const router   = useRouter();
+  const pathname = usePathname();
+
+  const [counts,         setCounts]         = useState<FunnelCounts | null>(null);
+  const [loading,        setLoading]        = useState(true);
+  const [error,          setError]          = useState<string | null>(null);
+  const [openDrawer,     setOpenDrawer]     = useState<Stage | null>(null);
+  const [showNotifs,     setShowNotifs]     = useState(false);
+  const [notifCount,     setNotifCount]     = useState(initialNotifCount);
+  const [channel,        setChannel]        = useState<Channel>("all");
+  const [chatOpen,       setChatOpen]       = useState(false);
+
+  // Quarter compare
+  const [compareQuarter, setCompareQuarter] = useState<Quarter | null>(null);
+  const [compareCounts,  setCompareCounts]  = useState<FunnelCounts | null>(null);
+  const [compareLoading, setCompareLoading] = useState(false);
+  const [showQPicker,    setShowQPicker]    = useState(false);
+
+  const currentYear = new Date().getFullYear();
+  const quarterOptions: Quarter[] = [
+    ...quartersForYear(currentYear - 1),
+    ...quartersForYear(currentYear),
+  ];
+  const activeQuarter = detectQuarter(from, to);
+
+  function navigateToQuarter(q: Quarter) {
+    const toDate = q.to > new Date().toISOString().slice(0, 10)
+      ? new Date().toISOString().slice(0, 10)
+      : q.to;
+    router.push(`${pathname}?from=${q.from}&to=${toDate}`);
+  }
 
   useEffect(() => {
     setLoading(true);
@@ -644,6 +691,16 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   }, [from, to, channel]);
+
+  useEffect(() => {
+    if (!compareQuarter) { setCompareCounts(null); return; }
+    setCompareLoading(true);
+    fetch(`/api/hubspot/funnel-counts?from=${compareQuarter.from}&to=${compareQuarter.to}&channel=${channel}`)
+      .then(r => r.json())
+      .then(d => { if (!d.error) setCompareCounts(d); })
+      .catch(() => {})
+      .finally(() => setCompareLoading(false));
+  }, [compareQuarter, channel]);
 
   const conversionPairs: Array<{ fromLabel: string; toLabel: string; a: number; b: number }> = counts
     ? [
@@ -665,8 +722,91 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
     channel === "paid"    ? (counts?.adSpend ?? null) :
     estimatedSpend;
 
+  // Delta helper for comparison
+  function delta(current: number, compare: number) {
+    if (compare === 0) return null;
+    const pct = ((current - compare) / compare) * 100;
+    return { pct: Math.abs(pct).toFixed(0), positive: pct >= 0 };
+  }
+
   return (
     <>
+      {/* Quarter tab bar */}
+      <div className="flex items-center gap-1 overflow-x-auto pb-0.5">
+        {quartersForYear(currentYear - 1).concat(quartersForYear(currentYear)).map(q => {
+          const isActive = activeQuarter?.label === q.label;
+          const isFuture = q.from > new Date().toISOString().slice(0, 10);
+          if (isFuture) return null;
+          return (
+            <button
+              key={q.label}
+              onClick={() => navigateToQuarter(q)}
+              className={cn(
+                "shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors",
+                isActive
+                  ? "bg-indigo-600 text-white border-indigo-600"
+                  : "bg-white text-slate-500 border-slate-200 hover:border-indigo-300 hover:text-indigo-600"
+              )}
+            >
+              {q.label}
+            </button>
+          );
+        })}
+
+        <div className="ml-auto flex items-center gap-2 shrink-0 relative">
+          {/* Compare button */}
+          <button
+            onClick={() => setShowQPicker(v => !v)}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors",
+              compareQuarter
+                ? "bg-violet-50 text-violet-700 border-violet-300"
+                : "bg-white text-slate-500 border-slate-200 hover:border-violet-300 hover:text-violet-600"
+            )}
+          >
+            <GitCompare className="w-3.5 h-3.5" />
+            {compareQuarter ? `vs ${compareQuarter.label}` : "Compare"}
+          </button>
+
+          {/* Quarter picker dropdown */}
+          {showQPicker && (
+            <div className="absolute top-full right-0 mt-1 z-30 bg-white border border-slate-200 rounded-xl shadow-lg p-2 min-w-[160px]">
+              <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide px-2 pb-1">Compare to</p>
+              {quarterOptions.map(q => {
+                const isFuture = q.from > new Date().toISOString().slice(0, 10);
+                const isCurrent = activeQuarter?.label === q.label;
+                if (isFuture || isCurrent) return null;
+                return (
+                  <button
+                    key={q.label}
+                    onClick={() => {
+                      setCompareQuarter(compareQuarter?.label === q.label ? null : q);
+                      setShowQPicker(false);
+                    }}
+                    className={cn(
+                      "w-full text-left px-2 py-1.5 rounded-lg text-xs font-medium transition-colors",
+                      compareQuarter?.label === q.label
+                        ? "bg-violet-50 text-violet-700"
+                        : "text-slate-600 hover:bg-slate-50"
+                    )}
+                  >
+                    {q.label}
+                  </button>
+                );
+              })}
+              {compareQuarter && (
+                <button
+                  onClick={() => { setCompareQuarter(null); setShowQPicker(false); }}
+                  className="w-full text-left px-2 py-1.5 rounded-lg text-xs font-medium text-rose-500 hover:bg-rose-50 mt-1 border-t border-slate-100 pt-2"
+                >
+                  Clear comparison
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Top controls row */}
       <div className="flex items-center justify-between gap-3">
         {/* Channel toggle */}
@@ -703,11 +843,19 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
       </div>
 
       {/* Funnel */}
+      {/* Close picker on outside click */}
+      {showQPicker && <div className="fixed inset-0 z-20" onClick={() => setShowQPicker(false)} />}
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
         {/* Column headings */}
-        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-0 px-4 pt-4 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-400 border-b border-slate-100">
+        <div className={cn(
+          "grid gap-0 px-4 pt-4 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-400 border-b border-slate-100",
+          compareQuarter ? "grid-cols-[1fr_auto_auto_auto_auto]" : "grid-cols-[1fr_auto_auto_auto]"
+        )}>
           <span className="px-4">Stage</span>
           <span className="text-right w-24 px-4">Count</span>
+          {compareQuarter && (
+            <span className="text-right w-24 px-4 text-violet-400">{compareQuarter.label}</span>
+          )}
           <span className="text-right w-28 px-4">Conversion</span>
           <span className="text-right w-32 px-4">Cost Per</span>
         </div>
@@ -736,10 +884,15 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
             );
           };
 
+          const cmpVisits = compareCounts?.siteVisits ?? 0;
+
           return (
             <>
               {/* Site Visits — non-clickable top-of-funnel row */}
-              <div className="w-full grid grid-cols-[1fr_auto_auto_auto] gap-0 items-stretch border-b border-slate-100">
+              <div className={cn(
+                "w-full grid gap-0 items-stretch border-b border-slate-100",
+                compareQuarter ? "grid-cols-[1fr_auto_auto_auto_auto]" : "grid-cols-[1fr_auto_auto_auto]"
+              )}>
                 <div className="py-2 px-4 flex items-center">
                   <div className="relative flex-1 h-9">
                     <div
@@ -756,14 +909,24 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
                       </span>
                     </div>
                   </div>
-                  {/* spacer to align with clickable rows that have ChevronRight */}
                   <div className="ml-2 w-3.5 h-3.5 shrink-0" />
                 </div>
                 <div className="flex items-center justify-end w-24 px-4">
-                  <span className="text-sm font-semibold text-slate-800 tabular-nums">
-                    {siteVisits.toLocaleString()}
-                  </span>
+                  <div className="text-right">
+                    <span className="text-sm font-semibold text-slate-800 tabular-nums block">{siteVisits.toLocaleString()}</span>
+                    {compareQuarter && !compareLoading && (() => {
+                      const d = delta(siteVisits, cmpVisits);
+                      return d ? <span className={cn("text-[10px] font-medium", d.positive ? "text-emerald-600" : "text-rose-500")}>{d.positive ? "▲" : "▼"}{d.pct}%</span> : null;
+                    })()}
+                  </div>
                 </div>
+                {compareQuarter && (
+                  <div className="flex items-center justify-end w-24 px-4">
+                    {compareLoading
+                      ? <span className="text-xs text-slate-300">…</span>
+                      : <span className="text-sm font-semibold text-violet-400 tabular-nums">{cmpVisits.toLocaleString()}</span>}
+                  </div>
+                )}
                 <div className="flex items-center justify-end w-28 px-4">
                   <span className="text-xs text-slate-300">—</span>
                 </div>
@@ -774,10 +937,12 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
 
               {/* Existing funnel stages */}
               {STAGES.map((stage, i) => {
-                const count   = getCount(counts, stage.key);
-                const barPct  = logPct(count);
+                const count      = getCount(counts, stage.key);
+                const cmpCount   = compareCounts ? getCount(compareCounts, stage.key) : null;
+                const barPct     = logPct(count);
+                const d          = cmpCount != null ? delta(count, cmpCount) : null;
 
-                // Conversion from previous stage (visits for Leads, otherwise prev stage)
+                // Conversion from previous stage
                 const prevCount =
                   i === 0 ? siteVisits : getCount(counts, STAGES[i - 1].key);
                 const conversion = fmtPct(count, prevCount);
@@ -790,7 +955,10 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
                   <button
                     key={stage.key}
                     onClick={() => setOpenDrawer(stage.key)}
-                    className="w-full grid grid-cols-[1fr_auto_auto_auto] gap-0 items-stretch hover:bg-slate-50/80 transition-colors border-b border-slate-100 last:border-0 text-left group"
+                    className={cn(
+                      "w-full grid gap-0 items-stretch hover:bg-slate-50/80 transition-colors border-b border-slate-100 last:border-0 text-left group",
+                      compareQuarter ? "grid-cols-[1fr_auto_auto_auto_auto]" : "grid-cols-[1fr_auto_auto_auto]"
+                    )}
                   >
                     <div className="py-2 px-4 flex items-center">
                       <div className="relative flex-1 h-9">
@@ -814,10 +982,19 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
                     </div>
 
                     <div className="flex items-center justify-end w-24 px-4">
-                      <span className="text-sm font-semibold text-slate-800 tabular-nums">
-                        {count.toLocaleString()}
-                      </span>
+                      <div className="text-right">
+                        <span className="text-sm font-semibold text-slate-800 tabular-nums block">{count.toLocaleString()}</span>
+                        {d && <span className={cn("text-[10px] font-medium", d.positive ? "text-emerald-600" : "text-rose-500")}>{d.positive ? "▲" : "▼"}{d.pct}%</span>}
+                      </div>
                     </div>
+
+                    {compareQuarter && (
+                      <div className="flex items-center justify-end w-24 px-4">
+                        {compareLoading
+                          ? <span className="text-xs text-slate-300">…</span>
+                          : <span className="text-sm font-semibold text-violet-400 tabular-nums">{(cmpCount ?? 0).toLocaleString()}</span>}
+                      </div>
+                    )}
 
                     <div className="flex items-center justify-end w-28 px-4">
                       <span className={cn(
