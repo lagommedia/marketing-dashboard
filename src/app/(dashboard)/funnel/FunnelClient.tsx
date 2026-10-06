@@ -672,6 +672,12 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
   const [channelBreakdown,        setChannelBreakdown]        = useState<ChannelRow[] | null>(null);
   const [compareChannelBreakdown, setCompareChannelBreakdown] = useState<ChannelRow[] | null>(null);
 
+  // Funnel-stage breakdown by HubSpot source channel
+  type FunnelChannelData = { leads: Record<string,number>; mqls: Record<string,number>; sqos: Record<string,number>; closedWon: Record<string,number> } | null;
+  const [funnelChannelData,        setFunnelChannelData]        = useState<FunnelChannelData>(null);
+  const [compareFunnelChannelData, setCompareFunnelChannelData] = useState<FunnelChannelData>(null);
+  const [funnelChannelLoading,     setFunnelChannelLoading]     = useState(false);
+
   const currentYear = new Date().getFullYear();
   const quarterOptions: Quarter[] = [
     ...quartersForYear(currentYear - 1),
@@ -722,6 +728,26 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
     fetch(`/api/funnel/channel-visits?from=${compareQuarter.from}&to=${compareQuarter.to}`)
       .then(r => r.json())
       .then(d => { if (!d.error) setCompareChannelBreakdown(d.rows); })
+      .catch(() => {});
+  }, [compareQuarter]);
+
+  // Funnel-stage breakdown by HubSpot source
+  useEffect(() => {
+    setFunnelChannelData(null);
+    setFunnelChannelLoading(true);
+    fetch(`/api/funnel/channel-funnel?from=${from}&to=${to}`)
+      .then(r => r.json())
+      .then(d => { if (!d.error) setFunnelChannelData(d); })
+      .catch(() => {})
+      .finally(() => setFunnelChannelLoading(false));
+  }, [from, to]);
+
+  useEffect(() => {
+    if (!compareQuarter) { setCompareFunnelChannelData(null); return; }
+    setCompareFunnelChannelData(null);
+    fetch(`/api/funnel/channel-funnel?from=${compareQuarter.from}&to=${compareQuarter.to}`)
+      .then(r => r.json())
+      .then(d => { if (!d.error) setCompareFunnelChannelData(d); })
       .catch(() => {});
   }, [compareQuarter]);
 
@@ -1163,6 +1189,102 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
               });
             })()}
           </div>
+        </div>
+      )}
+
+      {/* Funnel by Channel (HubSpot source breakdown) */}
+      {(funnelChannelData || funnelChannelLoading) && (
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-800">Funnel by Channel</h3>
+              <p className="text-xs text-slate-400 mt-0.5">HubSpot source attribution — Leads, MQLs, SQOs, Closed Won</p>
+            </div>
+            {compareQuarter && (
+              <div className="flex items-center gap-3 text-xs text-slate-400">
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block w-2.5 h-2.5 rounded-full bg-indigo-500" />
+                  {activeQuarter?.label ?? "Current"}
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block w-2.5 h-2.5 rounded-full bg-violet-500" />
+                  {compareQuarter.label}
+                </span>
+              </div>
+            )}
+          </div>
+
+          {funnelChannelLoading && !funnelChannelData ? (
+            <div className="flex items-center justify-center py-10 text-slate-400 text-xs gap-2">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading channel data…
+            </div>
+          ) : funnelChannelData ? (() => {
+            const STAGES: { key: keyof NonNullable<FunnelChannelData>; label: string }[] = [
+              { key: "leads",     label: "Leads"      },
+              { key: "mqls",      label: "MQLs"       },
+              { key: "sqos",      label: "SQOs"       },
+              { key: "closedWon", label: "Closed Won" },
+            ];
+
+            // Collect all channels across all stages
+            const allChannels = Array.from(new Set([
+              ...Object.keys(funnelChannelData.leads),
+              ...Object.keys(funnelChannelData.mqls),
+              ...Object.keys(funnelChannelData.sqos),
+              ...Object.keys(funnelChannelData.closedWon),
+            ])).filter(c => c !== "(not set)" && c !== "Offline")
+               .sort((a, b) => (funnelChannelData.leads[b] ?? 0) - (funnelChannelData.leads[a] ?? 0));
+
+            const other = allChannels.includes("(not set)") ? ["(not set)"] : [];
+
+            return (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-100">
+                      <th className="text-left px-5 py-2.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wide w-40">Channel</th>
+                      {STAGES.map(s => (
+                        <th key={s.key} className="text-right px-4 py-2.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">
+                          {s.label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {[...allChannels, ...other].map(ch => (
+                      <tr key={ch} className="hover:bg-slate-50/60 transition-colors">
+                        <td className="px-5 py-3 font-medium text-slate-700 whitespace-nowrap">{ch}</td>
+                        {STAGES.map(s => {
+                          const cur = funnelChannelData[s.key][ch] ?? 0;
+                          const cmp = compareFunnelChannelData?.[s.key][ch] ?? 0;
+                          const d = compareQuarter && compareFunnelChannelData && cmp > 0
+                            ? { pct: Math.abs(((cur - cmp) / cmp) * 100).toFixed(0), positive: cur >= cmp }
+                            : null;
+                          return (
+                            <td key={s.key} className="px-4 py-3 text-right whitespace-nowrap">
+                              <span className="font-semibold tabular-nums text-slate-800">
+                                {cur > 0 ? cur.toLocaleString() : <span className="text-slate-300">—</span>}
+                              </span>
+                              {compareQuarter && compareFunnelChannelData && (
+                                <div className="text-violet-600 font-semibold tabular-nums text-[11px] leading-none mt-0.5">
+                                  {cmp > 0 ? cmp.toLocaleString() : <span className="text-slate-300">—</span>}
+                                </div>
+                              )}
+                              {d && (
+                                <div className={cn("text-[10px] font-semibold leading-none mt-0.5", d.positive ? "text-emerald-600" : "text-rose-500")}>
+                                  {d.positive ? "▲" : "▼"} {d.pct}%
+                                </div>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })() : null}
         </div>
       )}
 
