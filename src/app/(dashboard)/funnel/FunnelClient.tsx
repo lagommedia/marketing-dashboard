@@ -663,9 +663,14 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
   const [chatOpen,       setChatOpen]       = useState(false);
 
   // Quarter compare
-  const [compareQuarter, setCompareQuarter] = useState<Quarter | null>(null);
-  const [compareCounts,  setCompareCounts]  = useState<FunnelCounts | null>(null);
-  const [compareLoading, setCompareLoading] = useState(false);
+  const [compareQuarter,          setCompareQuarter]          = useState<Quarter | null>(null);
+  const [compareCounts,           setCompareCounts]           = useState<FunnelCounts | null>(null);
+  const [compareLoading,          setCompareLoading]          = useState(false);
+
+  // Channel breakdown (GA4 sessions by channel group)
+  type ChannelRow = { channel: string; sessions: number };
+  const [channelBreakdown,        setChannelBreakdown]        = useState<ChannelRow[] | null>(null);
+  const [compareChannelBreakdown, setCompareChannelBreakdown] = useState<ChannelRow[] | null>(null);
 
   const currentYear = new Date().getFullYear();
   const quarterOptions: Quarter[] = [
@@ -700,6 +705,25 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
       .catch(() => {})
       .finally(() => setCompareLoading(false));
   }, [compareQuarter, channel]);
+
+  // Channel breakdown — always fetch for the primary window
+  useEffect(() => {
+    setChannelBreakdown(null);
+    fetch(`/api/funnel/channel-visits?from=${from}&to=${to}`)
+      .then(r => r.json())
+      .then(d => { if (!d.error) setChannelBreakdown(d.rows); })
+      .catch(() => {});
+  }, [from, to]);
+
+  // Channel breakdown for compare quarter
+  useEffect(() => {
+    if (!compareQuarter) { setCompareChannelBreakdown(null); return; }
+    setCompareChannelBreakdown(null);
+    fetch(`/api/funnel/channel-visits?from=${compareQuarter.from}&to=${compareQuarter.to}`)
+      .then(r => r.json())
+      .then(d => { if (!d.error) setCompareChannelBreakdown(d.rows); })
+      .catch(() => {});
+  }, [compareQuarter]);
 
   const conversionPairs: Array<{ fromLabel: string; toLabel: string; a: number; b: number }> = counts
     ? [
@@ -1054,6 +1078,90 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* Channel breakdown */}
+      {channelBreakdown && channelBreakdown.length > 0 && (
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-800">Traffic by Channel</h3>
+              <p className="text-xs text-slate-400 mt-0.5">GA4 sessions — all traffic sources</p>
+            </div>
+            {compareQuarter && (
+              <div className="flex items-center gap-3 text-xs text-slate-400">
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block w-2.5 h-2.5 rounded-full bg-indigo-500" />
+                  {activeQuarter?.label ?? "Current"}
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block w-2.5 h-2.5 rounded-full bg-violet-500" />
+                  {compareQuarter.label}
+                </span>
+              </div>
+            )}
+          </div>
+          <div className="divide-y divide-slate-50">
+            {(() => {
+              // Merge channels from both periods for a unified list
+              const allChannels = Array.from(new Set([
+                ...(channelBreakdown ?? []).map(r => r.channel),
+                ...(compareChannelBreakdown ?? []).map(r => r.channel),
+              ])).sort((a, b) => {
+                const aS = channelBreakdown?.find(r => r.channel === a)?.sessions ?? 0;
+                const bS = channelBreakdown?.find(r => r.channel === b)?.sessions ?? 0;
+                return bS - aS;
+              });
+
+              const totalPrimary = (channelBreakdown ?? []).reduce((s, r) => s + r.sessions, 0);
+
+              return allChannels.map(ch => {
+                const primary  = channelBreakdown?.find(r => r.channel === ch)?.sessions ?? 0;
+                const compare  = compareChannelBreakdown?.find(r => r.channel === ch)?.sessions ?? 0;
+                const sharePct = totalPrimary > 0 ? (primary / totalPrimary) * 100 : 0;
+                const d        = compareQuarter && compare > 0
+                  ? { pct: Math.abs(((primary - compare) / compare) * 100).toFixed(0), positive: primary >= compare }
+                  : null;
+
+                return (
+                  <div key={ch} className="flex items-center gap-4 px-5 py-3">
+                    <div className="w-36 shrink-0">
+                      <span className="text-xs font-medium text-slate-700">{ch}</span>
+                    </div>
+                    {/* Bar */}
+                    <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-indigo-400 transition-all"
+                        style={{ width: `${Math.min(sharePct, 100)}%` }}
+                      />
+                    </div>
+                    <div className="w-20 text-right shrink-0">
+                      <span className="text-sm font-semibold tabular-nums text-slate-800">
+                        {primary.toLocaleString()}
+                      </span>
+                    </div>
+                    {compareQuarter && (
+                      <>
+                        <div className="w-20 text-right shrink-0 text-violet-600 text-sm font-semibold tabular-nums">
+                          {compareChannelBreakdown ? compare.toLocaleString() : "—"}
+                        </div>
+                        <div className="w-16 text-right shrink-0">
+                          {d ? (
+                            <span className={cn("text-xs font-semibold", d.positive ? "text-emerald-600" : "text-rose-500")}>
+                              {d.positive ? "▲" : "▼"} {d.pct}%
+                            </span>
+                          ) : (
+                            <span className="text-xs text-slate-300">—</span>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              });
+            })()}
           </div>
         </div>
       )}
