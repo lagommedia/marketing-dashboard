@@ -117,7 +117,7 @@ interface FunnelData {
 }
 
 interface RollingData {
-  view:       "daily" | "weekly" | "monthly";
+  view:       "daily" | "weekly" | "monthly" | "quarterly";
   dayName:    string;
   anchorDate: string;
   campaigns:  { campaignId: string; campaignName: string }[];
@@ -393,7 +393,7 @@ interface ChatContext {
   data:        PaidMediaData | null;
   rollingData: RollingData   | null;
   funnelData:  FunnelData    | null;
-  rollingView: string;
+  rollingView: "daily" | "weekly" | "monthly" | "quarterly";
 }
 
 function RichText({ text }: { text: string }) {
@@ -978,13 +978,17 @@ function RollingTable({ data, title, subtitle, hideIS, campaignId, campaignName,
   })();
 
   const defaultSubtitle =
-    view === "daily"   ? `Last 12 ${dayName}s` :
-    view === "weekly"  ? "Last 12 Weeks" :
-                         "Last 12 Months";
+    view === "daily"     ? `Last 12 ${dayName}s` :
+    view === "weekly"    ? "Last 12 Weeks" :
+    view === "quarterly" ? "Last 6 Quarters" :
+                           "Last 12 Months";
   const wowLabel =
-    view === "daily"   ? "WoW Δ" :
-    view === "weekly"  ? "Week-over-Week Δ" :
-                         "MoM Δ";
+    view === "daily"     ? "WoW Δ" :
+    view === "weekly"    ? "Week-over-Week Δ" :
+    view === "quarterly" ? "QoQ Δ" :
+                           "MoM Δ";
+  const periodAvgLabel =
+    view === "quarterly" ? "6-Period Avg" : "12-Period Avg";
 
   function DataCells({ row, funnelData }: { row: RollingRow | RollingDelta; funnelData?: FunnelBucket | null }) {
     return (
@@ -1127,7 +1131,7 @@ function RollingTable({ data, title, subtitle, hideIS, campaignId, campaignName,
           <thead>
             <tr className="bg-slate-50 border-b border-slate-100">
               <th className="sticky left-0 z-10 bg-slate-50 text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">
-                {view === "daily" ? "Date" : view === "weekly" ? "Week" : "Month"}
+                {view === "daily" ? "Date" : view === "weekly" ? "Week" : view === "quarterly" ? "Quarter" : "Month"}
               </th>
               {cols.map(col => (
                 <th key={col.key} className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">
@@ -1158,7 +1162,7 @@ function RollingTable({ data, title, subtitle, hideIS, campaignId, campaignName,
           <tfoot className="border-t-2 border-slate-200">
             <tr className="bg-slate-800 text-white">
               <td className="sticky left-0 z-10 bg-slate-800 px-6 py-3 text-xs font-bold uppercase tracking-wide whitespace-nowrap">
-                12-Period Avg
+                {periodAvgLabel}
               </td>
               {cols.map(col => (
                 <td key={col.key} className="px-4 py-3 text-right tabular-nums text-slate-200 font-semibold whitespace-nowrap">
@@ -1497,7 +1501,7 @@ export default function PaidMediaClient({ from, to, children }: { from: string; 
   const [chartView,    setChartView]   = useState<"spend" | "clicks">("spend");
 
   // Rolling average state
-  const [rollingView,   setRollingView]   = useState<"daily" | "weekly" | "monthly">("daily");
+  const [rollingView,   setRollingView]   = useState<"daily" | "weekly" | "monthly" | "quarterly">("daily");
   const [anchorMode,    setAnchorMode]    = useState<"day" | "week" | "month">("day");
   const [rollingData,   setRollingData]   = useState<RollingData | null>(null);
   const [rollingLoading, setRollingLoading] = useState(false);
@@ -1556,7 +1560,7 @@ export default function PaidMediaClient({ from, to, children }: { from: string; 
     return d.toISOString().slice(0, 10);
   }
 
-  const loadRolling = useCallback(async (view: "daily" | "weekly" | "monthly", mode: "day" | "week" | "month") => {
+  const loadRolling = useCallback(async (view: "daily" | "weekly" | "monthly" | "quarterly", mode: "day" | "week" | "month") => {
     setRollingLoading(true);
     try {
       const anchor = getAnchorDate(mode);
@@ -2068,7 +2072,7 @@ export default function PaidMediaClient({ from, to, children }: { from: string; 
               <div className="flex items-center gap-3 flex-wrap">
                 {/* Granularity toggle */}
                 <div className="flex rounded-lg border border-slate-200 bg-slate-50 overflow-hidden text-sm">
-                  {(["daily", "weekly", "monthly"] as const).map(v => (
+                  {(["daily", "weekly", "monthly", "quarterly"] as const).map(v => (
                     <button
                       key={v}
                       onClick={() => setRollingView(v)}
@@ -2079,13 +2083,13 @@ export default function PaidMediaClient({ from, to, children }: { from: string; 
                           : "text-slate-500 hover:text-slate-700",
                       )}
                     >
-                      {v === "daily" ? "Daily" : v === "weekly" ? "Weekly" : "Monthly"}
+                      {v === "daily" ? "Daily" : v === "weekly" ? "Weekly" : v === "quarterly" ? "Quarterly" : "Monthly"}
                     </button>
                   ))}
                 </div>
 
-                {/* Anchor toggle */}
-                <div className="flex items-center gap-1.5">
+                {/* Anchor toggle — hidden for quarterly (always shows last 6 calendar quarters) */}
+                {rollingView !== "quarterly" && <div className="flex items-center gap-1.5">
                   <span className="text-xs text-slate-400 font-medium whitespace-nowrap">Start from</span>
                   <div className="flex rounded-lg border border-slate-200 bg-slate-50 overflow-hidden text-sm">
                     {([
@@ -2107,7 +2111,7 @@ export default function PaidMediaClient({ from, to, children }: { from: string; 
                       </button>
                     ))}
                   </div>
-                </div>
+                </div>}
 
                 <button
                   onClick={() => loadRolling(rollingView, anchorMode)}
@@ -2148,7 +2152,7 @@ export default function PaidMediaClient({ from, to, children }: { from: string; 
                         key={c.campaignId}
                         data={campaignData}
                         title={c.campaignName}
-                        subtitle={`12-period rolling · ${rollingView === "daily" ? `${rollingData.dayName}s` : rollingView === "weekly" ? "weekly" : "monthly"}`}
+                        subtitle={`${rollingView === "quarterly" ? "6" : "12"}-period rolling · ${rollingView === "daily" ? `${rollingData.dayName}s` : rollingView === "weekly" ? "weekly" : rollingView === "quarterly" ? "quarterly" : "monthly"}`}
                         hideIS={isPMax}
                         campaignId={c.campaignId}
                         campaignName={c.campaignName}

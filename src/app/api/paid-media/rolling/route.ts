@@ -3,9 +3,10 @@
  *
  * Returns 12 rolling periods of Google Ads campaign data.
  *
- * daily   — last 12 occurrences of the anchor day-of-week (defaults to yesterday)
- * weekly  — last 12 ISO weeks ending on or before the anchor date
- * monthly — last 12 calendar months
+ * daily     — last 12 occurrences of the anchor day-of-week (defaults to yesterday)
+ * weekly    — last 12 ISO weeks ending on or before the anchor date
+ * monthly   — last 12 calendar months
+ * quarterly — last 6 calendar quarters
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -201,9 +202,9 @@ function aggregateDbRows(
   return row;
 }
 
-function avgRow(rows: RollingRow[]): RollingRow {
+function avgRow(rows: RollingRow[], label = "12-period avg"): RollingRow {
   const n = rows.length;
-  const empty: RollingRow = { label: "12-period avg", startDate: "", endDate: "", impressions: 0, clicks: 0, spend: 0, conversions: 0, conversionValue: 0, ctr: null, cpc: null, roas: null, costPerConversion: null, invalidClicks: null, searchImprShare: null, searchTopIS: null, searchAbsTopIS: null, searchLostISRank: null, searchLostISBudget: null };
+  const empty: RollingRow = { label, startDate: "", endDate: "", impressions: 0, clicks: 0, spend: 0, conversions: 0, conversionValue: 0, ctr: null, cpc: null, roas: null, costPerConversion: null, invalidClicks: null, searchImprShare: null, searchTopIS: null, searchAbsTopIS: null, searchLostISRank: null, searchLostISBudget: null };
   if (n === 0) return empty;
   const impressions     = rows.reduce((s, r) => s + r.impressions, 0) / n;
   const clicks          = rows.reduce((s, r) => s + r.clicks, 0) / n;
@@ -212,7 +213,7 @@ function avgRow(rows: RollingRow[]): RollingRow {
   const conversionValue = rows.reduce((s, r) => s + r.conversionValue, 0) / n;
   const invalidSum      = nullableSum(rows.map(r => r.invalidClicks));
   return {
-    label: "12-period avg", startDate: "", endDate: "",
+    label, startDate: "", endDate: "",
     impressions, clicks, spend, conversions, conversionValue,
     invalidClicks:      invalidSum != null ? invalidSum / n : null,
     searchImprShare:    nullableAvg(rows.map(r => r.searchImprShare)),
@@ -275,15 +276,15 @@ function pctDeltaRow(a: RollingRow, b: RollingRow): Delta {
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const view       = (searchParams.get("view") ?? "daily") as "daily" | "weekly" | "monthly";
+  const view       = (searchParams.get("view") ?? "daily") as "daily" | "weekly" | "monthly" | "quarterly";
   const campaignId = searchParams.get("campaignId") ?? "all";
 
   const anchorStr = searchParams.get("date");
   const anchor    = anchorStr ? parseDate(anchorStr) : addDays(new Date(), -1);
   anchor.setUTCHours(0, 0, 0, 0);
 
-  // Lookback window: daily=~12 weeks, weekly=~14 weeks, monthly=13 months
-  const lookbackDays = view === "daily" ? 12 * 7 + 7 : view === "weekly" ? 12 * 7 + 14 : 400;
+  // Lookback window: daily=~12 weeks, weekly=~14 weeks, monthly=13 months, quarterly=~2 years
+  const lookbackDays = view === "daily" ? 12 * 7 + 7 : view === "weekly" ? 12 * 7 + 14 : view === "quarterly" ? 600 : 400;
   const lookback = addDays(anchor, -lookbackDays);
 
   const where: Record<string, unknown> = { date: { gte: lookback, lte: anchor } };
@@ -371,6 +372,33 @@ export async function GET(req: NextRequest) {
 
       weekEnd = addDays(weekStart, -1);
     }
+  } else if (view === "quarterly") {
+    // Quarterly: last 6 calendar quarters (Q1=Jan-Mar, Q2=Apr-Jun, Q3=Jul-Sep, Q4=Oct-Dec)
+    const anchorQ   = Math.floor(anchor.getUTCMonth() / 3); // 0-indexed quarter
+    const anchorY   = anchor.getUTCFullYear();
+    for (let i = 0; i < 6; i++) {
+      const qi = anchorQ - i;
+      const yearOffset = qi < 0 ? Math.floor(qi / 4) : 0;
+      const q  = ((qi % 4) + 4) % 4; // 0-indexed quarter (0-3), always positive
+      const yr = anchorY + yearOffset;
+      const startMonth = q * 3;                                                    // 0-indexed month
+      const qStart = new Date(Date.UTC(yr, startMonth, 1));
+      const qEnd   = new Date(Date.UTC(yr, startMonth + 3, 0));                    // last day of quarter
+      const clampedEnd = qEnd > anchor ? anchor : qEnd;
+
+      if (qStart < lookback) break;
+
+      const bucket: DbRow[] = [];
+      let d = new Date(qStart);
+      while (d <= clampedEnd) {
+        const data = byDate.get(isoDate(d));
+        if (data) bucket.push(...data);
+        d = addDays(d, 1);
+      }
+
+      const label = `Q${q + 1} ${yr}`;
+      rows.push(aggregateDbRows(bucket, label, isoDate(qStart), isoDate(clampedEnd), true));
+    }
   } else {
     // Monthly: last 12 calendar months
     for (let i = 0; i < 12; i++) {
@@ -394,7 +422,8 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const avg12      = avgRow(rows);
+  const periodLabel = view === "quarterly" ? "6-period avg" : "12-period avg";
+  const avg12      = avgRow(rows, periodLabel);
   const wowDelta   = rows.length >= 2 ? deltaRow(rows[0], rows[1]) : null;
   const wowPct     = rows.length >= 2 ? pctDeltaRow(rows[0], rows[1]) : null;
   const avg12Delta = rows.length >= 1 ? deltaRow(rows[0], avg12) : null;
