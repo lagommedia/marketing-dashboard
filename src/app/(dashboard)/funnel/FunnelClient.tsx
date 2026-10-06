@@ -673,10 +673,11 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
   const [compareChannelBreakdown, setCompareChannelBreakdown] = useState<ChannelRow[] | null>(null);
 
   // Funnel-stage breakdown by HubSpot source channel
-  type FunnelChannelData = { leads: Record<string,number>; mqls: Record<string,number>; sqos: Record<string,number>; closedWon: Record<string,number> } | null;
-  const [funnelChannelData,        setFunnelChannelData]        = useState<FunnelChannelData>(null);
-  const [compareFunnelChannelData, setCompareFunnelChannelData] = useState<FunnelChannelData>(null);
+  type FunnelChannelData = { leads: Record<string,number>; mqls: Record<string,number>; sqos: Record<string,number>; closedWon: Record<string,number> };
+  const [funnelChannelData,        setFunnelChannelData]        = useState<FunnelChannelData | null>(null);
+  const [compareFunnelChannelData, setCompareFunnelChannelData] = useState<FunnelChannelData | null>(null);
   const [funnelChannelLoading,     setFunnelChannelLoading]     = useState(false);
+  const [expandedChannels,         setExpandedChannels]         = useState<Set<string>>(new Set());
 
   const currentYear = new Date().getFullYear();
   const quarterOptions: Quarter[] = [
@@ -1108,13 +1109,16 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
         </div>
       )}
 
-      {/* Channel breakdown */}
-      {channelBreakdown && channelBreakdown.length > 0 && (
+      {/* Traffic by Channel — expandable rows with funnel breakdown */}
+      {(channelBreakdown || compareChannelBreakdown) && (
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          {/* Panel header */}
           <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100">
             <div>
               <h3 className="text-sm font-semibold text-slate-800">Traffic by Channel</h3>
-              <p className="text-xs text-slate-400 mt-0.5">GA4 sessions — all traffic sources</p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                GA4 sessions · click any row to see Leads, MQLs, SQOs &amp; Closed Won
+              </p>
             </div>
             {compareQuarter && (
               <div className="flex items-center gap-3 text-xs text-slate-400">
@@ -1129,9 +1133,10 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
               </div>
             )}
           </div>
-          <div className="divide-y divide-slate-50">
+
+          {/* Rows */}
+          <div className="divide-y divide-slate-100">
             {(() => {
-              // Merge channels from both periods for a unified list
               const allChannels = Array.from(new Set([
                 ...(channelBreakdown ?? []).map(r => r.channel),
                 ...(compareChannelBreakdown ?? []).map(r => r.channel),
@@ -1143,148 +1148,167 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
 
               const totalPrimary = (channelBreakdown ?? []).reduce((s, r) => s + r.sessions, 0);
 
+              const FUNNEL_STAGES: { key: keyof FunnelChannelData; label: string }[] = [
+                { key: "leads",     label: "Leads"      },
+                { key: "mqls",      label: "MQLs"       },
+                { key: "sqos",      label: "SQOs"       },
+                { key: "closedWon", label: "Closed Won" },
+              ];
+
               return allChannels.map(ch => {
                 const primary  = channelBreakdown?.find(r => r.channel === ch)?.sessions ?? 0;
-                const compare  = compareChannelBreakdown?.find(r => r.channel === ch)?.sessions ?? 0;
+                const cmpSess  = compareChannelBreakdown?.find(r => r.channel === ch)?.sessions ?? 0;
                 const sharePct = totalPrimary > 0 ? (primary / totalPrimary) * 100 : 0;
-                const d        = compareQuarter && compare > 0
-                  ? { pct: Math.abs(((primary - compare) / compare) * 100).toFixed(0), positive: primary >= compare }
+                const sessDelta = compareQuarter && cmpSess > 0
+                  ? { pct: Math.abs(((primary - cmpSess) / cmpSess) * 100).toFixed(0), positive: primary >= cmpSess }
                   : null;
+                const isExpanded = expandedChannels.has(ch);
+
+                const toggleExpand = () =>
+                  setExpandedChannels(prev => {
+                    const next = new Set(prev);
+                    next.has(ch) ? next.delete(ch) : next.add(ch);
+                    return next;
+                  });
 
                 return (
-                  <div key={ch} className="flex items-center gap-4 px-5 py-3">
-                    <div className="w-36 shrink-0">
-                      <span className="text-xs font-medium text-slate-700">{ch}</span>
-                    </div>
-                    {/* Bar */}
-                    <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-indigo-400 transition-all"
-                        style={{ width: `${Math.min(sharePct, 100)}%` }}
-                      />
-                    </div>
-                    <div className="w-20 text-right shrink-0">
-                      <span className="text-sm font-semibold tabular-nums text-slate-800">
-                        {primary.toLocaleString()}
-                      </span>
-                    </div>
-                    {compareQuarter && (
-                      <>
-                        <div className="w-20 text-right shrink-0 text-violet-600 text-sm font-semibold tabular-nums">
-                          {compareChannelBreakdown ? compare.toLocaleString() : "—"}
-                        </div>
-                        <div className="w-16 text-right shrink-0">
-                          {d ? (
-                            <span className={cn("text-xs font-semibold", d.positive ? "text-emerald-600" : "text-rose-500")}>
-                              {d.positive ? "▲" : "▼"} {d.pct}%
-                            </span>
-                          ) : (
-                            <span className="text-xs text-slate-300">—</span>
-                          )}
-                        </div>
-                      </>
+                  <div key={ch}>
+                    {/* Summary row */}
+                    <button
+                      onClick={toggleExpand}
+                      className="w-full flex items-center gap-4 px-5 py-3 hover:bg-slate-50/70 transition-colors text-left group"
+                    >
+                      {/* Expand chevron */}
+                      <ChevronRight className={cn(
+                        "w-3.5 h-3.5 text-slate-300 shrink-0 transition-transform group-hover:text-slate-400",
+                        isExpanded && "rotate-90 text-indigo-400"
+                      )} />
+
+                      {/* Channel name */}
+                      <div className="w-32 shrink-0">
+                        <span className="text-xs font-medium text-slate-700">{ch}</span>
+                      </div>
+
+                      {/* Bar */}
+                      <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-indigo-400 transition-all"
+                          style={{ width: `${Math.min(sharePct, 100)}%` }}
+                        />
+                      </div>
+
+                      {/* Primary sessions */}
+                      <div className="w-20 text-right shrink-0">
+                        <span className="text-sm font-semibold tabular-nums text-slate-800">
+                          {primary.toLocaleString()}
+                        </span>
+                      </div>
+
+                      {/* Compare sessions + delta */}
+                      {compareQuarter && (
+                        <>
+                          <div className="w-20 text-right shrink-0 text-violet-600 text-sm font-semibold tabular-nums">
+                            {compareChannelBreakdown ? cmpSess.toLocaleString() : "—"}
+                          </div>
+                          <div className="w-14 text-right shrink-0">
+                            {sessDelta ? (
+                              <span className={cn("text-xs font-semibold", sessDelta.positive ? "text-emerald-600" : "text-rose-500")}>
+                                {sessDelta.positive ? "▲" : "▼"} {sessDelta.pct}%
+                              </span>
+                            ) : (
+                              <span className="text-xs text-slate-300">—</span>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </button>
+
+                    {/* Expanded funnel breakdown */}
+                    {isExpanded && (
+                      <div className="bg-slate-50 border-t border-slate-100 px-5 py-4">
+                        {funnelChannelLoading && !funnelChannelData ? (
+                          <div className="flex items-center gap-2 text-xs text-slate-400 py-2">
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading funnel data…
+                          </div>
+                        ) : (
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr>
+                                <th className="text-left pb-2 text-[10px] font-semibold text-slate-400 uppercase tracking-wide w-28" />
+                                {FUNNEL_STAGES.map(s => (
+                                  <th key={s.key} className="text-right pb-2 text-[10px] font-semibold text-slate-400 uppercase tracking-wide px-3">
+                                    {s.label}
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {/* Primary row */}
+                              <tr>
+                                <td className="py-2 font-semibold text-indigo-600 text-[11px]">
+                                  {activeQuarter?.label ?? "Current"}
+                                </td>
+                                {FUNNEL_STAGES.map(s => {
+                                  const val = funnelChannelData?.[s.key][ch] ?? 0;
+                                  return (
+                                    <td key={s.key} className="py-2 text-right px-3 font-semibold tabular-nums text-slate-800">
+                                      {funnelChannelData ? (val > 0 ? val.toLocaleString() : "—") : <span className="text-slate-300">—</span>}
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+
+                              {/* Compare row */}
+                              {compareQuarter && (
+                                <tr>
+                                  <td className="py-2 font-semibold text-violet-600 text-[11px]">
+                                    {compareQuarter.label}
+                                  </td>
+                                  {FUNNEL_STAGES.map(s => {
+                                    const val = compareFunnelChannelData?.[s.key][ch] ?? 0;
+                                    return (
+                                      <td key={s.key} className="py-2 text-right px-3 font-semibold tabular-nums text-violet-600">
+                                        {compareFunnelChannelData ? (val > 0 ? val.toLocaleString() : "—") : <span className="text-slate-300">—</span>}
+                                      </td>
+                                    );
+                                  })}
+                                </tr>
+                              )}
+
+                              {/* Delta row */}
+                              {compareQuarter && funnelChannelData && compareFunnelChannelData && (
+                                <tr className="border-t border-slate-200">
+                                  <td className="pt-2.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Change</td>
+                                  {FUNNEL_STAGES.map(s => {
+                                    const cur = funnelChannelData[s.key][ch] ?? 0;
+                                    const cmp = compareFunnelChannelData[s.key][ch] ?? 0;
+                                    const d = cmp > 0
+                                      ? { pct: Math.abs(((cur - cmp) / cmp) * 100).toFixed(0), positive: cur >= cmp }
+                                      : null;
+                                    return (
+                                      <td key={s.key} className="pt-2.5 text-right px-3">
+                                        {d ? (
+                                          <span className={cn("text-xs font-semibold", d.positive ? "text-emerald-600" : "text-rose-500")}>
+                                            {d.positive ? "▲" : "▼"} {d.pct}%
+                                          </span>
+                                        ) : (
+                                          <span className="text-xs text-slate-300">—</span>
+                                        )}
+                                      </td>
+                                    );
+                                  })}
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
                     )}
                   </div>
                 );
               });
             })()}
           </div>
-        </div>
-      )}
-
-      {/* Funnel by Channel (HubSpot source breakdown) */}
-      {(funnelChannelData || funnelChannelLoading) && (
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100">
-            <div>
-              <h3 className="text-sm font-semibold text-slate-800">Funnel by Channel</h3>
-              <p className="text-xs text-slate-400 mt-0.5">HubSpot source attribution — Leads, MQLs, SQOs, Closed Won</p>
-            </div>
-            {compareQuarter && (
-              <div className="flex items-center gap-3 text-xs text-slate-400">
-                <span className="flex items-center gap-1.5">
-                  <span className="inline-block w-2.5 h-2.5 rounded-full bg-indigo-500" />
-                  {activeQuarter?.label ?? "Current"}
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="inline-block w-2.5 h-2.5 rounded-full bg-violet-500" />
-                  {compareQuarter.label}
-                </span>
-              </div>
-            )}
-          </div>
-
-          {funnelChannelLoading && !funnelChannelData ? (
-            <div className="flex items-center justify-center py-10 text-slate-400 text-xs gap-2">
-              <Loader2 className="w-4 h-4 animate-spin" /> Loading channel data…
-            </div>
-          ) : funnelChannelData ? (() => {
-            const STAGES: { key: keyof NonNullable<FunnelChannelData>; label: string }[] = [
-              { key: "leads",     label: "Leads"      },
-              { key: "mqls",      label: "MQLs"       },
-              { key: "sqos",      label: "SQOs"       },
-              { key: "closedWon", label: "Closed Won" },
-            ];
-
-            // Collect all channels across all stages
-            const allChannels = Array.from(new Set([
-              ...Object.keys(funnelChannelData.leads),
-              ...Object.keys(funnelChannelData.mqls),
-              ...Object.keys(funnelChannelData.sqos),
-              ...Object.keys(funnelChannelData.closedWon),
-            ])).filter(c => c !== "(not set)" && c !== "Offline")
-               .sort((a, b) => (funnelChannelData.leads[b] ?? 0) - (funnelChannelData.leads[a] ?? 0));
-
-            const other = allChannels.includes("(not set)") ? ["(not set)"] : [];
-
-            return (
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b border-slate-100">
-                      <th className="text-left px-5 py-2.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wide w-40">Channel</th>
-                      {STAGES.map(s => (
-                        <th key={s.key} className="text-right px-4 py-2.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">
-                          {s.label}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-50">
-                    {[...allChannels, ...other].map(ch => (
-                      <tr key={ch} className="hover:bg-slate-50/60 transition-colors">
-                        <td className="px-5 py-3 font-medium text-slate-700 whitespace-nowrap">{ch}</td>
-                        {STAGES.map(s => {
-                          const cur = funnelChannelData[s.key][ch] ?? 0;
-                          const cmp = compareFunnelChannelData?.[s.key][ch] ?? 0;
-                          const d = compareQuarter && compareFunnelChannelData && cmp > 0
-                            ? { pct: Math.abs(((cur - cmp) / cmp) * 100).toFixed(0), positive: cur >= cmp }
-                            : null;
-                          return (
-                            <td key={s.key} className="px-4 py-3 text-right whitespace-nowrap">
-                              <span className="font-semibold tabular-nums text-slate-800">
-                                {cur > 0 ? cur.toLocaleString() : <span className="text-slate-300">—</span>}
-                              </span>
-                              {compareQuarter && compareFunnelChannelData && (
-                                <div className="text-violet-600 font-semibold tabular-nums text-[11px] leading-none mt-0.5">
-                                  {cmp > 0 ? cmp.toLocaleString() : <span className="text-slate-300">—</span>}
-                                </div>
-                              )}
-                              {d && (
-                                <div className={cn("text-[10px] font-semibold leading-none mt-0.5", d.positive ? "text-emerald-600" : "text-rose-500")}>
-                                  {d.positive ? "▲" : "▼"} {d.pct}%
-                                </div>
-                              )}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            );
-          })() : null}
         </div>
       )}
 
