@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { ExternalLink, X, Bell, ChevronRight, ChevronLeft, Loader2, AlertTriangle, Globe, Bot, Send, Sparkles, RefreshCw, Clock, Trash2, ChevronDown, Search, MousePointerClick, GitCompare } from "lucide-react";
+import { ExternalLink, X, Bell, ChevronRight, ChevronLeft, Loader2, AlertTriangle, Globe, Bot, Send, Sparkles, RefreshCw, Clock, Trash2, ChevronDown, Search, MousePointerClick } from "lucide-react";
 import { useChatHistory, relativeTime, type ChatSession } from "@/lib/use-chat-history";
 import { cn } from "@/lib/utils";
 
@@ -666,7 +666,6 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
   const [compareQuarter, setCompareQuarter] = useState<Quarter | null>(null);
   const [compareCounts,  setCompareCounts]  = useState<FunnelCounts | null>(null);
   const [compareLoading, setCompareLoading] = useState(false);
-  const [showQPicker,    setShowQPicker]    = useState(false);
 
   const currentYear = new Date().getFullYear();
   const quarterOptions: Quarter[] = [
@@ -732,79 +731,64 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
   return (
     <>
       {/* Quarter tab bar */}
-      <div className="flex items-center gap-1 overflow-x-auto pb-0.5">
-        {quartersForYear(currentYear - 1).concat(quartersForYear(currentYear)).map(q => {
-          const isActive = activeQuarter?.label === q.label;
-          const isFuture = q.from > new Date().toISOString().slice(0, 10);
-          if (isFuture) return null;
-          return (
-            <button
-              key={q.label}
-              onClick={() => navigateToQuarter(q)}
-              className={cn(
-                "shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors",
-                isActive
-                  ? "bg-indigo-600 text-white border-indigo-600"
-                  : "bg-white text-slate-500 border-slate-200 hover:border-indigo-300 hover:text-indigo-600"
-              )}
-            >
-              {q.label}
-            </button>
-          );
-        })}
-
-        <div className="ml-auto flex items-center gap-2 shrink-0 relative">
-          {/* Compare button */}
-          <button
-            onClick={() => setShowQPicker(v => !v)}
-            className={cn(
-              "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors",
-              compareQuarter
-                ? "bg-violet-50 text-violet-700 border-violet-300"
-                : "bg-white text-slate-500 border-slate-200 hover:border-violet-300 hover:text-violet-600"
-            )}
-          >
-            <GitCompare className="w-3.5 h-3.5" />
-            {compareQuarter ? `vs ${compareQuarter.label}` : "Compare"}
-          </button>
-
-          {/* Quarter picker dropdown */}
-          {showQPicker && (
-            <div className="absolute top-full right-0 mt-1 z-30 bg-white border border-slate-200 rounded-xl shadow-lg p-2 min-w-[160px]">
-              <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide px-2 pb-1">Compare to</p>
-              {quarterOptions.map(q => {
-                const isFuture = q.from > new Date().toISOString().slice(0, 10);
-                const isCurrent = activeQuarter?.label === q.label;
-                if (isFuture || isCurrent) return null;
-                return (
-                  <button
-                    key={q.label}
-                    onClick={() => {
-                      setCompareQuarter(compareQuarter?.label === q.label ? null : q);
-                      setShowQPicker(false);
-                    }}
-                    className={cn(
-                      "w-full text-left px-2 py-1.5 rounded-lg text-xs font-medium transition-colors",
-                      compareQuarter?.label === q.label
-                        ? "bg-violet-50 text-violet-700"
-                        : "text-slate-600 hover:bg-slate-50"
-                    )}
-                  >
-                    {q.label}
-                  </button>
-                );
-              })}
-              {compareQuarter && (
-                <button
-                  onClick={() => { setCompareQuarter(null); setShowQPicker(false); }}
-                  className="w-full text-left px-2 py-1.5 rounded-lg text-xs font-medium text-rose-500 hover:bg-rose-50 mt-1 border-t border-slate-100 pt-2"
-                >
-                  Clear comparison
-                </button>
-              )}
-            </div>
-          )}
+      <div className="space-y-1.5">
+        {/* Primary quarter row */}
+        <div className="flex items-center gap-1 overflow-x-auto pb-0.5">
+          {quartersForYear(currentYear - 1).concat(quartersForYear(currentYear)).map(q => {
+            const isActive = activeQuarter?.label === q.label;
+            const isFuture = q.from > new Date().toISOString().slice(0, 10);
+            if (isFuture) return null;
+            return (
+              <button
+                key={q.label}
+                onClick={() => navigateToQuarter(q)}
+                className={cn(
+                  "shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors",
+                  isActive
+                    ? "bg-indigo-600 text-white border-indigo-600"
+                    : "bg-white text-slate-500 border-slate-200 hover:border-indigo-300 hover:text-indigo-600"
+                )}
+              >
+                {q.label}
+              </button>
+            );
+          })}
         </div>
+
+        {/* Compare row — shown only when a primary quarter is active */}
+        {activeQuarter && (
+          <div className="flex items-center gap-1 overflow-x-auto pb-0.5">
+            <span className="shrink-0 text-[10px] font-semibold text-slate-400 uppercase tracking-wide mr-1">vs</span>
+            {quartersForYear(currentYear - 1).concat(quartersForYear(currentYear)).map(q => {
+              const isFuture  = q.from > new Date().toISOString().slice(0, 10);
+              const isPrimary = activeQuarter.label === q.label;
+              const isCompare = compareQuarter?.label === q.label;
+              if (isFuture || isPrimary) return null;
+              return (
+                <button
+                  key={q.label}
+                  onClick={() => setCompareQuarter(isCompare ? null : q)}
+                  className={cn(
+                    "shrink-0 px-3 py-1 rounded-lg text-xs font-semibold border transition-colors",
+                    isCompare
+                      ? "bg-violet-600 text-white border-violet-600"
+                      : "bg-white text-slate-400 border-slate-200 hover:border-violet-300 hover:text-violet-600"
+                  )}
+                >
+                  {q.label}
+                </button>
+              );
+            })}
+            {compareQuarter && (
+              <button
+                onClick={() => setCompareQuarter(null)}
+                className="shrink-0 ml-1 px-2 py-1 rounded-lg text-[10px] font-semibold border border-slate-200 text-slate-400 hover:text-rose-500 hover:border-rose-200 transition-colors"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Top controls row */}
@@ -843,8 +827,6 @@ export function FunnelClient({ from, to, estimatedSpend, initialNotifCount }: Pr
       </div>
 
       {/* Funnel */}
-      {/* Close picker on outside click */}
-      {showQPicker && <div className="fixed inset-0 z-20" onClick={() => setShowQPicker(false)} />}
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
         {/* Column headings */}
         <div className={cn(
