@@ -360,7 +360,7 @@ export async function syncHubspot(): Promise<{ recordsCount: number }> {
     const ch = getDealChannel(deal);
     if (!ch) continue;
     // Count only new business deals; revenue includes all closed won (new + cross-sell)
-    if (deal.dealtype === "newbusiness") closedTotals[ch].count += 1;
+    if (deal.dealtype === "newbusiness" || deal.dealtype === "existingbusiness") closedTotals[ch].count += 1;
     closedTotals[ch].revenue += deal.amount;
   }
 
@@ -2156,16 +2156,16 @@ export async function backfillHubspot(
     const ch = getDealChannel(d);
     if (!ch) continue; // not marketing-attributed (Sales, Partnerships, Service, Success, etc.)
     const bucket  = getDay(d.date);
-    const isNew   = d.dealtype === "newbusiness"; // count only new business; revenue includes all
+    const countsClosed = d.dealtype === "newbusiness" || d.dealtype === "existingbusiness";
     if (ch === "direct") {
-      if (isNew) {
+      if (countsClosed) {
         bucket.paid_media.closedWon += 0.5;
         bucket.organic.closedWon    += 0.5;
       }
       bucket.paid_media.revenue += d.amount * 0.5;
       bucket.organic.revenue    += d.amount * 0.5;
     } else {
-      if (isNew) bucket[ch].closedWon += 1;
+      if (countsClosed) bucket[ch].closedWon += 1;
       bucket[ch].revenue += d.amount;
     }
   }
