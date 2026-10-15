@@ -1913,6 +1913,17 @@ export async function fetchNewPipelineBreakdown(from: Date, to: Date, channel?: 
   const completed = quarters.filter((q) => !q.isCurrent);
   const current   = quarters.find((q)  =>  q.isCurrent);
 
+  // The most recently completed quarter (immediately before the current one) is
+  // refreshed if its cache is older than 24 h — handles the quarter-rollover case
+  // where the cache may have been written with partial data right after Q-end.
+  const now2      = new Date();
+  const curQ2     = Math.floor(now2.getMonth() / 3);
+  const curYear2  = now2.getFullYear();
+  const prevQ2    = (curQ2 - 1 + 4) % 4;
+  const prevYear2 = curQ2 === 0 ? curYear2 - 1 : curYear2;
+  const prevQuarterLabel = `Q${prevQ2 + 1} ${prevYear2}`;
+  const PREV_Q_TTL_MS    = 24 * 60 * 60 * 1000;
+
   // ── Completed quarters: serve from cache, fetch only what's missing ──────
   const cachedRows = completed.length
     ? await prisma.pipelineQuarterSnapshot.findMany({
@@ -1922,7 +1933,11 @@ export async function fetchNewPipelineBreakdown(from: Date, to: Date, channel?: 
   const cachedLabels = new Set([...new Set(cachedRows.map((r) => r.quarter))]);
 
   for (const q of completed) {
-    if (cachedLabels.has(q.label)) continue;   // already cached — skip
+    if (cachedLabels.has(q.label)) {
+      if (q.label !== prevQuarterLabel) continue; // older quarter — cache is permanent
+      const firstRow = cachedRows.find((r) => r.quarter === q.label);
+      if (firstRow && Date.now() - firstRow.syncedAt.getTime() < PREV_Q_TTL_MS) continue;
+    }
 
     console.log(`[pipeline cache] fetching ${q.label} from HubSpot…`);
     const deals = await fetchPipelineDeals(token, [

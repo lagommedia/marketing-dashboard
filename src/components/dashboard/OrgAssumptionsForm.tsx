@@ -9,6 +9,9 @@ interface ExistingTarget {
   targetRevenue?:  number | null;
   targetSpend?:    number | null;
   targetClosedWon?: number | null;
+  targetMqls?:     number | null;
+  targetSqos?:     number | null;
+  targetPipeline?: number | null;
   arpu?:           number | null;
   grossMargin?:    number | null;  // stored as decimal e.g. 0.75
   arrChurnPct?:    number | null;  // stored as decimal e.g. 0.05
@@ -38,6 +41,12 @@ const FIELDS: Field[] = [
     hint: "Headcount + Tools + Advertising" },
   { key: "targetClosedWon", label: "Closed Won Target", placeholder: "20",
     hint: "New customers this quarter" },
+  { key: "targetMqls",     label: "MQL Target",       placeholder: "200",
+    hint: "Marketing qualified leads target" },
+  { key: "targetSqos",     label: "SQO Target",       placeholder: "50",
+    hint: "Sales qualified opportunities target" },
+  { key: "targetPipeline", label: "Pipeline Target",  placeholder: "2000000", prefix: "$",
+    hint: "New pipeline generated target" },
   { key: "arpu",           label: "Estimated ARPU",   placeholder: "12000",   prefix: "$",
     hint: "Average revenue per account (annual)" },
   { key: "grossMargin",    label: "Gross Margin %",   placeholder: "75",      suffix: "%",
