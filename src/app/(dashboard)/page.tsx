@@ -475,11 +475,18 @@ type PacingMap = {
   spend:     MetricPace | null;
 };
 
-async function getQtdPacing(channel: Channel): Promise<PacingMap> {
+async function getQtdPacing(channel: Channel, selectedFrom: Date): Promise<PacingMap> {
   const none: PacingMap = { mqls: null, sqos: null, pipeline: null, closedWon: null, revenue: null, spend: null };
 
   const { start, elapsed, period, label } = getCurrentQuarter();
   if (elapsed <= 0) return none;
+
+  // Only show pacing when the selected range is the current quarter.
+  const selQ    = Math.floor(selectedFrom.getMonth() / 3);
+  const selYear = selectedFrom.getFullYear();
+  const curQ    = Math.floor(start.getMonth() / 3);
+  const curYear = start.getFullYear();
+  if (selYear !== curYear || selQ !== curQ) return none;
 
   const toEnd = new Date();
   toEnd.setHours(23, 59, 59, 999);
@@ -589,7 +596,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const [metrics, connectedCount, pacing, effSparklines, estimatedSpendResult] = await Promise.all([
     getMetrics(channel, fromDate, toDate),
     getConnectedCount(),
-    getQtdPacing(channel),
+    getQtdPacing(channel, fromDate),
     getEfficiencySparklines(channel, rawSparkPeriods),
     getEstimatedMarketingSpend(fromDate, toDate),
   ]);
