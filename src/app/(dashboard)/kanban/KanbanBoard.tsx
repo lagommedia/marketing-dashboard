@@ -1449,6 +1449,10 @@ export function KanbanBoard() {
   // Backlog-page drag zones: "sprint-section" | "backlog-section"
   const [backlogDragOver, setBacklogDragOver] = useState<"sprint" | "backlog" | null>(null);
 
+  // Inline editing on collapsed backlog rows
+  const [inlineEdit, setInlineEdit] = useState<{ cardId: string; field: "title" | "priority" | "pts" } | null>(null);
+  const [inlineVal,  setInlineVal]  = useState<string>("");
+
   const dragging  = useRef<Card | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
 
@@ -1528,6 +1532,21 @@ export function KanbanBoard() {
       )
     );
     setCards(prev => [...prev, ...created]);
+  }
+
+  async function commitInlineEdit(cardId: string, field: "title" | "priority" | "pts", value: string) {
+    setInlineEdit(null);
+    if (field === "title" && !value.trim()) return;
+    const payload =
+      field === "title"    ? { title: value.trim() } :
+      field === "priority" ? { priority: value === "" ? null : Number(value) } :
+                             { storyPoints: value === "" ? null : Number(value) };
+    const res = await fetch(`/api/kanban/cards/${cardId}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const updated = await res.json();
+    setCards(prev => prev.map(c => c.id === cardId ? updated : c));
   }
 
   async function moveToSprint(card: Card) {
@@ -1974,19 +1993,112 @@ export function KanbanBoard() {
                       {/* Collapsed row */}
                       <div
                         className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 group transition-colors cursor-pointer"
-                        onClick={() => setExpandedCardId(isExpanded ? null : card.id)}
+                        onClick={e => {
+                          if ((e.target as HTMLElement).closest("[data-inline]")) return;
+                          setExpandedCardId(isExpanded ? null : card.id);
+                        }}
                       >
                         <GripVertical className="w-4 h-4 text-slate-300 shrink-0" onClick={e => e.stopPropagation()} />
                         <ChevronDown className={cn("w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform", isExpanded && "rotate-180")} />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-slate-800 truncate">{card.title}</p>
+
+                        {/* Title — double-click to edit */}
+                        <div className="flex-1 min-w-0" data-inline>
+                          {inlineEdit?.cardId === card.id && inlineEdit.field === "title" ? (
+                            <input
+                              autoFocus
+                              className="w-full text-sm font-medium text-slate-800 bg-white border border-indigo-400 rounded px-1.5 py-0.5 outline-none"
+                              value={inlineVal}
+                              onChange={e => setInlineVal(e.target.value)}
+                              onBlur={() => commitInlineEdit(card.id, "title", inlineVal)}
+                              onKeyDown={e => {
+                                if (e.key === "Enter") commitInlineEdit(card.id, "title", inlineVal);
+                                if (e.key === "Escape") setInlineEdit(null);
+                              }}
+                              onClick={e => e.stopPropagation()}
+                            />
+                          ) : (
+                            <p
+                              className="text-sm font-medium text-slate-800 truncate hover:bg-indigo-50 rounded px-0.5 cursor-text"
+                              title="Double-click to edit title"
+                              onDoubleClick={e => {
+                                e.stopPropagation();
+                                setInlineEdit({ cardId: card.id, field: "title" });
+                                setInlineVal(card.title);
+                              }}
+                            >{card.title}</p>
+                          )}
                           {!isExpanded && card.description && (
                             <p className="text-xs text-slate-500 truncate">{card.description}</p>
                           )}
                         </div>
-                        <div className="flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
-                          {card.priority != null && <PriorityBadge priority={card.priority} />}
-                          {card.storyPoints != null && <StoryBadge pts={card.storyPoints} />}
+
+                        <div className="flex items-center gap-2 shrink-0" data-inline onClick={e => e.stopPropagation()}>
+                          {/* Priority — double-click to pick */}
+                          {inlineEdit?.cardId === card.id && inlineEdit.field === "priority" ? (
+                            <div className="flex gap-1 flex-wrap max-w-[200px]">
+                              {PRIORITY_LEVELS.map(p => (
+                                <button key={p.level} type="button"
+                                  className={cn("inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold", p.color,
+                                    card.priority === p.level && "ring-2 ring-offset-1 ring-indigo-400")}
+                                  onClick={() => commitInlineEdit(card.id, "priority", String(p.level))}>
+                                  {p.label}
+                                </button>
+                              ))}
+                              <button type="button"
+                                className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-500"
+                                onClick={() => commitInlineEdit(card.id, "priority", "")}>
+                                Clear
+                              </button>
+                            </div>
+                          ) : (
+                            <span
+                              title="Double-click to change priority"
+                              onDoubleClick={() => {
+                                setInlineEdit({ cardId: card.id, field: "priority" });
+                                setInlineVal(card.priority != null ? String(card.priority) : "");
+                              }}
+                              className="cursor-pointer"
+                            >
+                              {card.priority != null
+                                ? <PriorityBadge priority={card.priority} />
+                                : <span className="opacity-0 group-hover:opacity-100 text-[10px] text-slate-400 border border-dashed border-slate-300 rounded px-1.5 py-0.5">P?</span>
+                              }
+                            </span>
+                          )}
+
+                          {/* Story points — double-click to edit */}
+                          {inlineEdit?.cardId === card.id && inlineEdit.field === "pts" ? (
+                            <div className="flex gap-1">
+                              {[1,2,3,5,8,13].map(n => (
+                                <button key={n} type="button"
+                                  className={cn("w-6 h-6 rounded text-[11px] font-bold",
+                                    card.storyPoints === n ? "bg-violet-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-violet-100")}
+                                  onClick={() => commitInlineEdit(card.id, "pts", String(n))}>
+                                  {n}
+                                </button>
+                              ))}
+                              <button type="button"
+                                className="w-6 h-6 rounded text-[11px] font-bold bg-slate-100 text-slate-500 hover:bg-slate-200"
+                                onClick={() => commitInlineEdit(card.id, "pts", "")}>
+                                ×
+                              </button>
+                            </div>
+                          ) : (
+                            <span
+                              title="Double-click to set story points"
+                              onDoubleClick={() => {
+                                setInlineEdit({ cardId: card.id, field: "pts" });
+                                setInlineVal(card.storyPoints != null ? String(card.storyPoints) : "");
+                              }}
+                              className="cursor-pointer"
+                            >
+                              {card.storyPoints != null
+                                ? <StoryBadge pts={card.storyPoints} />
+                                : <span className="opacity-0 group-hover:opacity-100 text-[10px] text-slate-400 border border-dashed border-slate-300 rounded px-1.5 py-0.5">pts</span>
+                              }
+                            </span>
+                          )}
+
                           {card.assignee && <Avatar member={card.assignee} />}
                           {activeSprint && (
                             <button onClick={() => moveToSprint(card)} title="Move to active sprint"
