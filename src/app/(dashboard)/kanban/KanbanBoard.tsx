@@ -265,7 +265,7 @@ function CardModal({
   const [description, setDescription] = useState(card.description ?? "");
   const [assigneeId,  setAssigneeId]  = useState<string | null>(card.assigneeId ?? null);
   const [dueDate,     setDueDate]     = useState(card.dueDate ? card.dueDate.slice(0, 10) : "");
-  const [priority,    setPriority]    = useState<number | null>(card.priority ?? null);
+  const [priority,    setPriority]    = useState<number | null>(card.priority ?? 7);
   const [saving,      setSaving]      = useState(false);
 
   const [checklist,       setChecklist]       = useState<ChecklistItem[]>(card.checklist ?? []);
@@ -1492,6 +1492,8 @@ export function KanbanBoard() {
       setCards(prev => prev.map(c => c.id === id ? updated : c));
     } else {
       const payload = {
+        priority: 7,
+        storyPoints: 0,
         ...cardModal?.card, ...data,
         sprintId:  cardModal?.card.type === "sprint" ? activeSprint?.id ?? null : null,
         checklist: undefined,
