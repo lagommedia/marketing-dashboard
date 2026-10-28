@@ -47,6 +47,7 @@ type Sprint = {
   endDate:     string | null;
   status:      "active" | "completed";
   completedAt: string | null;
+  createdAt:   string;
   cards:       Card[];
 };
 
@@ -1118,6 +1119,7 @@ export function KanbanBoard() {
   async function handleSaveCard(data: Partial<Card>) {
     const id = cardModal?.card.id;
     if (id) {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { checklist: _cl, ...rest } = data as Card;
       const res = await fetch(`/api/kanban/cards/${id}`, {
         method: "PUT", headers: { "Content-Type": "application/json" },
