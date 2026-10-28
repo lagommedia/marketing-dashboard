@@ -8,7 +8,10 @@ export async function GET() {
     orderBy: { createdAt: "desc" },
     include: {
       cards: {
-        include: { assignee: true },
+        include: {
+          assignee: true,
+          checklist: { include: { assignee: true }, orderBy: { position: "asc" } },
+        },
         orderBy: { position: "asc" },
       },
     },
@@ -32,7 +35,14 @@ export async function POST(req: Request) {
       endDate:   endDate   ? new Date(endDate)   : null,
       status:    "active",
     },
-    include: { cards: { include: { assignee: true } } },
+    include: {
+      cards: {
+        include: {
+          assignee: true,
+          checklist: { include: { assignee: true }, orderBy: { position: "asc" } },
+        },
+      },
+    },
   });
 
   return NextResponse.json(sprint, { status: 201 });

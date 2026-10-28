@@ -18,7 +18,14 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       ...(status    !== undefined && { status                            }),
       ...(status === "completed"  && { completedAt: new Date()           }),
     },
-    include: { cards: { include: { assignee: true } } },
+    include: {
+      cards: {
+        include: {
+          assignee: true,
+          checklist: { include: { assignee: true }, orderBy: { position: "asc" } },
+        },
+      },
+    },
   });
 
   return NextResponse.json(sprint);

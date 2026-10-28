@@ -3,23 +3,33 @@ import { prisma } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
+const CARD_INCLUDE = {
+  assignee: true,
+  checklist: {
+    include: { assignee: true },
+    orderBy: { position: "asc" as const },
+  },
+};
+
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const body = await req.json();
-  const { title, description, type, status, storyPoints, assigneeId, position } = body;
+  const { title, description, type, status, storyPoints, assigneeId, position, dueDate, sprintId } = body;
 
   const card = await prisma.kanbanCard.update({
     where: { id },
     data: {
-      ...(title       !== undefined && { title:       title.trim()       }),
+      ...(title       !== undefined && { title:       title.trim()              }),
       ...(description !== undefined && { description: description?.trim() || null }),
-      ...(type        !== undefined && { type                             }),
-      ...(status      !== undefined && { status                          }),
-      ...(storyPoints !== undefined && { storyPoints                     }),
-      ...(assigneeId  !== undefined && { assigneeId:  assigneeId || null }),
-      ...(position    !== undefined && { position                        }),
+      ...(type        !== undefined && { type                                   }),
+      ...(status      !== undefined && { status                                 }),
+      ...(storyPoints !== undefined && { storyPoints                            }),
+      ...(assigneeId  !== undefined && { assigneeId:  assigneeId || null        }),
+      ...(position    !== undefined && { position                               }),
+      ...(dueDate     !== undefined && { dueDate:     dueDate ? new Date(dueDate) : null }),
+      ...(sprintId    !== undefined && { sprintId:    sprintId ?? null          }),
     },
-    include: { assignee: true },
+    include: CARD_INCLUDE,
   });
 
   return NextResponse.json(card);

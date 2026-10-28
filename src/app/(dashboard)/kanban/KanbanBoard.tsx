@@ -13,6 +13,17 @@ import { cn } from "@/lib/utils";
 
 type Member = { id: string; name: string; email: string | null; color: string };
 
+type ChecklistItem = {
+  id:          string;
+  cardId:      string;
+  title:       string;
+  completed:   boolean;
+  storyPoints: number | null;
+  assigneeId:  string | null;
+  assignee:    Member | null;
+  position:    number;
+};
+
 type Card = {
   id:          string;
   title:       string;
@@ -20,9 +31,11 @@ type Card = {
   type:        "backlog" | "sprint";
   status:      "backlog" | "not_started" | "in_progress" | "under_review" | "completed";
   storyPoints: number | null;
+  dueDate:     string | null;
   assigneeId:  string | null;
   assignee:    Member | null;
   sprintId:    string | null;
+  checklist:   ChecklistItem[];
   position:    number;
 };
 
@@ -98,13 +111,29 @@ function CardModal({
   const [description, setDescription] = useState(card.description ?? "");
   const [pts,         setPts]         = useState<number | null>(card.storyPoints ?? null);
   const [assigneeId,  setAssigneeId]  = useState<string | null>(card.assigneeId ?? null);
+  const [dueDate,     setDueDate]     = useState(card.dueDate ? card.dueDate.slice(0, 10) : "");
   const [saving,      setSaving]      = useState(false);
+
+  // Checklist local state (only available when editing an existing card)
+  const [checklist,   setChecklist]   = useState<ChecklistItem[]>(card.checklist ?? []);
+  const [newItemTitle, setNewItemTitle] = useState("");
+  const [newItemPts,   setNewItemPts]   = useState<number | null>(null);
+  const [newItemAssignee, setNewItemAssignee] = useState<string | null>(null);
+  const [addingItem,   setAddingItem]  = useState(false);
+
+  const isExisting = !!card.id;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!title.trim()) return;
     setSaving(true);
-    await onSave({ title, description: description || null, storyPoints: pts, assigneeId });
+    await onSave({
+      title,
+      description: description || null,
+      storyPoints: pts,
+      assigneeId,
+      dueDate: dueDate || null,
+    });
     setSaving(false);
     onClose();
   }
@@ -117,71 +146,264 @@ function CardModal({
     onClose();
   }
 
+  async function addChecklistItem(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newItemTitle.trim() || !card.id) return;
+    setAddingItem(true);
+    const res = await fetch(`/api/kanban/cards/${card.id}/checklist`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: newItemTitle, storyPoints: newItemPts, assigneeId: newItemAssignee }),
+    });
+    const item = await res.json();
+    setChecklist(prev => [...prev, item]);
+    setNewItemTitle(""); setNewItemPts(null); setNewItemAssignee(null);
+    setAddingItem(false);
+  }
+
+  async function toggleItem(item: ChecklistItem) {
+    const res = await fetch(`/api/kanban/checklist/${item.id}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ completed: !item.completed }),
+    });
+    const updated = await res.json();
+    setChecklist(prev => prev.map(i => i.id === item.id ? updated : i));
+  }
+
+  async function deleteItem(id: string) {
+    await fetch(`/api/kanban/checklist/${id}`, { method: "DELETE" });
+    setChecklist(prev => prev.filter(i => i.id !== id));
+  }
+
+  async function updateItemAssignee(item: ChecklistItem, memberId: string | null) {
+    const res = await fetch(`/api/kanban/checklist/${item.id}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ assigneeId: memberId }),
+    });
+    const updated = await res.json();
+    setChecklist(prev => prev.map(i => i.id === item.id ? updated : i));
+  }
+
+  const doneCount  = checklist.filter(i => i.completed).length;
+  const totalCount = checklist.length;
+  const donePts    = checklist.filter(i => i.completed).reduce((s, i) => s + (i.storyPoints ?? 0), 0);
+  const totalPtsChecklist = checklist.reduce((s, i) => s + (i.storyPoints ?? 0), 0);
+
+  // Overdue detection
+  const isOverdue = dueDate && new Date(dueDate) < new Date() && card.status !== "completed";
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-md">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-          <h3 className="text-sm font-semibold text-slate-900">{card.id ? "Edit card" : "New card"}</h3>
+      <div className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-lg max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 shrink-0">
+          <h3 className="text-sm font-semibold text-slate-900">{isExisting ? "Edit card" : "New card"}</h3>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors">
             <X className="w-4 h-4 text-slate-500" />
           </button>
         </div>
-        <form onSubmit={submit} className="p-5 space-y-4">
-          <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">Title *</label>
-            <input
-              autoFocus type="text" value={title} onChange={e => setTitle(e.target.value)}
-              placeholder="Card title" required
-              className="w-full text-sm rounded-lg border border-slate-200 px-3 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">Description</label>
-            <textarea
-              value={description} onChange={e => setDescription(e.target.value)}
-              placeholder="Optional description…" rows={3}
-              className="w-full text-sm rounded-lg border border-slate-200 px-3 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-700 mb-2">Story points (Fibonacci)</label>
-            <div className="flex gap-1.5 flex-wrap">
-              {FIBONACCI.map(n => (
-                <button key={n} type="button" onClick={() => setPts(pts === n ? null : n)}
-                  className={cn(
-                    "w-8 h-8 rounded-full text-xs font-bold transition-colors",
-                    pts === n ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-indigo-100 hover:text-indigo-700"
-                  )}>
-                  {n}
-                </button>
-              ))}
+
+        <div className="overflow-y-auto flex-1">
+          <form onSubmit={submit} id="card-form" className="p-5 space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Title *</label>
+              <input
+                autoFocus type="text" value={title} onChange={e => setTitle(e.target.value)}
+                placeholder="Card title" required
+                className="w-full text-sm rounded-lg border border-slate-200 px-3 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              />
             </div>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">Assignee</label>
-            <select value={assigneeId ?? ""} onChange={e => setAssigneeId(e.target.value || null)}
-              className="w-full text-sm rounded-lg border border-slate-200 px-3 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500">
-              <option value="">Unassigned</option>
-              {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-            </select>
-          </div>
-          <div className="flex gap-2 pt-1">
-            {onDelete && (
-              <button type="button" onClick={handleDelete} disabled={saving}
-                className="p-2.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors" title="Delete card">
-                <Trash2 className="w-4 h-4" />
-              </button>
-            )}
-            <button type="button" onClick={onClose}
-              className="flex-1 px-4 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors">
-              Cancel
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Description</label>
+              <textarea
+                value={description} onChange={e => setDescription(e.target.value)}
+                placeholder="Optional description…" rows={2}
+                className="w-full text-sm rounded-lg border border-slate-200 px-3 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none"
+              />
+            </div>
+
+            {/* Due date + Assignee row */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Due date</label>
+                <input
+                  type="date" value={dueDate} onChange={e => setDueDate(e.target.value)}
+                  className={cn(
+                    "w-full text-sm rounded-lg border px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500",
+                    isOverdue ? "border-red-300 text-red-600 bg-red-50" : "border-slate-200 text-slate-900"
+                  )}
+                />
+                {isOverdue && <p className="text-[10px] text-red-500 mt-0.5">Overdue</p>}
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Owner (overall responsible)</label>
+                <select value={assigneeId ?? ""} onChange={e => setAssigneeId(e.target.value || null)}
+                  className="w-full text-sm rounded-lg border border-slate-200 px-3 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                  <option value="">Unassigned</option>
+                  {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-2">Card story points (Fibonacci)</label>
+              <div className="flex gap-1.5 flex-wrap">
+                {FIBONACCI.map(n => (
+                  <button key={n} type="button" onClick={() => setPts(pts === n ? null : n)}
+                    className={cn(
+                      "w-8 h-8 rounded-full text-xs font-bold transition-colors",
+                      pts === n ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-indigo-100 hover:text-indigo-700"
+                    )}>
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </form>
+
+          {/* Checklist — only for existing cards */}
+          {isExisting && (
+            <div className="px-5 pb-5 space-y-3 border-t border-slate-100 pt-4">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-semibold text-slate-700 uppercase tracking-wide">
+                  Task checklist
+                </h4>
+                {totalCount > 0 && (
+                  <span className="text-xs text-slate-500">
+                    {doneCount}/{totalCount} done
+                    {totalPtsChecklist > 0 && ` · ${donePts}/${totalPtsChecklist} pts`}
+                  </span>
+                )}
+              </div>
+
+              {/* Progress bar */}
+              {totalCount > 0 && (
+                <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-indigo-500 rounded-full transition-all"
+                    style={{ width: `${Math.round((doneCount / totalCount) * 100)}%` }}
+                  />
+                </div>
+              )}
+
+              {/* Items */}
+              <div className="space-y-1.5">
+                {checklist.map(item => (
+                  <div key={item.id} className="flex items-start gap-2 group">
+                    <button
+                      type="button"
+                      onClick={() => toggleItem(item)}
+                      className={cn(
+                        "mt-0.5 w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors",
+                        item.completed
+                          ? "bg-indigo-500 border-indigo-500"
+                          : "border-slate-300 hover:border-indigo-400"
+                      )}
+                    >
+                      {item.completed && <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 10 10"><path d="M1.5 5l2.5 2.5 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                    </button>
+                    <div className="flex-1 min-w-0">
+                      <p className={cn("text-sm", item.completed ? "line-through text-slate-400" : "text-slate-700")}>
+                        {item.title}
+                      </p>
+                      <div className="flex items-center gap-2 mt-1">
+                        {item.storyPoints != null && (
+                          <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-indigo-100 text-indigo-700 text-[9px] font-bold">
+                            {item.storyPoints}
+                          </span>
+                        )}
+                        {/* Per-item assignee selector */}
+                        <select
+                          value={item.assigneeId ?? ""}
+                          onChange={e => updateItemAssignee(item, e.target.value || null)}
+                          className="text-[10px] text-slate-500 border-0 bg-transparent focus:outline-none cursor-pointer hover:text-slate-700 max-w-[120px]"
+                        >
+                          <option value="">No assignee</option>
+                          {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                        </select>
+                        {item.assignee && (
+                          <span
+                            className="w-4 h-4 rounded-full text-[9px] font-bold text-white flex items-center justify-center shrink-0"
+                            style={{ background: item.assignee.color }}
+                            title={item.assignee.name}
+                          >
+                            {initials(item.assignee.name)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => deleteItem(item.id)}
+                      className="opacity-0 group-hover:opacity-100 p-1 rounded text-slate-300 hover:text-red-500 transition-all shrink-0"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {/* Add new item */}
+              <form onSubmit={addChecklistItem} className="space-y-2 pt-1">
+                <input
+                  type="text" value={newItemTitle} onChange={e => setNewItemTitle(e.target.value)}
+                  placeholder="Add a task…"
+                  className="w-full text-sm rounded-lg border border-slate-200 px-3 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                />
+                {newItemTitle.trim() && (
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1">
+                      <select
+                        value={newItemAssignee ?? ""}
+                        onChange={e => setNewItemAssignee(e.target.value || null)}
+                        className="w-full text-xs rounded-md border border-slate-200 px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      >
+                        <option value="">Assignee</option>
+                        {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                      </select>
+                    </div>
+                    <div className="flex gap-1">
+                      {FIBONACCI.map(n => (
+                        <button key={n} type="button" onClick={() => setNewItemPts(newItemPts === n ? null : n)}
+                          className={cn(
+                            "w-6 h-6 rounded-full text-[10px] font-bold transition-colors",
+                            newItemPts === n ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-indigo-100"
+                          )}>
+                          {n}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      type="submit" disabled={addingItem}
+                      className="px-3 py-1.5 rounded-md text-xs font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors shrink-0"
+                    >
+                      Add
+                    </button>
+                  </div>
+                )}
+              </form>
+            </div>
+          )}
+          {!isExisting && (
+            <p className="px-5 pb-4 text-xs text-slate-400">Save the card first to add checklist tasks.</p>
+          )}
+        </div>
+
+        {/* Footer actions */}
+        <div className="flex gap-2 px-5 py-4 border-t border-slate-100 shrink-0">
+          {onDelete && (
+            <button type="button" onClick={handleDelete} disabled={saving}
+              className="p-2.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors" title="Delete card">
+              <Trash2 className="w-4 h-4" />
             </button>
-            <button type="submit" disabled={saving || !title.trim()}
-              className="flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors">
-              {saving ? "Saving…" : card.id ? "Save" : "Add card"}
-            </button>
-          </div>
-        </form>
+          )}
+          <button type="button" onClick={onClose}
+            className="flex-1 px-4 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors">
+            Cancel
+          </button>
+          <button type="submit" form="card-form" disabled={saving || !title.trim()}
+            className="flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors">
+            {saving ? "Saving…" : isExisting ? "Save" : "Add card"}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -674,6 +896,41 @@ function MemberPanel({ members, onAdd, onRemove, onClose }: {
 
 // ── Sprint Card ───────────────────────────────────────────────────────────────
 
+function ChecklistProgress({ checklist }: { checklist: ChecklistItem[] }) {
+  if (checklist.length === 0) return null;
+  const done = checklist.filter(i => i.completed).length;
+  const pct  = Math.round((done / checklist.length) * 100);
+  return (
+    <div className="mt-2 space-y-1">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] text-slate-400">{done}/{checklist.length} tasks</span>
+        <span className="text-[10px] text-slate-400">{pct}%</span>
+      </div>
+      <div className="h-1 bg-slate-100 rounded-full overflow-hidden">
+        <div className={cn("h-full rounded-full transition-all", pct === 100 ? "bg-emerald-500" : "bg-indigo-400")} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function DueDateBadge({ dueDate, status }: { dueDate: string | null; status: Card["status"] }) {
+  if (!dueDate) return null;
+  const d       = new Date(dueDate);
+  const overdue = d < new Date() && status !== "completed";
+  const today   = d.toDateString() === new Date().toDateString();
+  return (
+    <span className={cn(
+      "inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded",
+      overdue ? "bg-red-100 text-red-600"
+        : today ? "bg-amber-100 text-amber-600"
+        : "bg-slate-100 text-slate-500"
+    )}>
+      <Calendar className="w-2.5 h-2.5" />
+      {d.toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+    </span>
+  );
+}
+
 function SprintCard({ card, onEdit, onDragStart, onDragEnd }: {
   card:        Card;
   onEdit:      () => void;
@@ -691,10 +948,12 @@ function SprintCard({ card, onEdit, onDragStart, onDragEnd }: {
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-slate-800 leading-snug">{card.title}</p>
           {card.description && <p className="text-xs text-slate-500 mt-1 line-clamp-2">{card.description}</p>}
-          <div className="flex items-center gap-2 mt-2">
+          <div className="flex items-center gap-2 mt-2 flex-wrap">
             {card.storyPoints != null && <StoryBadge pts={card.storyPoints} />}
+            <DueDateBadge dueDate={card.dueDate} status={card.status} />
             {card.assignee && <Avatar member={card.assignee} />}
           </div>
+          <ChecklistProgress checklist={card.checklist ?? []} />
         </div>
       </div>
     </div>
@@ -859,16 +1118,18 @@ export function KanbanBoard() {
   async function handleSaveCard(data: Partial<Card>) {
     const id = cardModal?.card.id;
     if (id) {
+      const { checklist: _cl, ...rest } = data as Card;
       const res = await fetch(`/api/kanban/cards/${id}`, {
         method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: JSON.stringify(rest),
       });
       const updated = await res.json();
       setCards(prev => prev.map(c => c.id === id ? updated : c));
     } else {
       const payload = {
         ...cardModal?.card, ...data,
-        sprintId: cardModal?.card.type === "sprint" ? activeSprint?.id ?? null : null,
+        sprintId:  cardModal?.card.type === "sprint" ? activeSprint?.id ?? null : null,
+        checklist: undefined,
       };
       const res = await fetch("/api/kanban/cards", {
         method: "POST", headers: { "Content-Type": "application/json" },
