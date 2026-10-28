@@ -6,6 +6,7 @@ import {
   LayoutList, Columns3, History, GripVertical, Pencil,
   Flag, CheckCircle2, ChevronDown, ChevronUp, Calendar,
   Target, BarChart2, TrendingUp, TrendingDown, Minus,
+  AlertTriangle, Lock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -25,18 +26,20 @@ type ChecklistItem = {
 };
 
 type Card = {
-  id:          string;
-  title:       string;
-  description: string | null;
-  type:        "backlog" | "sprint";
-  status:      "backlog" | "not_started" | "in_progress" | "under_review" | "completed";
-  storyPoints: number | null;
-  dueDate:     string | null;
-  assigneeId:  string | null;
-  assignee:    Member | null;
-  sprintId:    string | null;
-  checklist:   ChecklistItem[];
-  position:    number;
+  id:            string;
+  title:         string;
+  description:   string | null;
+  type:          "backlog" | "sprint";
+  status:        "backlog" | "not_started" | "in_progress" | "under_review" | "completed" | "blocked";
+  blockedReason: string | null;
+  priority:      number | null; // 0 (P0, highest) – 7 (P7, lowest)
+  storyPoints:   number | null;
+  dueDate:       string | null;
+  assigneeId:    string | null;
+  assignee:      Member | null;
+  sprintId:      string | null;
+  checklist:     ChecklistItem[];
+  position:      number;
 };
 
 type Sprint = {
@@ -53,11 +56,23 @@ type Sprint = {
 
 const FIBONACCI = [1, 2, 3, 5, 8, 13, 21];
 
+const PRIORITY_LEVELS = [
+  { level: 0, label: "P0", color: "bg-red-500 text-white",          border: "border-red-400"    },
+  { level: 1, label: "P1", color: "bg-orange-500 text-white",       border: "border-orange-400" },
+  { level: 2, label: "P2", color: "bg-amber-500 text-white",        border: "border-amber-400"  },
+  { level: 3, label: "P3", color: "bg-yellow-400 text-slate-800",   border: "border-yellow-300" },
+  { level: 4, label: "P4", color: "bg-lime-500 text-white",         border: "border-lime-400"   },
+  { level: 5, label: "P5", color: "bg-green-500 text-white",        border: "border-green-400"  },
+  { level: 6, label: "P6", color: "bg-teal-500 text-white",         border: "border-teal-400"   },
+  { level: 7, label: "P7", color: "bg-slate-400 text-white",        border: "border-slate-300"  },
+] as const;
+
 const SPRINT_COLS: { key: Card["status"]; label: string; color: string; bg: string; dot: string }[] = [
   { key: "not_started",  label: "Not Started",  color: "text-slate-500",   bg: "bg-slate-100",   dot: "bg-slate-400"   },
   { key: "in_progress",  label: "In Progress",  color: "text-blue-600",    bg: "bg-blue-50",     dot: "bg-blue-500"    },
   { key: "under_review", label: "Under Review", color: "text-amber-600",   bg: "bg-amber-50",    dot: "bg-amber-500"   },
   { key: "completed",    label: "Completed",    color: "text-emerald-600", bg: "bg-emerald-50",  dot: "bg-emerald-500" },
+  { key: "blocked",      label: "Blocked",      color: "text-red-600",     bg: "bg-red-50",      dot: "bg-red-500"     },
 ];
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -97,6 +112,80 @@ function StoryBadge({ pts, size = "sm" }: { pts: number; size?: "sm" | "md" }) {
   );
 }
 
+function PriorityBadge({ priority }: { priority: number }) {
+  const p = PRIORITY_LEVELS.find(pl => pl.level === priority);
+  if (!p) return null;
+  return (
+    <span className={cn("inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0", p.color)}>
+      {p.label}
+    </span>
+  );
+}
+
+// ── Blocked Modal ─────────────────────────────────────────────────────────────
+
+function BlockedModal({ card, onSave, onClose }: {
+  card:    Card;
+  onSave:  (reason: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [reason,  setReason]  = useState(card.blockedReason ?? "");
+  const [saving,  setSaving]  = useState(false);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!reason.trim()) return;
+    setSaving(true);
+    await onSave(reason.trim());
+    setSaving(false);
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4"
+      onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-md">
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-100">
+          <div className="p-2 rounded-lg bg-red-100">
+            <Lock className="w-4 h-4 text-red-600" />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900">Mark as Blocked</h3>
+            <p className="text-xs text-slate-500 truncate max-w-[280px]">{card.title}</p>
+          </div>
+          <button onClick={onClose} className="ml-auto p-1.5 rounded-lg hover:bg-slate-100 transition-colors">
+            <X className="w-4 h-4 text-slate-500" />
+          </button>
+        </div>
+        <form onSubmit={submit} className="p-5 space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-1.5">
+              What&apos;s causing the block? <span className="text-red-500">*</span>
+            </label>
+            <textarea
+              value={reason} onChange={e => setReason(e.target.value)}
+              placeholder="e.g. Waiting on design assets from Brand team, blocked by API access approval…"
+              rows={3} autoFocus required
+              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-red-300 focus:border-red-400"
+            />
+          </div>
+          <div className="flex gap-2">
+            <button type="button" onClick={onClose}
+              className="flex-1 px-4 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors">
+              Cancel
+            </button>
+            <button type="submit" disabled={saving || !reason.trim()}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 transition-colors">
+              <Lock className="w-3.5 h-3.5" />
+              {saving ? "Saving…" : "Mark Blocked"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ── Card Modal ───────────────────────────────────────────────────────────────
 
 type PendingItem = { tempId: string; title: string; storyPoints: number | null; assigneeId: string | null };
@@ -112,35 +201,60 @@ function CardModal({
 }) {
   const [title,       setTitle]       = useState(card.title ?? "");
   const [description, setDescription] = useState(card.description ?? "");
-  const [pts,         setPts]         = useState<number | null>(card.storyPoints ?? null);
   const [assigneeId,  setAssigneeId]  = useState<string | null>(card.assigneeId ?? null);
   const [dueDate,     setDueDate]     = useState(card.dueDate ? card.dueDate.slice(0, 10) : "");
+  const [priority,    setPriority]    = useState<number | null>(card.priority ?? null);
   const [saving,      setSaving]      = useState(false);
 
-  // Saved checklist items (existing card)
   const [checklist,       setChecklist]       = useState<ChecklistItem[]>(card.checklist ?? []);
-  // Pending items for new cards (not yet persisted)
   const [pendingItems,    setPendingItems]     = useState<PendingItem[]>([]);
   const [newItemTitle,    setNewItemTitle]     = useState("");
   const [newItemPts,      setNewItemPts]       = useState<number | null>(null);
   const [newItemAssignee, setNewItemAssignee]  = useState<string | null>(null);
   const [addingItem,      setAddingItem]       = useState(false);
 
-  const isExisting = !!card.id;
+  // Inline edit state
+  const [editingId,    setEditingId]    = useState<string | null>(null);
+  const [editingField, setEditingField] = useState<"title" | "pts" | null>(null);
+  const [editTitle,    setEditTitle]    = useState("");
+  const [editPts,      setEditPts]      = useState<number | null>(null);
 
-  const isOverdue = dueDate && new Date(dueDate) < new Date() && card.status !== "completed";
+  const isExisting = !!card.id;
+  const isOverdue  = dueDate && new Date(dueDate) < new Date() && card.status !== "completed";
+
+  // Story points = sum of all checklist items (derived, no manual entry)
+  const allItems          = isExisting
+    ? checklist
+    : pendingItems.map(p => ({ ...p, id: p.tempId, cardId: "", completed: false, assignee: members.find(m => m.id === p.assigneeId) ?? null, position: 0 })) as ChecklistItem[];
+  const totalPtsChecklist = allItems.reduce((s, i) => s + (i.storyPoints ?? 0), 0);
+  const doneCount         = checklist.filter(i => i.completed).length;
+  const totalCount        = allItems.length;
+  const donePts           = checklist.filter(i => i.completed).reduce((s, i) => s + (i.storyPoints ?? 0), 0);
 
   // ── Card save ──────────────────────────────────────────────────────────────
+
+  const cardData = () => ({
+    title, description: description || null,
+    storyPoints: totalPtsChecklist || null,
+    assigneeId, dueDate: dueDate || null, priority,
+  });
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!title.trim()) return;
     setSaving(true);
-    await onSave(
-      { title, description: description || null, storyPoints: pts, assigneeId, dueDate: dueDate || null },
-      pendingItems,
-    );
+    await onSave(cardData(), pendingItems);
     setSaving(false);
+    onClose();
+  }
+
+  // Auto-save for existing cards; just close for new cards without a title
+  async function handleClose() {
+    if (isExisting && title.trim()) {
+      setSaving(true);
+      await onSave(cardData(), []);
+      setSaving(false);
+    }
     onClose();
   }
 
@@ -152,13 +266,55 @@ function CardModal({
     onClose();
   }
 
-  // ── Checklist helpers ─────────────────────────────────────────────────────
+  // ── Inline editing ────────────────────────────────────────────────────────
+
+  function startEdit(id: string, field: "title" | "pts", currentTitle: string, currentPts: number | null) {
+    setEditingId(id); setEditingField(field);
+    setEditTitle(currentTitle); setEditPts(currentPts);
+  }
+
+  function cancelEdit() { setEditingId(null); setEditingField(null); }
+
+  async function commitEdit() {
+    if (!editingId || !editingField) return;
+    const id = editingId;
+    if (editingField === "title" && !editTitle.trim()) { cancelEdit(); return; }
+
+    if (!isExisting) {
+      // Pending item — update local state only
+      if (editingField === "title") {
+        setPendingItems(prev => prev.map(i => i.tempId === id ? { ...i, title: editTitle.trim() } : i));
+      } else {
+        setPendingItems(prev => prev.map(i => i.tempId === id ? { ...i, storyPoints: editPts } : i));
+      }
+      cancelEdit();
+    } else {
+      const updates = editingField === "title" ? { title: editTitle.trim() } : { storyPoints: editPts };
+      const res = await fetch(`/api/kanban/checklist/${id}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
+      });
+      const updated = await res.json();
+      const newChecklist = checklist.map(i => i.id === id ? updated : i);
+      setChecklist(newChecklist);
+      // Keep card storyPoints in sync whenever pts change
+      if (editingField === "pts" && card.id) {
+        const newTotal = newChecklist.reduce((s, i) => s + (i.storyPoints ?? 0), 0);
+        fetch(`/api/kanban/cards/${card.id}`, {
+          method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ storyPoints: newTotal || null }),
+        });
+      }
+      cancelEdit();
+    }
+  }
+
+  // ── Checklist CRUD ────────────────────────────────────────────────────────
 
   function addPendingOrSavedItem(e: React.FormEvent) {
     e.preventDefault();
     if (!newItemTitle.trim()) return;
     if (isExisting) {
-      // Persist immediately
       setAddingItem(true);
       fetch(`/api/kanban/cards/${card.id}/checklist`, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -166,17 +322,22 @@ function CardModal({
       })
         .then(r => r.json())
         .then(item => {
-          setChecklist(prev => [...prev, item]);
+          const newChecklist = [...checklist, item];
+          setChecklist(newChecklist);
+          if (card.id) {
+            const newTotal = newChecklist.reduce((s, i) => s + (i.storyPoints ?? 0), 0);
+            fetch(`/api/kanban/cards/${card.id}`, {
+              method: "PUT", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ storyPoints: newTotal || null }),
+            });
+          }
           setNewItemTitle(""); setNewItemPts(null); setNewItemAssignee(null);
           setAddingItem(false);
         });
     } else {
-      // Stage locally — will be created after the card is saved
       setPendingItems(prev => [...prev, {
-        tempId: crypto.randomUUID(),
-        title: newItemTitle.trim(),
-        storyPoints: newItemPts,
-        assigneeId: newItemAssignee,
+        tempId: crypto.randomUUID(), title: newItemTitle.trim(),
+        storyPoints: newItemPts, assigneeId: newItemAssignee,
       }]);
       setNewItemTitle(""); setNewItemPts(null); setNewItemAssignee(null);
     }
@@ -193,7 +354,15 @@ function CardModal({
 
   async function deleteItem(id: string) {
     await fetch(`/api/kanban/checklist/${id}`, { method: "DELETE" });
-    setChecklist(prev => prev.filter(i => i.id !== id));
+    const newChecklist = checklist.filter(i => i.id !== id);
+    setChecklist(newChecklist);
+    if (card.id) {
+      const newTotal = newChecklist.reduce((s, i) => s + (i.storyPoints ?? 0), 0);
+      fetch(`/api/kanban/cards/${card.id}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storyPoints: newTotal || null }),
+      });
+    }
   }
 
   function removePending(tempId: string) {
@@ -209,20 +378,23 @@ function CardModal({
     setChecklist(prev => prev.map(i => i.id === item.id ? updated : i));
   }
 
-  const allItems   = isExisting ? checklist : pendingItems.map(p => ({ ...p, id: p.tempId, cardId: "", completed: false, assignee: members.find(m => m.id === p.assigneeId) ?? null, position: 0 })) as ChecklistItem[];
-  const doneCount  = checklist.filter(i => i.completed).length;
-  const totalCount = allItems.length;
-  const donePts    = checklist.filter(i => i.completed).reduce((s, i) => s + (i.storyPoints ?? 0), 0);
-  const totalPtsChecklist = allItems.reduce((s, i) => s + (i.storyPoints ?? 0), 0);
-
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4"
+      onMouseDown={e => { if (e.target === e.currentTarget) handleClose(); }}>
       <div className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-lg max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 shrink-0">
-          <h3 className="text-sm font-semibold text-slate-900">{isExisting ? "Edit card" : "New card"}</h3>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors">
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold text-slate-900">{isExisting ? "Edit card" : "New card"}</h3>
+            {priority != null && <PriorityBadge priority={priority} />}
+            {totalPtsChecklist > 0 && (
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-xs font-semibold">
+                {totalPtsChecklist} pts
+              </span>
+            )}
+          </div>
+          <button onClick={handleClose} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors">
             <X className="w-4 h-4 text-slate-500" />
           </button>
         </div>
@@ -269,15 +441,18 @@ function CardModal({
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-700 mb-2">Card story points (Fibonacci)</label>
+              <label className="block text-xs font-medium text-slate-700 mb-2">Priority</label>
               <div className="flex gap-1.5 flex-wrap">
-                {FIBONACCI.map(n => (
-                  <button key={n} type="button" onClick={() => setPts(pts === n ? null : n)}
+                {PRIORITY_LEVELS.map(p => (
+                  <button key={p.level} type="button"
+                    onClick={() => setPriority(priority === p.level ? null : p.level)}
                     className={cn(
-                      "w-8 h-8 rounded-full text-xs font-bold transition-colors",
-                      pts === n ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-indigo-100 hover:text-indigo-700"
+                      "px-2.5 py-1 rounded text-xs font-bold border-2 transition-all",
+                      priority === p.level
+                        ? cn(p.color, p.border, "scale-110 shadow-sm")
+                        : "bg-white border-slate-200 text-slate-500 hover:border-slate-300"
                     )}>
-                    {n}
+                    {p.label}
                   </button>
                 ))}
               </div>
@@ -297,7 +472,6 @@ function CardModal({
               )}
             </div>
 
-            {/* Progress bar (existing cards only) */}
             {isExisting && totalCount > 0 && (
               <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
                 <div className="h-full bg-indigo-500 rounded-full transition-all"
@@ -305,35 +479,91 @@ function CardModal({
               </div>
             )}
 
-            {/* Item list */}
-            <div className="space-y-1.5">
+            <div className="space-y-0.5">
               {allItems.map(item => {
-                const isPending = !isExisting;
+                const isPending      = !isExisting;
+                const isEditTitle    = editingId === item.id && editingField === "title";
+                const isEditPts      = editingId === item.id && editingField === "pts";
                 return (
-                  <div key={item.id} className="flex items-start gap-2 group">
-                    {/* Checkbox — only functional for saved items */}
+                  <div key={item.id} className="flex items-start gap-2 group rounded-lg px-1.5 py-1 hover:bg-slate-50 transition-colors">
+                    {/* Checkbox */}
                     <button
                       type="button"
                       onClick={() => !isPending && toggleItem(item)}
                       className={cn(
-                        "mt-0.5 w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors",
-                        isPending ? "border-slate-200 cursor-default"
-                          : item.completed ? "bg-indigo-500 border-indigo-500"
+                        "mt-2 w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors",
+                        isPending       ? "border-slate-200 cursor-default"
+                          : item.completed  ? "bg-indigo-500 border-indigo-500"
                           : "border-slate-300 hover:border-indigo-400"
                       )}
                     >
                       {item.completed && <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 10 10"><path d="M1.5 5l2.5 2.5 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
                     </button>
-                    <div className="flex-1 min-w-0">
-                      <p className={cn("text-sm", item.completed ? "line-through text-slate-400" : "text-slate-700")}>
-                        {item.title}
-                      </p>
+
+                    <div className="flex-1 min-w-0 py-0.5">
+                      {/* Title — double-click to edit */}
+                      {isEditTitle ? (
+                        <input
+                          autoFocus type="text" value={editTitle}
+                          onChange={e => setEditTitle(e.target.value)}
+                          onBlur={commitEdit}
+                          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); commitEdit(); } if (e.key === "Escape") cancelEdit(); }}
+                          className="w-full text-sm rounded border border-indigo-300 px-1.5 py-0.5 text-slate-900 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                      ) : (
+                        <p
+                          onDoubleClick={() => startEdit(item.id, "title", item.title, item.storyPoints ?? null)}
+                          title="Double-click to edit title"
+                          className={cn(
+                            "text-sm select-none",
+                            item.completed ? "line-through text-slate-400" : "text-slate-700",
+                            "hover:text-indigo-600 cursor-default transition-colors"
+                          )}
+                        >
+                          {item.title}
+                        </p>
+                      )}
+
+                      {/* Sub-row: pts + assignee */}
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
-                        {item.storyPoints != null && (
-                          <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-indigo-100 text-indigo-700 text-[9px] font-bold">
-                            {item.storyPoints}
+                        {/* Story points — double-click badge to edit */}
+                        {isEditPts ? (
+                          <div className="flex items-center gap-1">
+                            {FIBONACCI.map(n => (
+                              <button key={n} type="button"
+                                onClick={() => setEditPts(editPts === n ? null : n)}
+                                className={cn(
+                                  "w-5 h-5 rounded-full text-[9px] font-bold transition-colors",
+                                  editPts === n ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-indigo-100"
+                                )}>
+                                {n}
+                              </button>
+                            ))}
+                            <button type="button" onClick={commitEdit}
+                              className="ml-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-600 text-white hover:bg-indigo-700">
+                              OK
+                            </button>
+                            <button type="button" onClick={cancelEdit}
+                              className="px-1 py-0.5 rounded text-[10px] text-slate-400 hover:text-slate-600">
+                              ✕
+                            </button>
+                          </div>
+                        ) : (
+                          <span
+                            onDoubleClick={() => !isPending && startEdit(item.id, "pts", item.title, item.storyPoints ?? null)}
+                            title={!isPending ? "Double-click to edit points" : undefined}
+                            className={cn(
+                              "inline-flex items-center justify-center w-5 h-5 rounded-full text-[9px] font-bold transition-colors cursor-default",
+                              item.storyPoints != null
+                                ? "bg-indigo-100 text-indigo-700 hover:bg-indigo-200"
+                                : "border-2 border-dashed border-slate-200 text-slate-300 hover:border-indigo-300 hover:text-indigo-400"
+                            )}
+                          >
+                            {item.storyPoints ?? "·"}
                           </span>
                         )}
+
+                        {/* Assignee */}
                         {isExisting ? (
                           <select
                             value={item.assigneeId ?? ""}
@@ -344,9 +574,7 @@ function CardModal({
                             {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
                           </select>
                         ) : (
-                          item.assignee && (
-                            <span className="text-[10px] text-slate-500">{item.assignee.name}</span>
-                          )
+                          item.assignee && <span className="text-[10px] text-slate-500">{item.assignee.name}</span>
                         )}
                         {item.assignee && (
                           <span
@@ -359,10 +587,11 @@ function CardModal({
                         )}
                       </div>
                     </div>
+
                     <button
                       type="button"
                       onClick={() => isPending ? removePending(item.id) : deleteItem(item.id)}
-                      className="opacity-0 group-hover:opacity-100 p-1 rounded text-slate-300 hover:text-red-500 transition-all shrink-0"
+                      className="opacity-0 group-hover:opacity-100 mt-1.5 p-1 rounded text-slate-300 hover:text-red-500 transition-all shrink-0"
                     >
                       <X className="w-3 h-3" />
                     </button>
@@ -421,14 +650,23 @@ function CardModal({
               <Trash2 className="w-4 h-4" />
             </button>
           )}
-          <button type="button" onClick={onClose}
-            className="flex-1 px-4 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors">
-            Cancel
-          </button>
-          <button type="submit" form="card-form" disabled={saving || !title.trim()}
-            className="flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors">
-            {saving ? "Saving…" : isExisting ? "Save" : pendingItems.length > 0 ? `Add card + ${pendingItems.length} task${pendingItems.length !== 1 ? "s" : ""}` : "Add card"}
-          </button>
+          {isExisting ? (
+            <button type="button" onClick={handleClose} disabled={saving}
+              className="flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors">
+              {saving ? "Saving…" : "Done"}
+            </button>
+          ) : (
+            <>
+              <button type="button" onClick={onClose}
+                className="flex-1 px-4 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors">
+                Cancel
+              </button>
+              <button type="submit" form="card-form" disabled={saving || !title.trim()}
+                className="flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors">
+                {saving ? "Saving…" : pendingItems.length > 0 ? `Add card + ${pendingItems.length} task${pendingItems.length !== 1 ? "s" : ""}` : "Add card"}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -957,30 +1195,58 @@ function DueDateBadge({ dueDate, status }: { dueDate: string | null; status: Car
   );
 }
 
-function SprintCard({ card, onEdit, onDragStart, onDragEnd }: {
+function SprintCard({ card, onEdit, onBlock, onDragStart, onDragEnd }: {
   card:        Card;
   onEdit:      () => void;
+  onBlock:     () => void;
   onDragStart: (e: React.DragEvent, card: Card) => void;
   onDragEnd:   (e: React.DragEvent) => void;
 }) {
+  const isBlocked = card.status === "blocked";
   return (
     <div
       draggable onDragStart={e => onDragStart(e, card)} onDragEnd={onDragEnd}
       onClick={onEdit}
-      className="bg-white rounded-xl border border-slate-200 p-3 shadow-sm cursor-pointer hover:shadow-md hover:border-indigo-200 transition-all group select-none"
+      className={cn(
+        "rounded-xl border p-3 shadow-sm cursor-pointer hover:shadow-md transition-all group select-none",
+        isBlocked
+          ? "bg-red-50 border-red-200 hover:border-red-300"
+          : "bg-white border-slate-200 hover:border-indigo-200"
+      )}
     >
+      {isBlocked && (
+        <div className="flex items-center gap-1.5 mb-2 px-2 py-1 bg-red-100 rounded-lg">
+          <Lock className="w-3 h-3 text-red-600 shrink-0" />
+          <p className="text-[11px] text-red-700 font-medium line-clamp-2">{card.blockedReason}</p>
+        </div>
+      )}
       <div className="flex items-start gap-2">
         <GripVertical className="w-3.5 h-3.5 text-slate-300 mt-0.5 shrink-0 group-hover:text-slate-400 transition-colors" />
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-slate-800 leading-snug">{card.title}</p>
+          <p className={cn("text-sm font-medium leading-snug", isBlocked ? "text-red-900" : "text-slate-800")}>{card.title}</p>
           {card.description && <p className="text-xs text-slate-500 mt-1 line-clamp-2">{card.description}</p>}
           <div className="flex items-center gap-2 mt-2 flex-wrap">
+            {card.priority != null && <PriorityBadge priority={card.priority} />}
             {card.storyPoints != null && <StoryBadge pts={card.storyPoints} />}
             <DueDateBadge dueDate={card.dueDate} status={card.status} />
             {card.assignee && <Avatar member={card.assignee} />}
           </div>
           <ChecklistProgress checklist={card.checklist ?? []} />
         </div>
+        {/* Block/Unblock button */}
+        <button
+          type="button"
+          onClick={e => { e.stopPropagation(); onBlock(); }}
+          title={isBlocked ? "Remove block" : "Mark as blocked"}
+          className={cn(
+            "opacity-0 group-hover:opacity-100 p-1.5 rounded-md shrink-0 transition-all mt-0.5",
+            isBlocked
+              ? "text-red-600 hover:bg-red-200"
+              : "text-slate-400 hover:text-red-500 hover:bg-red-50"
+          )}
+        >
+          <AlertTriangle className="w-3.5 h-3.5" />
+        </button>
       </div>
     </div>
   );
@@ -1105,15 +1371,20 @@ function SprintHistoryCard({ sprint }: { sprint: Sprint }) {
 // ── Main Board ────────────────────────────────────────────────────────────────
 
 export function KanbanBoard() {
-  const [view,         setView]         = useState<"backlog" | "sprint" | "history" | "analytics">("backlog");
-  const [cards,        setCards]        = useState<Card[]>([]);
-  const [members,      setMembers]      = useState<Member[]>([]);
-  const [sprints,      setSprints]      = useState<Sprint[]>([]);
-  const [loading,      setLoading]      = useState(true);
-  const [cardModal,    setCardModal]    = useState<{ card: Partial<Card> & { type: Card["type"]; status: Card["status"] } } | null>(null);
-  const [sprintModal,  setSprintModal]  = useState<{ sprint?: Sprint } | null>(null);
+  const [view,           setView]           = useState<"backlog" | "sprint" | "history" | "analytics">("backlog");
+  const [cards,          setCards]          = useState<Card[]>([]);
+  const [members,        setMembers]        = useState<Member[]>([]);
+  const [sprints,        setSprints]        = useState<Sprint[]>([]);
+  const [loading,        setLoading]        = useState(true);
+  const [expandedCardId, setExpandedCardId] = useState<string | null>(null);
+  const [cardModal,      setCardModal]      = useState<{ card: Partial<Card> & { type: Card["type"]; status: Card["status"] } } | null>(null);
+  const [sprintModal,    setSprintModal]    = useState<{ sprint?: Sprint } | null>(null);
   const [completeModal,setCompleteModal]= useState<Sprint | null>(null);
   const [memberPanel,  setMemberPanel]  = useState(false);
+  const [blockedModal,   setBlockedModal]   = useState<Card | null>(null);
+
+  // Backlog-page drag zones: "sprint-section" | "backlog-section"
+  const [backlogDragOver, setBacklogDragOver] = useState<"sprint" | "backlog" | null>(null);
 
   const dragging  = useRef<Card | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
@@ -1188,6 +1459,33 @@ export function KanbanBoard() {
     const res = await fetch(`/api/kanban/cards/${card.id}`, {
       method: "PUT", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ type: "sprint", status: "not_started", sprintId: activeSprint?.id ?? null }),
+    });
+    const updated = await res.json();
+    setCards(prev => prev.map(c => c.id === card.id ? updated : c));
+  }
+
+  async function moveToBacklog(card: Card) {
+    const res = await fetch(`/api/kanban/cards/${card.id}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "backlog", status: "backlog", sprintId: null }),
+    });
+    const updated = await res.json();
+    setCards(prev => prev.map(c => c.id === card.id ? updated : c));
+  }
+
+  async function handleBlockCard(card: Card, reason: string) {
+    const res = await fetch(`/api/kanban/cards/${card.id}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "blocked", blockedReason: reason }),
+    });
+    const updated = await res.json();
+    setCards(prev => prev.map(c => c.id === card.id ? updated : c));
+  }
+
+  async function handleUnblockCard(card: Card) {
+    const res = await fetch(`/api/kanban/cards/${card.id}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "in_progress", blockedReason: null }),
     });
     const updated = await res.json();
     setCards(prev => prev.map(c => c.id === card.id ? updated : c));
@@ -1274,6 +1572,10 @@ export function KanbanBoard() {
   // ── Derived ───────────────────────────────────────────────────────────────
 
   const backlogCards = cards.filter(c => c.type === "backlog");
+  // Cards currently in the active sprint — shown in the backlog sprint section
+  const activeSprintCards = activeSprint
+    ? cards.filter(c => c.sprintId === activeSprint.id)
+    : [];
   const sprintColCards = (status: Card["status"]) =>
     cards.filter(c => c.type === "sprint" && c.status === status && (!activeSprint || c.sprintId === activeSprint.id || c.sprintId === null))
       .sort((a, b) => a.position - b.position);
@@ -1335,80 +1637,365 @@ export function KanbanBoard() {
 
       {/* ── Backlog ──────────────────────────────────────────────────────── */}
       {view === "backlog" && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <h2 className="text-base font-semibold text-slate-800">Marketing Backlog</h2>
-              {backlogCards.length > 0 && (
-                <span className="text-xs text-slate-500">{backlogCards.length} items · {totalPts(backlogCards)} pts</span>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              {!activeSprint && (
-                <button onClick={() => setSprintModal({})}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors">
-                  <Flag className="w-3.5 h-3.5" />
-                  Start sprint
-                </button>
-              )}
-              <button onClick={() => setCardModal({ card: { type: "backlog", status: "backlog" } })}
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors">
-                <Plus className="w-3.5 h-3.5" />
-                Add item
-              </button>
-            </div>
-          </div>
-
+        <div className="space-y-6">
+          {/* ── Sprint Section ── */}
           {activeSprint && (
-            <div className="flex items-center gap-2 px-4 py-2.5 bg-indigo-50 border border-indigo-200 rounded-xl">
-              <Flag className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-              <div className="flex-1 min-w-0">
-                <span className="text-xs font-semibold text-indigo-700">{activeSprint.name}</span>
-                {activeSprint.goal && <span className="text-xs text-indigo-500 ml-2">· {activeSprint.goal}</span>}
-                {activeSprint.endDate && (
-                  <span className="text-xs text-indigo-400 ml-2">ends {fmtDate(activeSprint.endDate)}</span>
+            <div className="space-y-2">
+              {/* Sprint header */}
+              <div className={cn(
+                "flex items-center gap-2 px-4 py-2.5 rounded-xl border transition-colors",
+                backlogDragOver === "sprint"
+                  ? "bg-indigo-100 border-indigo-400 ring-2 ring-indigo-300"
+                  : "bg-indigo-50 border-indigo-200"
+              )}
+                onDragOver={e => { e.preventDefault(); setBacklogDragOver("sprint"); }}
+                onDragLeave={() => setBacklogDragOver(null)}
+                onDrop={async e => {
+                  e.preventDefault(); setBacklogDragOver(null);
+                  const card = dragging.current;
+                  if (!card || card.type === "sprint") return;
+                  await moveToSprint(card);
+                }}
+              >
+                <Flag className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <span className="text-xs font-semibold text-indigo-700">{activeSprint.name}</span>
+                  {activeSprint.endDate && (
+                    <span className="text-xs text-indigo-400 ml-2">ends {fmtDate(activeSprint.endDate)}</span>
+                  )}
+                  <span className="text-xs text-indigo-500 ml-2">
+                    · {activeSprintCards.filter(c => c.status === "completed").length}/{activeSprintCards.length} done
+                    {activeSprintCards.some(c => c.storyPoints != null) && (
+                      <> · {totalPts(activeSprintCards.filter(c => c.status === "completed"))}/{totalPts(activeSprintCards)} pts</>
+                    )}
+                  </span>
+                </div>
+                <button onClick={() => setView("sprint")}
+                  className="text-xs font-medium text-indigo-600 hover:text-indigo-800 shrink-0">
+                  View board →
+                </button>
+              </div>
+
+              {/* Sprint card rows */}
+              {activeSprintCards.length === 0 ? (
+                <div
+                  onDragOver={e => { e.preventDefault(); setBacklogDragOver("sprint"); }}
+                  onDragLeave={() => setBacklogDragOver(null)}
+                  onDrop={async e => {
+                    e.preventDefault(); setBacklogDragOver(null);
+                    const card = dragging.current;
+                    if (!card) return;
+                    await moveToSprint(card);
+                  }}
+                  className={cn(
+                    "flex items-center justify-center py-8 rounded-2xl border-2 border-dashed text-slate-400 transition-colors",
+                    backlogDragOver === "sprint" ? "border-indigo-400 bg-indigo-50 text-indigo-500" : "border-slate-200"
+                  )}
+                >
+                  <p className="text-sm">Drag tickets here to add to sprint</p>
+                </div>
+              ) : (
+                <div className="bg-white rounded-2xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
+                  {activeSprintCards.sort((a, b) => a.position - b.position).map(card => {
+                    const isExpanded  = expandedCardId === card.id;
+                    const checkDone   = card.checklist.filter(i => i.completed).length;
+                    const checkTotal  = card.checklist.length;
+                    const statusCol   = SPRINT_COLS.find(c => c.key === card.status);
+                    const statusPct   = card.status === "completed" ? 100
+                      : card.status === "under_review" ? 75
+                      : card.status === "in_progress" ? 40
+                      : card.status === "blocked" ? null : 0;
+                    return (
+                      <div key={card.id}
+                        draggable
+                        onDragStart={e => { dragging.current = card; e.dataTransfer.effectAllowed = "move"; }}
+                        onDragEnd={() => { dragging.current = null; setBacklogDragOver(null); }}
+                      >
+                        {/* Collapsed sprint row */}
+                        <div
+                          className={cn(
+                            "flex items-center gap-3 px-4 py-3 group transition-colors cursor-pointer",
+                            card.status === "blocked" ? "hover:bg-red-50 bg-red-50/50" : "hover:bg-slate-50"
+                          )}
+                          onClick={() => setExpandedCardId(isExpanded ? null : card.id)}
+                        >
+                          <GripVertical className="w-4 h-4 text-slate-300 shrink-0" onClick={e => e.stopPropagation()} />
+                          <ChevronDown className={cn("w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform", isExpanded && "rotate-180")} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              {card.status === "blocked" && <Lock className="w-3 h-3 text-red-500 shrink-0" />}
+                              <p className={cn("text-sm font-medium truncate", card.status === "blocked" ? "text-red-800" : "text-slate-800")}>{card.title}</p>
+                            </div>
+                            {/* Status progress bar */}
+                            {!isExpanded && (
+                              <div className="flex items-center gap-2 mt-1">
+                                {statusCol && (
+                                  <span className={cn("text-[10px] font-semibold px-1.5 py-0.5 rounded", statusCol.bg, statusCol.color)}>
+                                    {statusCol.label}
+                                  </span>
+                                )}
+                                {statusPct !== null && (
+                                  <div className="flex-1 h-1 bg-slate-100 rounded-full overflow-hidden max-w-[80px]">
+                                    <div className={cn("h-full rounded-full transition-all",
+                                      card.status === "completed" ? "bg-emerald-500"
+                                        : card.status === "under_review" ? "bg-amber-400"
+                                        : "bg-indigo-400"
+                                    )} style={{ width: `${statusPct}%` }} />
+                                  </div>
+                                )}
+                                {card.status === "blocked" && card.blockedReason && (
+                                  <span className="text-[10px] text-red-600 truncate max-w-[180px]">{card.blockedReason}</span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
+                            {card.priority != null && <PriorityBadge priority={card.priority} />}
+                            {card.storyPoints != null && <StoryBadge pts={card.storyPoints} />}
+                            {card.assignee && <Avatar member={card.assignee} />}
+                            <button onClick={() => moveToBacklog(card)} title="Move back to backlog"
+                              className="opacity-0 group-hover:opacity-100 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium bg-slate-100 text-slate-600 hover:bg-slate-200 transition-all">
+                              <ArrowRight className="w-3 h-3 rotate-180" /> Backlog
+                            </button>
+                            <button onClick={() => setCardModal({ card })}
+                              className="opacity-0 group-hover:opacity-100 p-1.5 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-all">
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Expanded sprint row */}
+                        {isExpanded && (
+                          <div className="px-4 pb-4 pt-1 bg-slate-50 border-t border-slate-100 space-y-3">
+                            {card.status === "blocked" && card.blockedReason && (
+                              <div className="flex items-start gap-2 p-2.5 bg-red-50 border border-red-200 rounded-lg">
+                                <Lock className="w-3.5 h-3.5 text-red-500 shrink-0 mt-0.5" />
+                                <div>
+                                  <p className="text-[11px] font-semibold text-red-700">Blocked</p>
+                                  <p className="text-xs text-red-600 mt-0.5">{card.blockedReason}</p>
+                                </div>
+                              </div>
+                            )}
+                            {card.description && <p className="text-sm text-slate-600 leading-relaxed">{card.description}</p>}
+                            <div className="flex items-center gap-4 text-xs text-slate-500 flex-wrap">
+                              {statusCol && (
+                                <span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold", statusCol.bg, statusCol.color)}>
+                                  <div className={cn("w-1.5 h-1.5 rounded-full", statusCol.dot)} />
+                                  {statusCol.label}
+                                </span>
+                              )}
+                              {card.dueDate && (
+                                <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{fmtDate(card.dueDate)}</span>
+                              )}
+                              {card.assignee && (
+                                <span className="flex items-center gap-1"><Avatar member={card.assignee} />{card.assignee.name}</span>
+                              )}
+                              {card.storyPoints != null && (
+                                <span className="flex items-center gap-1"><Target className="w-3 h-3" />{card.storyPoints} pts</span>
+                              )}
+                            </div>
+                            {checkTotal > 0 && (
+                              <div>
+                                <div className="flex items-center justify-between mb-1">
+                                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Tasks</p>
+                                  <span className="text-[10px] text-slate-500">{checkDone}/{checkTotal}</span>
+                                </div>
+                                <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                                  <div className="h-full bg-indigo-500 rounded-full transition-all"
+                                    style={{ width: `${Math.round((checkDone / checkTotal) * 100)}%` }} />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Backlog Section ── */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <h2 className="text-base font-semibold text-slate-800">Marketing Backlog</h2>
+                {backlogCards.length > 0 && (
+                  <span className="text-xs text-slate-500">{backlogCards.length} items · {totalPts(backlogCards)} pts</span>
                 )}
               </div>
-              <button onClick={() => setView("sprint")}
-                className="text-xs font-medium text-indigo-600 hover:text-indigo-800 shrink-0">
-                View board →
-              </button>
+              <div className="flex items-center gap-2">
+                {!activeSprint && (
+                  <button onClick={() => setSprintModal({})}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors">
+                    <Flag className="w-3.5 h-3.5" />
+                    Start sprint
+                  </button>
+                )}
+                <button onClick={() => setCardModal({ card: { type: "backlog", status: "backlog" } })}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors">
+                  <Plus className="w-3.5 h-3.5" />
+                  Add item
+                </button>
+              </div>
             </div>
-          )}
 
-          {backlogCards.length === 0 ? (
-            <div onClick={() => setCardModal({ card: { type: "backlog", status: "backlog" } })}
-              className="flex flex-col items-center justify-center py-16 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 cursor-pointer hover:border-indigo-300 hover:text-indigo-400 transition-colors">
-              <Plus className="w-8 h-8 mb-2" />
-              <p className="text-sm font-medium">Add your first backlog item</p>
-            </div>
-          ) : (
-            <div className="bg-white rounded-2xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
-              {backlogCards.sort((a, b) => a.position - b.position).map(card => (
-                <div key={card.id} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 group transition-colors">
-                  <GripVertical className="w-4 h-4 text-slate-300 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-slate-800 truncate">{card.title}</p>
-                    {card.description && <p className="text-xs text-slate-500 truncate">{card.description}</p>}
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {card.storyPoints != null && <StoryBadge pts={card.storyPoints} />}
-                    {card.assignee && <Avatar member={card.assignee} />}
-                    {activeSprint && (
-                      <button onClick={() => moveToSprint(card)} title="Move to active sprint"
-                        className="opacity-0 group-hover:opacity-100 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-all">
-                        Sprint <ArrowRight className="w-3 h-3" />
-                      </button>
-                    )}
-                    <button onClick={() => setCardModal({ card })}
-                      className="opacity-0 group-hover:opacity-100 p-1.5 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-all">
-                      <Pencil className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+            {backlogCards.length === 0 ? (
+              <div
+                onDragOver={e => { e.preventDefault(); setBacklogDragOver("backlog"); }}
+                onDragLeave={() => setBacklogDragOver(null)}
+                onDrop={async e => {
+                  e.preventDefault(); setBacklogDragOver(null);
+                  const card = dragging.current;
+                  if (!card || card.type === "backlog") return;
+                  await moveToBacklog(card);
+                }}
+                onClick={() => setCardModal({ card: { type: "backlog", status: "backlog" } })}
+                className={cn(
+                  "flex flex-col items-center justify-center py-16 rounded-2xl border-2 border-dashed text-slate-400 cursor-pointer transition-colors",
+                  backlogDragOver === "backlog"
+                    ? "border-slate-400 bg-slate-50 text-slate-500"
+                    : "border-slate-200 hover:border-indigo-300 hover:text-indigo-400"
+                )}
+              >
+                <Plus className="w-8 h-8 mb-2" />
+                <p className="text-sm font-medium">Add your first backlog item</p>
+              </div>
+            ) : (
+              <div
+                className={cn(
+                  "bg-white rounded-2xl border divide-y divide-slate-100 overflow-hidden transition-colors",
+                  backlogDragOver === "backlog" ? "border-slate-400 ring-2 ring-slate-300 bg-slate-50" : "border-slate-200"
+                )}
+                onDragOver={e => { e.preventDefault(); setBacklogDragOver("backlog"); }}
+                onDragLeave={() => setBacklogDragOver(null)}
+                onDrop={async e => {
+                  e.preventDefault(); setBacklogDragOver(null);
+                  const card = dragging.current;
+                  if (!card || card.type === "backlog") return;
+                  await moveToBacklog(card);
+                }}
+              >
+                {backlogCards.sort((a, b) => {
+                  const pa = a.priority ?? 99, pb = b.priority ?? 99;
+                  if (pa !== pb) return pa - pb;
+                  return a.position - b.position;
+                }).map(card => {
+                  const isExpanded = expandedCardId === card.id;
+                  const checkDone  = card.checklist.filter(i => i.completed).length;
+                  const checkTotal = card.checklist.length;
+                  return (
+                    <div key={card.id}
+                      draggable
+                      onDragStart={e => { dragging.current = card; e.dataTransfer.effectAllowed = "move"; }}
+                      onDragEnd={() => { dragging.current = null; setBacklogDragOver(null); }}
+                    >
+                      {/* Collapsed row */}
+                      <div
+                        className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 group transition-colors cursor-pointer"
+                        onClick={() => setExpandedCardId(isExpanded ? null : card.id)}
+                      >
+                        <GripVertical className="w-4 h-4 text-slate-300 shrink-0" onClick={e => e.stopPropagation()} />
+                        <ChevronDown className={cn("w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform", isExpanded && "rotate-180")} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-slate-800 truncate">{card.title}</p>
+                          {!isExpanded && card.description && (
+                            <p className="text-xs text-slate-500 truncate">{card.description}</p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
+                          {card.priority != null && <PriorityBadge priority={card.priority} />}
+                          {card.storyPoints != null && <StoryBadge pts={card.storyPoints} />}
+                          {card.assignee && <Avatar member={card.assignee} />}
+                          {activeSprint && (
+                            <button onClick={() => moveToSprint(card)} title="Move to active sprint"
+                              className="opacity-0 group-hover:opacity-100 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-all">
+                              Sprint <ArrowRight className="w-3 h-3" />
+                            </button>
+                          )}
+                          <button onClick={() => setCardModal({ card })}
+                            className="opacity-0 group-hover:opacity-100 p-1.5 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-all">
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Expanded accordion panel */}
+                      {isExpanded && (
+                        <div className="px-4 pb-4 pt-1 bg-slate-50 border-t border-slate-100 space-y-3">
+                          {card.description && (
+                            <p className="text-sm text-slate-600 leading-relaxed">{card.description}</p>
+                          )}
+                          <div>
+                            <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Priority</p>
+                            <div className="flex gap-1.5 flex-wrap">
+                              {PRIORITY_LEVELS.map(p => (
+                                <button key={p.level} type="button"
+                                  onClick={async () => {
+                                    const newPriority = card.priority === p.level ? null : p.level;
+                                    const res = await fetch(`/api/kanban/cards/${card.id}`, {
+                                      method: "PUT", headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({ priority: newPriority }),
+                                    });
+                                    const updated = await res.json();
+                                    setCards(prev => prev.map(c => c.id === card.id ? updated : c));
+                                  }}
+                                  className={cn(
+                                    "px-2 py-0.5 rounded text-xs font-bold border-2 transition-all",
+                                    card.priority === p.level
+                                      ? cn(p.color, p.border)
+                                      : "bg-white border-slate-200 text-slate-500 hover:border-slate-300"
+                                  )}>
+                                  {p.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-4 text-xs text-slate-500 flex-wrap">
+                            {card.dueDate && (
+                              <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{fmtDate(card.dueDate)}</span>
+                            )}
+                            {card.assignee && (
+                              <span className="flex items-center gap-1"><Avatar member={card.assignee} />{card.assignee.name}</span>
+                            )}
+                            {card.storyPoints != null && (
+                              <span className="flex items-center gap-1"><Target className="w-3 h-3" />{card.storyPoints} pts</span>
+                            )}
+                          </div>
+                          {checkTotal > 0 && (
+                            <div>
+                              <div className="flex items-center justify-between mb-1">
+                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Tasks</p>
+                                <span className="text-[10px] text-slate-500">{checkDone}/{checkTotal}</span>
+                              </div>
+                              <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                                <div className="h-full bg-indigo-500 rounded-full transition-all"
+                                  style={{ width: `${Math.round((checkDone / checkTotal) * 100)}%` }} />
+                              </div>
+                              <div className="mt-1.5 space-y-0.5">
+                                {card.checklist.slice(0, 5).map(item => (
+                                  <div key={item.id} className="flex items-center gap-2 text-xs text-slate-600">
+                                    <div className={cn("w-3 h-3 rounded-sm border-2 shrink-0 flex items-center justify-center",
+                                      item.completed ? "bg-indigo-500 border-indigo-500" : "border-slate-300")}>
+                                      {item.completed && <svg className="w-2 h-2 text-white" fill="none" viewBox="0 0 10 10"><path d="M1.5 5l2.5 2.5 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                                    </div>
+                                    <span className={cn("truncate", item.completed && "line-through text-slate-400")}>{item.title}</span>
+                                    {item.storyPoints != null && <span className="ml-auto text-[10px] text-indigo-600 font-bold shrink-0">{item.storyPoints}p</span>}
+                                  </div>
+                                ))}
+                                {checkTotal > 5 && <p className="text-[10px] text-slate-400 pl-5">+{checkTotal - 5} more tasks — open card to see all</p>}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -1467,7 +2054,7 @@ export function KanbanBoard() {
               </div>
 
               {/* Columns */}
-              <div className="grid grid-cols-4 gap-4">
+              <div className="grid grid-cols-5 gap-4">
                 {SPRINT_COLS.map(col => {
                   const colCards = sprintColCards(col.key);
                   const isDragTarget = dragOver === col.key;
@@ -1477,7 +2064,9 @@ export function KanbanBoard() {
                       onDrop={e => onDrop(e, col.key)}
                       className={cn(
                         "rounded-2xl transition-colors min-h-[400px] flex flex-col",
-                        isDragTarget ? "bg-indigo-50 ring-2 ring-indigo-300" : "bg-slate-50"
+                        isDragTarget
+                          ? col.key === "blocked" ? "bg-red-50 ring-2 ring-red-300" : "bg-indigo-50 ring-2 ring-indigo-300"
+                          : "bg-slate-50"
                       )}>
                       <div className="flex items-center justify-between px-4 py-3">
                         <div className="flex items-center gap-2">
@@ -1487,10 +2076,12 @@ export function KanbanBoard() {
                             {colCards.length}
                           </span>
                         </div>
-                        <button onClick={() => setCardModal({ card: { type: "sprint", status: col.key } })}
-                          className="p-1 rounded-md text-slate-400 hover:text-indigo-600 hover:bg-white transition-colors">
-                          <Plus className="w-3.5 h-3.5" />
-                        </button>
+                        {col.key !== "blocked" && (
+                          <button onClick={() => setCardModal({ card: { type: "sprint", status: col.key } })}
+                            className="p-1 rounded-md text-slate-400 hover:text-indigo-600 hover:bg-white transition-colors">
+                            <Plus className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                       {colCards.some(c => c.storyPoints != null) && (
                         <div className="px-4 pb-1">
@@ -1501,12 +2092,18 @@ export function KanbanBoard() {
                         {colCards.map(card => (
                           <SprintCard key={card.id} card={card}
                             onEdit={() => setCardModal({ card })}
+                            onBlock={() => card.status === "blocked" ? handleUnblockCard(card) : setBlockedModal(card)}
                             onDragStart={onDragStart} onDragEnd={onDragEnd} />
                         ))}
-                        {colCards.length === 0 && !isDragTarget && (
+                        {colCards.length === 0 && !isDragTarget && col.key !== "blocked" && (
                           <div onClick={() => setCardModal({ card: { type: "sprint", status: col.key } })}
                             className="flex items-center justify-center h-20 rounded-xl border-2 border-dashed border-slate-200 text-slate-300 cursor-pointer hover:border-indigo-200 hover:text-indigo-300 transition-colors">
                             <Plus className="w-5 h-5" />
+                          </div>
+                        )}
+                        {colCards.length === 0 && !isDragTarget && col.key === "blocked" && (
+                          <div className="flex items-center justify-center h-20 rounded-xl border-2 border-dashed border-red-100 text-red-200">
+                            <Lock className="w-5 h-5" />
                           </div>
                         )}
                       </div>
@@ -1614,6 +2211,11 @@ export function KanbanBoard() {
       )}
       {memberPanel && (
         <MemberPanel members={members} onAdd={handleAddMember} onRemove={handleRemoveMember} onClose={() => setMemberPanel(false)} />
+      )}
+      {blockedModal && (
+        <BlockedModal card={blockedModal}
+          onSave={reason => handleBlockCard(blockedModal, reason)}
+          onClose={() => setBlockedModal(null)} />
       )}
     </div>
   );

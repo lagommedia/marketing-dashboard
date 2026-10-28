@@ -21,7 +21,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   const body = await req.json();
-  const { title, description, type, status, storyPoints, assigneeId, dueDate, sprintId } = body;
+  const { title, description, type, status, blockedReason, priority, storyPoints, assigneeId, dueDate, sprintId } = body;
 
   if (!title?.trim()) {
     return NextResponse.json({ error: "Title is required" }, { status: 400 });
@@ -39,6 +39,8 @@ export async function POST(req: Request) {
       description: description?.trim() || null,
       type:        type    ?? "backlog",
       status:      status  ?? "backlog",
+      blockedReason: blockedReason ?? null,
+      priority:    priority  ?? null,
       storyPoints: storyPoints ?? null,
       assigneeId:  assigneeId  ?? null,
       dueDate:     dueDate ? new Date(dueDate) : null,

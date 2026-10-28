@@ -14,20 +14,22 @@ const CARD_INCLUDE = {
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const body = await req.json();
-  const { title, description, type, status, storyPoints, assigneeId, position, dueDate, sprintId } = body;
+  const { title, description, type, status, blockedReason, priority, storyPoints, assigneeId, position, dueDate, sprintId } = body;
 
   const card = await prisma.kanbanCard.update({
     where: { id },
     data: {
-      ...(title       !== undefined && { title:       title.trim()              }),
-      ...(description !== undefined && { description: description?.trim() || null }),
-      ...(type        !== undefined && { type                                   }),
-      ...(status      !== undefined && { status                                 }),
-      ...(storyPoints !== undefined && { storyPoints                            }),
-      ...(assigneeId  !== undefined && { assigneeId:  assigneeId || null        }),
-      ...(position    !== undefined && { position                               }),
-      ...(dueDate     !== undefined && { dueDate:     dueDate ? new Date(dueDate) : null }),
-      ...(sprintId    !== undefined && { sprintId:    sprintId ?? null          }),
+      ...(title         !== undefined && { title:         title.trim()              }),
+      ...(description   !== undefined && { description:   description?.trim() || null }),
+      ...(type          !== undefined && { type                                     }),
+      ...(status        !== undefined && { status                                   }),
+      ...(blockedReason !== undefined && { blockedReason: blockedReason || null     }),
+      ...(priority      !== undefined && { priority:      priority ?? null          }),
+      ...(storyPoints   !== undefined && { storyPoints                              }),
+      ...(assigneeId    !== undefined && { assigneeId:    assigneeId || null        }),
+      ...(position      !== undefined && { position                                 }),
+      ...(dueDate       !== undefined && { dueDate:       dueDate ? new Date(dueDate) : null }),
+      ...(sprintId      !== undefined && { sprintId:      sprintId ?? null          }),
     },
     include: CARD_INCLUDE,
   });

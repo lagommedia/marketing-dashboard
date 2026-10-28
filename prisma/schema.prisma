@@ -536,25 +536,28 @@ model KanbanSprint {
 }
 
 model KanbanCard {
-  id          String                @id @default(cuid())
-  title       String
-  description String?
-  type        String                @default("backlog") // "backlog" | "sprint"
-  status      String                @default("backlog") // "backlog" | "not_started" | "in_progress" | "under_review" | "completed"
-  storyPoints Int?
-  dueDate     DateTime?
-  assigneeId  String?
-  assignee    KanbanMember?         @relation(fields: [assigneeId], references: [id])
-  sprintId    String?
-  sprint      KanbanSprint?         @relation(fields: [sprintId], references: [id])
-  checklist   KanbanChecklistItem[]
-  position    Int                   @default(0)
-  createdAt   DateTime              @default(now())
-  updatedAt   DateTime              @updatedAt
+  id            String                @id @default(cuid())
+  title         String
+  description   String?
+  type          String                @default("backlog") // "backlog" | "sprint"
+  status        String                @default("backlog") // "backlog" | "not_started" | "in_progress" | "under_review" | "completed" | "blocked"
+  blockedReason String?               // set when status = "blocked"
+  priority      Int?                  // 0 (P0, highest) – 7 (P7, lowest); null = unset
+  storyPoints   Int?
+  dueDate       DateTime?
+  assigneeId    String?
+  assignee      KanbanMember?         @relation(fields: [assigneeId], references: [id])
+  sprintId      String?
+  sprint        KanbanSprint?         @relation(fields: [sprintId], references: [id])
+  checklist     KanbanChecklistItem[]
+  position      Int                   @default(0)
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
 
   @@index([type, status])
   @@index([sprintId])
   @@index([position])
+  @@index([priority])
 }
 
 model KanbanChecklistItem {
