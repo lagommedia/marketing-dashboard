@@ -5,7 +5,7 @@ import {
   Plus, X, Users, ArrowRight, Trash2,
   LayoutList, Columns3, History, GripVertical, Pencil,
   Flag, CheckCircle2, ChevronDown, ChevronUp, Calendar,
-  Target,
+  Target, BarChart2, TrendingUp, TrendingDown, Minus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -344,6 +344,273 @@ function CompleteSprintModal({ sprint, onComplete, onClose }: {
   );
 }
 
+// ── Velocity Analytics ───────────────────────────────────────────────────────
+
+function VelocityAnalytics({ sprints }: { sprints: Sprint[] }) {
+  const completed = [...sprints].sort(
+    (a, b) => new Date(a.completedAt ?? a.createdAt).getTime() - new Date(b.completedAt ?? b.createdAt).getTime()
+  );
+
+  if (completed.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 space-y-2">
+        <BarChart2 className="w-10 h-10" />
+        <p className="text-sm font-medium text-slate-600">No data yet</p>
+        <p className="text-xs text-slate-400">Complete at least one sprint to see velocity analytics</p>
+      </div>
+    );
+  }
+
+  const sprintData = completed.map(s => {
+    const done      = s.cards.filter(c => c.status === "completed");
+    const notDone   = s.cards.filter(c => c.status !== "completed");
+    const velocity  = totalPts(done);
+    const planned   = totalPts(s.cards);
+    const rate      = s.cards.length > 0 ? Math.round((done.length / s.cards.length) * 100) : 0;
+    return { sprint: s, velocity, planned, rate, doneCount: done.length, notDoneCount: notDone.length };
+  });
+
+  const maxVelocity = Math.max(...sprintData.map(d => d.planned), 1);
+  const avgVelocity = Math.round(sprintData.reduce((s, d) => s + d.velocity, 0) / sprintData.length);
+  const avgRate     = Math.round(sprintData.reduce((s, d) => s + d.rate, 0) / sprintData.length);
+
+  // Trend: compare last 2 sprints
+  const trend = sprintData.length >= 2
+    ? sprintData[sprintData.length - 1].velocity - sprintData[sprintData.length - 2].velocity
+    : 0;
+  const TrendIcon = trend > 0 ? TrendingUp : trend < 0 ? TrendingDown : Minus;
+  const trendColor = trend > 0 ? "text-emerald-600" : trend < 0 ? "text-red-500" : "text-slate-400";
+
+  // Per-member contribution across all sprints
+  const memberMap: Record<string, { member: Member; pts: number; cards: number }> = {};
+  completed.forEach(s => {
+    s.cards.filter(c => c.status === "completed" && c.assignee).forEach(c => {
+      const m = c.assignee!;
+      if (!memberMap[m.id]) memberMap[m.id] = { member: m, pts: 0, cards: 0 };
+      memberMap[m.id].pts   += c.storyPoints ?? 0;
+      memberMap[m.id].cards += 1;
+    });
+  });
+  const memberContribs = Object.values(memberMap).sort((a, b) => b.pts - a.pts);
+  const maxMemberPts   = Math.max(...memberContribs.map(m => m.pts), 1);
+
+  const BAR_H = 160;
+
+  return (
+    <div className="space-y-6">
+      {/* KPI row */}
+      <div className="grid grid-cols-4 gap-4">
+        <div className="bg-white rounded-xl border border-slate-200 p-4">
+          <p className="text-xs text-slate-500 uppercase tracking-wide mb-1">Avg Velocity</p>
+          <p className="text-2xl font-bold text-indigo-600">{avgVelocity} <span className="text-sm font-normal text-slate-400">pts/sprint</span></p>
+        </div>
+        <div className="bg-white rounded-xl border border-slate-200 p-4">
+          <p className="text-xs text-slate-500 uppercase tracking-wide mb-1">Avg Completion</p>
+          <p className="text-2xl font-bold text-emerald-600">{avgRate}%</p>
+        </div>
+        <div className="bg-white rounded-xl border border-slate-200 p-4">
+          <p className="text-xs text-slate-500 uppercase tracking-wide mb-1">Total Delivered</p>
+          <p className="text-2xl font-bold text-slate-700">
+            {sprintData.reduce((s, d) => s + d.velocity, 0)} <span className="text-sm font-normal text-slate-400">pts</span>
+          </p>
+        </div>
+        <div className="bg-white rounded-xl border border-slate-200 p-4">
+          <p className="text-xs text-slate-500 uppercase tracking-wide mb-1">Trend</p>
+          <div className="flex items-center gap-2">
+            <TrendIcon className={cn("w-6 h-6", trendColor)} />
+            <p className={cn("text-2xl font-bold", trendColor)}>
+              {trend > 0 ? "+" : ""}{trend !== 0 ? `${trend} pts` : "Flat"}
+            </p>
+          </div>
+          {sprintData.length >= 2 && (
+            <p className="text-[10px] text-slate-400 mt-0.5">vs previous sprint</p>
+          )}
+        </div>
+      </div>
+
+      {/* Velocity bar chart */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-5">
+        <h3 className="text-sm font-semibold text-slate-800 mb-4">Velocity per Sprint</h3>
+        <div className="flex items-end gap-3" style={{ height: BAR_H + 40 }}>
+          {sprintData.map((d, i) => {
+            const completedH = maxVelocity > 0 ? Math.round((d.velocity / maxVelocity) * BAR_H) : 0;
+            const plannedH   = maxVelocity > 0 ? Math.round((d.planned  / maxVelocity) * BAR_H) : 0;
+            const isLast     = i === sprintData.length - 1;
+            return (
+              <div key={d.sprint.id} className="flex-1 flex flex-col items-center gap-1 min-w-0 group">
+                <div className="relative w-full flex flex-col items-center justify-end" style={{ height: BAR_H }}>
+                  {/* Planned (ghost) */}
+                  <div
+                    className="absolute bottom-0 w-full rounded-t-md bg-slate-100 transition-all"
+                    style={{ height: plannedH }}
+                  />
+                  {/* Completed (solid) */}
+                  <div
+                    className={cn(
+                      "relative w-full rounded-t-md transition-all",
+                      isLast ? "bg-indigo-500" : "bg-indigo-300"
+                    )}
+                    style={{ height: completedH }}
+                  >
+                    {/* Tooltip on hover */}
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-10 pointer-events-none">
+                      <div className="bg-slate-900 text-white text-xs rounded-lg px-2.5 py-1.5 whitespace-nowrap shadow-lg">
+                        <p className="font-semibold">{d.sprint.name}</p>
+                        <p>Completed: {d.velocity} pts ({d.doneCount} cards)</p>
+                        <p>Planned: {d.planned} pts</p>
+                        <p>Rate: {d.rate}%</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <p className="text-[10px] text-slate-500 truncate w-full text-center leading-tight">
+                  {d.sprint.name.replace(/sprint\s*/i, "S").slice(0, 10)}
+                </p>
+                <p className="text-[10px] font-bold text-indigo-600">{d.velocity}</p>
+              </div>
+            );
+          })}
+        </div>
+        <div className="flex items-center gap-4 mt-3">
+          <div className="flex items-center gap-1.5">
+            <div className="w-3 h-3 rounded-sm bg-indigo-300" />
+            <span className="text-xs text-slate-500">Completed pts</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="w-3 h-3 rounded-sm bg-slate-200" />
+            <span className="text-xs text-slate-500">Planned pts</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Completion rate trend line */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-5">
+        <h3 className="text-sm font-semibold text-slate-800 mb-4">Completion Rate Trend</h3>
+        {(() => {
+          const W = 600, H = 100, PAD = 20;
+          const pts = sprintData.map((d, i) => ({
+            x: sprintData.length === 1 ? W / 2 : PAD + (i / (sprintData.length - 1)) * (W - PAD * 2),
+            y: H - PAD - ((d.rate / 100) * (H - PAD * 2)),
+            rate: d.rate,
+            name: d.sprint.name,
+          }));
+          const pathD = pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
+          const areaD = pts.length > 0
+            ? `${pathD} L ${pts[pts.length - 1].x} ${H - PAD} L ${pts[0].x} ${H - PAD} Z`
+            : "";
+          return (
+            <div className="relative w-full overflow-hidden" style={{ height: H + 30 }}>
+              <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: H }}>
+                {/* Grid lines */}
+                {[0, 25, 50, 75, 100].map(pct => {
+                  const y = H - PAD - ((pct / 100) * (H - PAD * 2));
+                  return (
+                    <g key={pct}>
+                      <line x1={PAD} y1={y} x2={W - PAD} y2={y} stroke="#f1f5f9" strokeWidth="1" />
+                      <text x={0} y={y + 4} fontSize="9" fill="#94a3b8">{pct}%</text>
+                    </g>
+                  );
+                })}
+                {/* Area fill */}
+                <path d={areaD} fill="#6366f1" fillOpacity="0.08" />
+                {/* Line */}
+                <path d={pathD} fill="none" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                {/* Points */}
+                {pts.map((p, i) => (
+                  <g key={i} className="group">
+                    <circle cx={p.x} cy={p.y} r="5" fill="#6366f1" stroke="white" strokeWidth="2" />
+                    <title>{p.name}: {p.rate}%</title>
+                  </g>
+                ))}
+              </svg>
+              {/* X labels */}
+              <div className="flex justify-between px-5 mt-1">
+                {sprintData.map(d => (
+                  <p key={d.sprint.id} className="text-[10px] text-slate-400 truncate flex-1 text-center">
+                    {d.sprint.name.replace(/sprint\s*/i, "S").slice(0, 8)}
+                  </p>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+      </div>
+
+      {/* Team member contribution */}
+      {memberContribs.length > 0 && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-5">
+          <h3 className="text-sm font-semibold text-slate-800 mb-4">Team Velocity Contribution</h3>
+          <div className="space-y-3">
+            {memberContribs.map(({ member, pts, cards }) => {
+              const pct = Math.round((pts / maxMemberPts) * 100);
+              return (
+                <div key={member.id} className="flex items-center gap-3">
+                  <Avatar member={member} size="md" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between mb-1">
+                      <p className="text-xs font-medium text-slate-700">{member.name}</p>
+                      <p className="text-xs text-slate-500">{pts} pts · {cards} cards</p>
+                    </div>
+                    <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all"
+                        style={{ width: `${pct}%`, background: member.color }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Sprint breakdown table */}
+      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+        <div className="px-5 py-3 border-b border-slate-100">
+          <h3 className="text-sm font-semibold text-slate-800">Sprint Breakdown</h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-50 text-left">
+                <th className="px-5 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Sprint</th>
+                <th className="px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide text-right">Planned</th>
+                <th className="px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide text-right">Completed</th>
+                <th className="px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide text-right">Rate</th>
+                <th className="px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide text-right">Cards</th>
+                <th className="px-5 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Completed</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {[...sprintData].reverse().map(d => (
+                <tr key={d.sprint.id} className="hover:bg-slate-50 transition-colors">
+                  <td className="px-5 py-3">
+                    <p className="font-medium text-slate-800">{d.sprint.name}</p>
+                    {d.sprint.goal && <p className="text-xs text-slate-400 truncate max-w-[200px]">{d.sprint.goal}</p>}
+                  </td>
+                  <td className="px-4 py-3 text-right text-slate-600 tabular-nums">{d.planned} pts</td>
+                  <td className="px-4 py-3 text-right font-semibold text-indigo-600 tabular-nums">{d.velocity} pts</td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    <span className={cn(
+                      "inline-block px-2 py-0.5 rounded-full text-xs font-semibold",
+                      d.rate >= 80 ? "bg-emerald-100 text-emerald-700"
+                        : d.rate >= 50 ? "bg-amber-100 text-amber-700"
+                        : "bg-red-100 text-red-700"
+                    )}>{d.rate}%</span>
+                  </td>
+                  <td className="px-4 py-3 text-right text-slate-600 tabular-nums">{d.doneCount}/{d.sprint.cards.length}</td>
+                  <td className="px-5 py-3 text-xs text-slate-400">{fmtDate(d.sprint.completedAt ?? d.sprint.endDate)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Member Panel ──────────────────────────────────────────────────────────────
 
 function MemberPanel({ members, onAdd, onRemove, onClose }: {
@@ -553,7 +820,7 @@ function SprintHistoryCard({ sprint }: { sprint: Sprint }) {
 // ── Main Board ────────────────────────────────────────────────────────────────
 
 export function KanbanBoard() {
-  const [view,         setView]         = useState<"backlog" | "sprint" | "history">("backlog");
+  const [view,         setView]         = useState<"backlog" | "sprint" | "history" | "analytics">("backlog");
   const [cards,        setCards]        = useState<Card[]>([]);
   const [members,      setMembers]      = useState<Member[]>([]);
   const [sprints,      setSprints]      = useState<Sprint[]>([]);
@@ -753,7 +1020,8 @@ export function KanbanBoard() {
         {[
           { key: "backlog",  label: "Backlog",      icon: LayoutList,  count: backlogCards.length },
           { key: "sprint",   label: "Sprint Board",  icon: Columns3,    count: cards.filter(c => c.type === "sprint").length },
-          { key: "history",  label: "History",       icon: History,     count: completedSprints.length },
+          { key: "history",   label: "History",      icon: History,    count: completedSprints.length },
+        { key: "analytics", label: "Analytics",    icon: BarChart2,  count: null },
         ].map(({ key, label, icon: Icon, count }) => (
           <button key={key} onClick={() => setView(key as typeof view)}
             className={cn(
@@ -762,7 +1030,7 @@ export function KanbanBoard() {
             )}>
             <Icon className="w-4 h-4" />
             {label}
-            {count > 0 && <span className="ml-0.5 text-xs text-slate-500">{count}</span>}
+            {count != null && count > 0 && <span className="ml-0.5 text-xs text-slate-500">{count}</span>}
           </button>
         ))}
       </div>
@@ -1017,6 +1285,19 @@ export function KanbanBoard() {
               </div>
             </>
           )}
+        </div>
+      )}
+
+      {/* ── Analytics ───────────────────────────────────────────────────── */}
+      {view === "analytics" && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-3">
+            <h2 className="text-base font-semibold text-slate-800">Velocity Analytics</h2>
+            {completedSprints.length > 0 && (
+              <span className="text-xs text-slate-500">{completedSprints.length} sprint{completedSprints.length !== 1 ? "s" : ""} of data</span>
+            )}
+          </div>
+          <VelocityAnalytics sprints={completedSprints} />
         </div>
       )}
 
