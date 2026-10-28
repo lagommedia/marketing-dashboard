@@ -1450,7 +1450,7 @@ export function KanbanBoard() {
   const [backlogDragOver, setBacklogDragOver] = useState<"sprint" | "backlog" | null>(null);
 
   // Inline editing on collapsed backlog rows
-  const [inlineEdit, setInlineEdit] = useState<{ cardId: string; field: "title" | "priority" | "pts" } | null>(null);
+  const [inlineEdit, setInlineEdit] = useState<{ cardId: string; field: "title" | "priority" | "pts" | "assignee" } | null>(null);
   const [inlineVal,  setInlineVal]  = useState<string>("");
 
   const dragging  = useRef<Card | null>(null);
@@ -1536,12 +1536,13 @@ export function KanbanBoard() {
     setCards(prev => [...prev, ...created]);
   }
 
-  async function commitInlineEdit(cardId: string, field: "title" | "priority" | "pts", value: string) {
+  async function commitInlineEdit(cardId: string, field: "title" | "priority" | "pts" | "assignee", value: string) {
     setInlineEdit(null);
     if (field === "title" && !value.trim()) return;
     const payload =
       field === "title"    ? { title: value.trim() } :
       field === "priority" ? { priority: value === "" ? null : Number(value) } :
+      field === "assignee" ? { assigneeId: value || null } :
                              { storyPoints: value === "" ? null : Number(value) };
     const res = await fetch(`/api/kanban/cards/${cardId}`, {
       method: "PUT", headers: { "Content-Type": "application/json" },
@@ -2101,7 +2102,40 @@ export function KanbanBoard() {
                             </span>
                           )}
 
-                          {card.assignee && <Avatar member={card.assignee} />}
+                          {/* Assignee — double-click to reassign */}
+                          {inlineEdit?.cardId === card.id && inlineEdit.field === "assignee" ? (
+                            <div className="flex items-center gap-1 flex-wrap max-w-[220px]">
+                              {members.map(m => (
+                                <button key={m.id} type="button" title={m.name}
+                                  className={cn("rounded-full ring-2 transition-all",
+                                    card.assigneeId === m.id ? "ring-indigo-500 ring-offset-1" : "ring-transparent hover:ring-slate-300")}
+                                  onClick={() => commitInlineEdit(card.id, "assignee", m.id)}>
+                                  <Avatar member={m} />
+                                </button>
+                              ))}
+                              <button type="button"
+                                className="w-6 h-6 rounded-full bg-slate-100 text-slate-500 text-[11px] font-bold hover:bg-slate-200 flex items-center justify-center"
+                                title="Unassign"
+                                onClick={() => commitInlineEdit(card.id, "assignee", "")}>
+                                ×
+                              </button>
+                            </div>
+                          ) : (
+                            <span
+                              title="Double-click to reassign"
+                              onDoubleClick={() => {
+                                setInlineEdit({ cardId: card.id, field: "assignee" });
+                                setInlineVal(card.assigneeId ?? "");
+                              }}
+                              className="cursor-pointer"
+                            >
+                              {card.assignee
+                                ? <Avatar member={card.assignee} />
+                                : <span className="opacity-0 group-hover:opacity-100 w-6 h-6 rounded-full bg-slate-100 border border-dashed border-slate-300 flex items-center justify-center text-slate-400 text-[10px]">+</span>
+                              }
+                            </span>
+                          )}
+
                           {activeSprint && (
                             <button onClick={() => moveToSprint(card)} title="Move to active sprint"
                               className="opacity-0 group-hover:opacity-100 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-all">
