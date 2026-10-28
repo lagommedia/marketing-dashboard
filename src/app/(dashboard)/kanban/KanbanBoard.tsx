@@ -2,8 +2,10 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
-  Plus, X, ChevronRight, Users, ArrowRight, Trash2,
-  LayoutList, Columns3, UserPlus, GripVertical, Pencil,
+  Plus, X, Users, ArrowRight, Trash2,
+  LayoutList, Columns3, History, GripVertical, Pencil,
+  Flag, CheckCircle2, ChevronDown, ChevronUp, Calendar,
+  Target,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -20,16 +22,28 @@ type Card = {
   storyPoints: number | null;
   assigneeId:  string | null;
   assignee:    Member | null;
+  sprintId:    string | null;
   position:    number;
+};
+
+type Sprint = {
+  id:          string;
+  name:        string;
+  goal:        string | null;
+  startDate:   string | null;
+  endDate:     string | null;
+  status:      "active" | "completed";
+  completedAt: string | null;
+  cards:       Card[];
 };
 
 const FIBONACCI = [1, 2, 3, 5, 8, 13, 21];
 
-const SPRINT_COLS: { key: Card["status"]; label: string; color: string; bg: string }[] = [
-  { key: "not_started",  label: "Not Started",  color: "text-slate-500",   bg: "bg-slate-100" },
-  { key: "in_progress",  label: "In Progress",  color: "text-blue-600",    bg: "bg-blue-50"   },
-  { key: "under_review", label: "Under Review", color: "text-amber-600",   bg: "bg-amber-50"  },
-  { key: "completed",    label: "Completed",    color: "text-emerald-600", bg: "bg-emerald-50"},
+const SPRINT_COLS: { key: Card["status"]; label: string; color: string; bg: string; dot: string }[] = [
+  { key: "not_started",  label: "Not Started",  color: "text-slate-500",   bg: "bg-slate-100",   dot: "bg-slate-400"   },
+  { key: "in_progress",  label: "In Progress",  color: "text-blue-600",    bg: "bg-blue-50",     dot: "bg-blue-500"    },
+  { key: "under_review", label: "Under Review", color: "text-amber-600",   bg: "bg-amber-50",    dot: "bg-amber-500"   },
+  { key: "completed",    label: "Completed",    color: "text-emerald-600", bg: "bg-emerald-50",  dot: "bg-emerald-500" },
 ];
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -38,8 +52,17 @@ function initials(name: string) {
   return name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
 }
 
-function Avatar({ member, size = "sm" }: { member: Member; size?: "sm" | "md" }) {
-  const sz = size === "md" ? "w-7 h-7 text-xs" : "w-5 h-5 text-[10px]";
+function fmtDate(iso: string | null) {
+  if (!iso) return null;
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function totalPts(cards: Card[]) {
+  return cards.reduce((s, c) => s + (c.storyPoints ?? 0), 0);
+}
+
+function Avatar({ member, size = "sm" }: { member: Member; size?: "sm" | "md" | "lg" }) {
+  const sz = size === "lg" ? "w-8 h-8 text-xs" : size === "md" ? "w-6 h-6 text-[10px]" : "w-5 h-5 text-[10px]";
   return (
     <span
       className={cn("rounded-full flex items-center justify-center font-semibold text-white shrink-0", sz)}
@@ -51,9 +74,10 @@ function Avatar({ member, size = "sm" }: { member: Member; size?: "sm" | "md" })
   );
 }
 
-function StoryBadge({ pts }: { pts: number }) {
+function StoryBadge({ pts, size = "sm" }: { pts: number; size?: "sm" | "md" }) {
+  const sz = size === "md" ? "w-6 h-6 text-xs" : "w-5 h-5 text-[10px]";
   return (
-    <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-bold shrink-0">
+    <span className={cn("inline-flex items-center justify-center rounded-full bg-indigo-100 text-indigo-700 font-bold shrink-0", sz)}>
       {pts}
     </span>
   );
@@ -62,17 +86,13 @@ function StoryBadge({ pts }: { pts: number }) {
 // ── Card Modal ───────────────────────────────────────────────────────────────
 
 function CardModal({
-  card,
-  members,
-  onSave,
-  onDelete,
-  onClose,
+  card, members, onSave, onDelete, onClose,
 }: {
   card: Partial<Card> & { type: Card["type"]; status: Card["status"] };
   members: Member[];
-  onSave: (data: Partial<Card>) => Promise<void>;
+  onSave:   (data: Partial<Card>) => Promise<void>;
   onDelete?: () => Promise<void>;
-  onClose: () => void;
+  onClose:  () => void;
 }) {
   const [title,       setTitle]       = useState(card.title ?? "");
   const [description, setDescription] = useState(card.description ?? "");
@@ -100,105 +120,64 @@ function CardModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
       <div className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-md">
-        {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-          <h3 className="text-sm font-semibold text-slate-900">
-            {card.id ? "Edit card" : "New card"}
-          </h3>
+          <h3 className="text-sm font-semibold text-slate-900">{card.id ? "Edit card" : "New card"}</h3>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors">
             <X className="w-4 h-4 text-slate-500" />
           </button>
         </div>
-
         <form onSubmit={submit} className="p-5 space-y-4">
-          {/* Title */}
           <div>
             <label className="block text-xs font-medium text-slate-700 mb-1">Title *</label>
             <input
-              autoFocus
-              type="text"
-              value={title}
-              onChange={e => setTitle(e.target.value)}
-              placeholder="Card title"
+              autoFocus type="text" value={title} onChange={e => setTitle(e.target.value)}
+              placeholder="Card title" required
               className="w-full text-sm rounded-lg border border-slate-200 px-3 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-              required
             />
           </div>
-
-          {/* Description */}
           <div>
             <label className="block text-xs font-medium text-slate-700 mb-1">Description</label>
             <textarea
-              value={description}
-              onChange={e => setDescription(e.target.value)}
-              placeholder="Optional description…"
-              rows={3}
+              value={description} onChange={e => setDescription(e.target.value)}
+              placeholder="Optional description…" rows={3}
               className="w-full text-sm rounded-lg border border-slate-200 px-3 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none"
             />
           </div>
-
-          {/* Story points */}
           <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">Story points</label>
+            <label className="block text-xs font-medium text-slate-700 mb-2">Story points (Fibonacci)</label>
             <div className="flex gap-1.5 flex-wrap">
               {FIBONACCI.map(n => (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => setPts(pts === n ? null : n)}
+                <button key={n} type="button" onClick={() => setPts(pts === n ? null : n)}
                   className={cn(
                     "w-8 h-8 rounded-full text-xs font-bold transition-colors",
-                    pts === n
-                      ? "bg-indigo-600 text-white"
-                      : "bg-slate-100 text-slate-700 hover:bg-indigo-100 hover:text-indigo-700"
-                  )}
-                >
+                    pts === n ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-indigo-100 hover:text-indigo-700"
+                  )}>
                   {n}
                 </button>
               ))}
             </div>
           </div>
-
-          {/* Assignee */}
           <div>
             <label className="block text-xs font-medium text-slate-700 mb-1">Assignee</label>
-            <select
-              value={assigneeId ?? ""}
-              onChange={e => setAssigneeId(e.target.value || null)}
-              className="w-full text-sm rounded-lg border border-slate-200 px-3 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            >
+            <select value={assigneeId ?? ""} onChange={e => setAssigneeId(e.target.value || null)}
+              className="w-full text-sm rounded-lg border border-slate-200 px-3 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500">
               <option value="">Unassigned</option>
-              {members.map(m => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
+              {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
             </select>
           </div>
-
-          {/* Actions */}
           <div className="flex gap-2 pt-1">
             {onDelete && (
-              <button
-                type="button"
-                onClick={handleDelete}
-                disabled={saving}
-                className="p-2.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors"
-                title="Delete card"
-              >
+              <button type="button" onClick={handleDelete} disabled={saving}
+                className="p-2.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors" title="Delete card">
                 <Trash2 className="w-4 h-4" />
               </button>
             )}
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 px-4 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors"
-            >
+            <button type="button" onClick={onClose}
+              className="flex-1 px-4 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors">
               Cancel
             </button>
-            <button
-              type="submit"
-              disabled={saving || !title.trim()}
-              className="flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
+            <button type="submit" disabled={saving || !title.trim()}
+              className="flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors">
               {saving ? "Saving…" : card.id ? "Save" : "Add card"}
             </button>
           </div>
@@ -208,7 +187,164 @@ function CardModal({
   );
 }
 
-// ── Member Panel ─────────────────────────────────────────────────────────────
+// ── Sprint Modal (create / edit) ──────────────────────────────────────────────
+
+function SprintModal({ sprint, onSave, onClose }: {
+  sprint?: Partial<Sprint>;
+  onSave:  (data: { name: string; goal: string; startDate: string; endDate: string }) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [name,      setName]      = useState(sprint?.name ?? "");
+  const [goal,      setGoal]      = useState(sprint?.goal ?? "");
+  const [startDate, setStartDate] = useState(sprint?.startDate ? sprint.startDate.slice(0, 10) : "");
+  const [endDate,   setEndDate]   = useState(sprint?.endDate   ? sprint.endDate.slice(0, 10)   : "");
+  const [saving,    setSaving]    = useState(false);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim()) return;
+    setSaving(true);
+    await onSave({ name, goal, startDate, endDate });
+    setSaving(false);
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-sm">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+          <h3 className="text-sm font-semibold text-slate-900">{sprint?.id ? "Edit sprint" : "Start new sprint"}</h3>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors">
+            <X className="w-4 h-4 text-slate-500" />
+          </button>
+        </div>
+        <form onSubmit={submit} className="p-5 space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-1">Sprint name *</label>
+            <input autoFocus type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Sprint 1 — Q4" required
+              className="w-full text-sm rounded-lg border border-slate-200 px-3 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-1">Sprint goal</label>
+            <input type="text" value={goal} onChange={e => setGoal(e.target.value)} placeholder="What does this sprint achieve?"
+              className="w-full text-sm rounded-lg border border-slate-200 px-3 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Start date</label>
+              <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
+                className="w-full text-sm rounded-lg border border-slate-200 px-3 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">End date</label>
+              <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
+                className="w-full text-sm rounded-lg border border-slate-200 px-3 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
+          </div>
+          <div className="flex gap-2 pt-1">
+            <button type="button" onClick={onClose}
+              className="flex-1 px-4 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors">
+              Cancel
+            </button>
+            <button type="submit" disabled={saving || !name.trim()}
+              className="flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors">
+              {saving ? "Saving…" : sprint?.id ? "Save" : "Start sprint"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ── Complete Sprint Modal ─────────────────────────────────────────────────────
+
+function CompleteSprintModal({ sprint, onComplete, onClose }: {
+  sprint:     Sprint;
+  onComplete: (incompleteAction: "backlog" | "next") => Promise<void>;
+  onClose:    () => void;
+}) {
+  const incomplete = sprint.cards.filter(c => c.status !== "completed");
+  const completed  = sprint.cards.filter(c => c.status === "completed");
+  const [action, setAction]   = useState<"backlog" | "next">("backlog");
+  const [saving, setSaving]   = useState(false);
+
+  async function submit() {
+    setSaving(true);
+    await onComplete(action);
+    setSaving(false);
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-md">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+          <h3 className="text-sm font-semibold text-slate-900">Complete sprint</h3>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors">
+            <X className="w-4 h-4 text-slate-500" />
+          </button>
+        </div>
+        <div className="p-5 space-y-4">
+          {/* Summary */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-emerald-50 rounded-xl p-3 text-center">
+              <p className="text-2xl font-bold text-emerald-600">{completed.length}</p>
+              <p className="text-xs text-emerald-600 mt-0.5">Completed</p>
+              <p className="text-xs text-emerald-500">{totalPts(completed)} pts</p>
+            </div>
+            <div className="bg-amber-50 rounded-xl p-3 text-center">
+              <p className="text-2xl font-bold text-amber-600">{incomplete.length}</p>
+              <p className="text-xs text-amber-600 mt-0.5">Incomplete</p>
+              <p className="text-xs text-amber-500">{totalPts(incomplete)} pts</p>
+            </div>
+          </div>
+
+          {/* Handle incomplete */}
+          {incomplete.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-slate-700">Move {incomplete.length} incomplete card{incomplete.length !== 1 ? "s" : ""} to:</p>
+              <div className="space-y-2">
+                {(["backlog", "next"] as const).map(opt => (
+                  <label key={opt} className={cn(
+                    "flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors",
+                    action === opt ? "border-indigo-400 bg-indigo-50" : "border-slate-200 hover:border-indigo-200"
+                  )}>
+                    <input type="radio" className="mt-0.5" checked={action === opt} onChange={() => setAction(opt)} />
+                    <div>
+                      <p className="text-sm font-medium text-slate-800">
+                        {opt === "backlog" ? "Marketing Backlog" : "Next Sprint"}
+                      </p>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        {opt === "backlog"
+                          ? "Cards return to the backlog for re-prioritization"
+                          : "Cards carry forward into the next sprint automatically"}
+                      </p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="flex gap-2 pt-1">
+            <button type="button" onClick={onClose}
+              className="flex-1 px-4 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors">
+              Cancel
+            </button>
+            <button onClick={submit} disabled={saving}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 transition-colors">
+              <CheckCircle2 className="w-4 h-4" />
+              {saving ? "Completing…" : "Complete sprint"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Member Panel ──────────────────────────────────────────────────────────────
 
 function MemberPanel({ members, onAdd, onRemove, onClose }: {
   members: Member[];
@@ -216,8 +352,8 @@ function MemberPanel({ members, onAdd, onRemove, onClose }: {
   onRemove: (id: string) => Promise<void>;
   onClose:  () => void;
 }) {
-  const [name,   setName]   = useState("");
-  const [email,  setEmail]  = useState("");
+  const [name, setName]     = useState("");
+  const [email, setEmail]   = useState("");
   const [saving, setSaving] = useState(false);
 
   async function submit(e: React.FormEvent) {
@@ -234,17 +370,11 @@ function MemberPanel({ members, onAdd, onRemove, onClose }: {
       <div className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-sm">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
           <h3 className="text-sm font-semibold text-slate-900">Team members</h3>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors">
-            <X className="w-4 h-4 text-slate-500" />
-          </button>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors"><X className="w-4 h-4 text-slate-500" /></button>
         </div>
-
         <div className="p-5 space-y-4">
-          {/* Existing members */}
           <div className="space-y-2 max-h-52 overflow-y-auto">
-            {members.length === 0 && (
-              <p className="text-xs text-slate-400 text-center py-3">No team members yet</p>
-            )}
+            {members.length === 0 && <p className="text-xs text-slate-400 text-center py-3">No team members yet</p>}
             {members.map(m => (
               <div key={m.id} className="flex items-center gap-3 py-1.5">
                 <Avatar member={m} size="md" />
@@ -252,38 +382,20 @@ function MemberPanel({ members, onAdd, onRemove, onClose }: {
                   <p className="text-sm font-medium text-slate-800 truncate">{m.name}</p>
                   {m.email && <p className="text-xs text-slate-400 truncate">{m.email}</p>}
                 </div>
-                <button
-                  onClick={() => onRemove(m.id)}
-                  className="p-1.5 rounded-md text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"
-                >
+                <button onClick={() => onRemove(m.id)} className="p-1.5 rounded-md text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors">
                   <X className="w-3.5 h-3.5" />
                 </button>
               </div>
             ))}
           </div>
-
-          {/* Add member */}
           <form onSubmit={submit} className="space-y-2 pt-2 border-t border-slate-100">
             <p className="text-xs font-medium text-slate-600">Add team member</p>
-            <input
-              type="text"
-              value={name}
-              onChange={e => setName(e.target.value)}
-              placeholder="Name *"
-              className="w-full text-sm rounded-lg border border-slate-200 px-3 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
-            <input
-              type="email"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              placeholder="Email (optional)"
-              className="w-full text-sm rounded-lg border border-slate-200 px-3 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
-            <button
-              type="submit"
-              disabled={saving || !name.trim()}
-              className="w-full px-4 py-2 rounded-lg text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-            >
+            <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Name *"
+              className="w-full text-sm rounded-lg border border-slate-200 px-3 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email (optional)"
+              className="w-full text-sm rounded-lg border border-slate-200 px-3 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            <button type="submit" disabled={saving || !name.trim()}
+              className="w-full px-4 py-2 rounded-lg text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors">
               {saving ? "Adding…" : "Add member"}
             </button>
           </form>
@@ -293,24 +405,17 @@ function MemberPanel({ members, onAdd, onRemove, onClose }: {
   );
 }
 
-// ── Kanban Card Component ─────────────────────────────────────────────────────
+// ── Sprint Card ───────────────────────────────────────────────────────────────
 
-function KanbanCard({
-  card,
-  onEdit,
-  onDragStart,
-  onDragEnd,
-}: {
-  card: Card;
-  onEdit: () => void;
+function SprintCard({ card, onEdit, onDragStart, onDragEnd }: {
+  card:        Card;
+  onEdit:      () => void;
   onDragStart: (e: React.DragEvent, card: Card) => void;
   onDragEnd:   (e: React.DragEvent) => void;
 }) {
   return (
     <div
-      draggable
-      onDragStart={e => onDragStart(e, card)}
-      onDragEnd={onDragEnd}
+      draggable onDragStart={e => onDragStart(e, card)} onDragEnd={onDragEnd}
       onClick={onEdit}
       className="bg-white rounded-xl border border-slate-200 p-3 shadow-sm cursor-pointer hover:shadow-md hover:border-indigo-200 transition-all group select-none"
     >
@@ -318,9 +423,7 @@ function KanbanCard({
         <GripVertical className="w-3.5 h-3.5 text-slate-300 mt-0.5 shrink-0 group-hover:text-slate-400 transition-colors" />
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-slate-800 leading-snug">{card.title}</p>
-          {card.description && (
-            <p className="text-xs text-slate-500 mt-1 line-clamp-2">{card.description}</p>
-          )}
+          {card.description && <p className="text-xs text-slate-500 mt-1 line-clamp-2">{card.description}</p>}
           <div className="flex items-center gap-2 mt-2">
             {card.storyPoints != null && <StoryBadge pts={card.storyPoints} />}
             {card.assignee && <Avatar member={card.assignee} />}
@@ -331,38 +434,163 @@ function KanbanCard({
   );
 }
 
+// ── Sprint History Card ───────────────────────────────────────────────────────
+
+function SprintHistoryCard({ sprint }: { sprint: Sprint }) {
+  const [expanded, setExpanded] = useState(false);
+  const completed  = sprint.cards.filter(c => c.status === "completed");
+  const incomplete = sprint.cards.filter(c => c.status !== "completed");
+  const velocity   = totalPts(completed);
+  const planned    = totalPts(sprint.cards);
+  const rate       = sprint.cards.length > 0 ? Math.round((completed.length / sprint.cards.length) * 100) : 0;
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+      {/* Header */}
+      <div
+        className="flex items-center gap-4 px-5 py-4 cursor-pointer hover:bg-slate-50 transition-colors"
+        onClick={() => setExpanded(e => !e)}
+      >
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+            <p className="text-sm font-semibold text-slate-900 truncate">{sprint.name}</p>
+          </div>
+          {sprint.goal && <p className="text-xs text-slate-500 mt-0.5 ml-6 truncate">{sprint.goal}</p>}
+          {(sprint.startDate || sprint.completedAt) && (
+            <p className="text-xs text-slate-400 mt-0.5 ml-6">
+              {fmtDate(sprint.startDate)} → {fmtDate(sprint.completedAt ?? sprint.endDate)}
+            </p>
+          )}
+        </div>
+
+        {/* Stats */}
+        <div className="flex items-center gap-4 shrink-0">
+          <div className="text-center">
+            <p className="text-lg font-bold text-indigo-600">{velocity}</p>
+            <p className="text-[10px] text-slate-400 uppercase tracking-wide">Velocity</p>
+          </div>
+          <div className="text-center">
+            <p className="text-lg font-bold text-slate-700">{rate}%</p>
+            <p className="text-[10px] text-slate-400 uppercase tracking-wide">Done</p>
+          </div>
+          <div className="text-center">
+            <p className="text-lg font-bold text-slate-700">{sprint.cards.length}</p>
+            <p className="text-[10px] text-slate-400 uppercase tracking-wide">Cards</p>
+          </div>
+          {expanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+        </div>
+      </div>
+
+      {/* Progress bar */}
+      <div className="h-1 bg-slate-100">
+        <div className="h-full bg-emerald-500 transition-all" style={{ width: `${rate}%` }} />
+      </div>
+
+      {/* Expanded card list */}
+      {expanded && (
+        <div className="px-5 py-4 space-y-4 border-t border-slate-100 bg-slate-50">
+          {completed.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-emerald-600 uppercase tracking-wide mb-2">
+                Completed · {totalPts(completed)} pts
+              </p>
+              <div className="space-y-1.5">
+                {completed.map(c => (
+                  <div key={c.id} className="flex items-center gap-3 bg-white rounded-lg px-3 py-2 border border-slate-100">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                    <p className="flex-1 text-sm text-slate-700 truncate">{c.title}</p>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {c.storyPoints != null && <StoryBadge pts={c.storyPoints} />}
+                      {c.assignee && <Avatar member={c.assignee} />}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {incomplete.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-amber-600 uppercase tracking-wide mb-2">
+                Not completed · {totalPts(incomplete)} pts
+              </p>
+              <div className="space-y-1.5">
+                {incomplete.map(c => (
+                  <div key={c.id} className="flex items-center gap-3 bg-white rounded-lg px-3 py-2 border border-slate-100 opacity-60">
+                    <div className="w-3.5 h-3.5 rounded-full border-2 border-slate-300 shrink-0" />
+                    <p className="flex-1 text-sm text-slate-700 truncate">{c.title}</p>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {c.storyPoints != null && <StoryBadge pts={c.storyPoints} />}
+                      {c.assignee && <Avatar member={c.assignee} />}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {sprint.cards.length === 0 && (
+            <p className="text-xs text-slate-400 text-center py-2">No cards in this sprint</p>
+          )}
+
+          {/* Velocity bar breakdown */}
+          {planned > 0 && (
+            <div className="pt-1">
+              <div className="flex justify-between text-xs text-slate-500 mb-1">
+                <span>{velocity} of {planned} pts completed</span>
+                <span>{rate}%</span>
+              </div>
+              <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${rate}%` }} />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main Board ────────────────────────────────────────────────────────────────
 
 export function KanbanBoard() {
-  const [view,        setView]        = useState<"backlog" | "sprint">("backlog");
-  const [cards,       setCards]       = useState<Card[]>([]);
-  const [members,     setMembers]     = useState<Member[]>([]);
-  const [loading,     setLoading]     = useState(true);
-  const [modal,       setModal]       = useState<{ card: Partial<Card> & { type: Card["type"]; status: Card["status"] } } | null>(null);
-  const [memberPanel, setMemberPanel] = useState(false);
+  const [view,         setView]         = useState<"backlog" | "sprint" | "history">("backlog");
+  const [cards,        setCards]        = useState<Card[]>([]);
+  const [members,      setMembers]      = useState<Member[]>([]);
+  const [sprints,      setSprints]      = useState<Sprint[]>([]);
+  const [loading,      setLoading]      = useState(true);
+  const [cardModal,    setCardModal]    = useState<{ card: Partial<Card> & { type: Card["type"]; status: Card["status"] } } | null>(null);
+  const [sprintModal,  setSprintModal]  = useState<{ sprint?: Sprint } | null>(null);
+  const [completeModal,setCompleteModal]= useState<Sprint | null>(null);
+  const [memberPanel,  setMemberPanel]  = useState(false);
 
-  // Drag state
-  const dragging    = useRef<Card | null>(null);
-  const [dragOver,  setDragOver] = useState<string | null>(null); // column key
+  const dragging  = useRef<Card | null>(null);
+  const [dragOver, setDragOver] = useState<string | null>(null);
 
-  // ── Fetch ────────────────────────────────────────────────────────────────
+  // ── Data ──────────────────────────────────────────────────────────────────
 
   const loadData = useCallback(async () => {
-    const [cardsRes, membersRes] = await Promise.all([
+    const [cardsRes, membersRes, sprintsRes] = await Promise.all([
       fetch("/api/kanban/cards").then(r => r.json()),
       fetch("/api/kanban/members").then(r => r.json()),
+      fetch("/api/kanban/sprints").then(r => r.json()),
     ]);
     setCards(cardsRes);
     setMembers(membersRes);
+    setSprints(sprintsRes);
     setLoading(false);
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  // ── Card CRUD ────────────────────────────────────────────────────────────
+  const activeSprint   = sprints.find(s => s.status === "active");
+  const completedSprints = sprints.filter(s => s.status === "completed").sort(
+    (a, b) => new Date(b.completedAt ?? b.createdAt).getTime() - new Date(a.completedAt ?? a.createdAt).getTime()
+  );
+
+  // ── Card CRUD ─────────────────────────────────────────────────────────────
 
   async function handleSaveCard(data: Partial<Card>) {
-    const id = modal?.card.id;
+    const id = cardModal?.card.id;
     if (id) {
       const res = await fetch(`/api/kanban/cards/${id}`, {
         method: "PUT", headers: { "Content-Type": "application/json" },
@@ -371,9 +599,13 @@ export function KanbanBoard() {
       const updated = await res.json();
       setCards(prev => prev.map(c => c.id === id ? updated : c));
     } else {
+      const payload = {
+        ...cardModal?.card, ...data,
+        sprintId: cardModal?.card.type === "sprint" ? activeSprint?.id ?? null : null,
+      };
       const res = await fetch("/api/kanban/cards", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...modal?.card, ...data }),
+        body: JSON.stringify(payload),
       });
       const created = await res.json();
       setCards(prev => [...prev, created]);
@@ -381,7 +613,7 @@ export function KanbanBoard() {
   }
 
   async function handleDeleteCard() {
-    const id = modal?.card.id;
+    const id = cardModal?.card.id;
     if (!id) return;
     await fetch(`/api/kanban/cards/${id}`, { method: "DELETE" });
     setCards(prev => prev.filter(c => c.id !== id));
@@ -390,22 +622,52 @@ export function KanbanBoard() {
   async function moveToSprint(card: Card) {
     const res = await fetch(`/api/kanban/cards/${card.id}`, {
       method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "sprint", status: "not_started" }),
+      body: JSON.stringify({ type: "sprint", status: "not_started", sprintId: activeSprint?.id ?? null }),
     });
     const updated = await res.json();
     setCards(prev => prev.map(c => c.id === card.id ? updated : c));
   }
 
-  async function moveToBacklog(card: Card) {
-    const res = await fetch(`/api/kanban/cards/${card.id}`, {
+  // ── Sprint CRUD ───────────────────────────────────────────────────────────
+
+  async function handleCreateSprint(data: { name: string; goal: string; startDate: string; endDate: string }) {
+    const res = await fetch("/api/kanban/sprints", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    const sprint = await res.json();
+    setSprints(prev => [sprint, ...prev]);
+    setView("sprint");
+  }
+
+  async function handleCompleteSprint(incompleteAction: "backlog" | "next") {
+    if (!activeSprint) return;
+
+    // Move incomplete cards
+    const incomplete = cards.filter(c => c.sprintId === activeSprint.id && c.status !== "completed");
+    if (incompleteAction === "backlog") {
+      await Promise.all(incomplete.map(c =>
+        fetch(`/api/kanban/cards/${c.id}`, {
+          method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type: "backlog", status: "backlog", sprintId: null }),
+        })
+      ));
+    }
+    // (if "next", they stay in sprint type but sprintId will be updated when next sprint starts)
+
+    // Complete the sprint
+    const res = await fetch(`/api/kanban/sprints/${activeSprint.id}`, {
       method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "backlog", status: "backlog" }),
+      body: JSON.stringify({ status: "completed" }),
     });
-    const updated = await res.json();
-    setCards(prev => prev.map(c => c.id === card.id ? updated : c));
+    const completed = await res.json();
+
+    await loadData(); // Reload everything for consistency
+    setSprints(prev => prev.map(s => s.id === activeSprint.id ? completed : s));
+    setView("history");
   }
 
-  // ── Member CRUD ──────────────────────────────────────────────────────────
+  // ── Member CRUD ───────────────────────────────────────────────────────────
 
   async function handleAddMember(name: string, email: string) {
     const res = await fetch("/api/kanban/members", {
@@ -422,30 +684,20 @@ export function KanbanBoard() {
     setCards(prev => prev.map(c => c.assigneeId === id ? { ...c, assigneeId: null, assignee: null } : c));
   }
 
-  // ── Drag & Drop ──────────────────────────────────────────────────────────
+  // ── Drag & Drop ───────────────────────────────────────────────────────────
 
   function onDragStart(e: React.DragEvent, card: Card) {
     dragging.current = card;
     e.dataTransfer.effectAllowed = "move";
   }
-
-  function onDragEnd() {
-    dragging.current = null;
-    setDragOver(null);
-  }
-
+  function onDragEnd() { dragging.current = null; setDragOver(null); }
   function onDragOver(e: React.DragEvent, colKey: string) {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    setDragOver(colKey);
+    e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDragOver(colKey);
   }
-
   async function onDrop(e: React.DragEvent, colKey: Card["status"]) {
-    e.preventDefault();
-    setDragOver(null);
+    e.preventDefault(); setDragOver(null);
     const card = dragging.current;
     if (!card || card.status === colKey) return;
-
     const res = await fetch(`/api/kanban/cards/${card.id}`, {
       method: "PUT", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: colKey, type: "sprint" }),
@@ -454,13 +706,14 @@ export function KanbanBoard() {
     setCards(prev => prev.map(c => c.id === card.id ? updated : c));
   }
 
-  // ── Derived ──────────────────────────────────────────────────────────────
+  // ── Derived ───────────────────────────────────────────────────────────────
 
   const backlogCards = cards.filter(c => c.type === "backlog");
-  const sprintCards  = (status: Card["status"]) => cards.filter(c => c.type === "sprint" && c.status === status);
-  const totalSP      = (list: Card[]) => list.reduce((s, c) => s + (c.storyPoints ?? 0), 0);
+  const sprintColCards = (status: Card["status"]) =>
+    cards.filter(c => c.type === "sprint" && c.status === status && (!activeSprint || c.sprintId === activeSprint.id || c.sprintId === null))
+      .sort((a, b) => a.position - b.position);
 
-  // ── Render ───────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────────
 
   if (loading) {
     return (
@@ -475,8 +728,8 @@ export function KanbanBoard() {
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Marketing Kanban</h1>
-          <p className="text-sm text-slate-500 mt-1">Backlog grooming and sprint planning</p>
+          <h1 className="text-2xl font-bold text-slate-900">Project Management</h1>
+          <p className="text-sm text-slate-500 mt-1">Marketing backlog, sprints, and team velocity</p>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -486,7 +739,7 @@ export function KanbanBoard() {
             <Users className="w-3.5 h-3.5" />
             Team
             {members.length > 0 && (
-              <span className="flex items-center gap-0.5">
+              <span className="flex items-center gap-0.5 ml-0.5">
                 {members.slice(0, 5).map(m => <Avatar key={m.id} member={m} />)}
                 {members.length > 5 && <span className="text-slate-400 text-[10px]">+{members.length - 5}</span>}
               </span>
@@ -497,215 +750,291 @@ export function KanbanBoard() {
 
       {/* View toggle */}
       <div className="flex gap-1 p-1 bg-slate-100 rounded-xl w-fit">
-        <button
-          onClick={() => setView("backlog")}
-          className={cn(
-            "flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors",
-            view === "backlog" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
-          )}
-        >
-          <LayoutList className="w-4 h-4" />
-          Backlog
-          {backlogCards.length > 0 && (
-            <span className="ml-0.5 text-xs text-slate-500">{backlogCards.length}</span>
-          )}
-        </button>
-        <button
-          onClick={() => setView("sprint")}
-          className={cn(
-            "flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors",
-            view === "sprint" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
-          )}
-        >
-          <Columns3 className="w-4 h-4" />
-          Sprint Board
-          {cards.filter(c => c.type === "sprint").length > 0 && (
-            <span className="ml-0.5 text-xs text-slate-500">{cards.filter(c => c.type === "sprint").length}</span>
-          )}
-        </button>
+        {[
+          { key: "backlog",  label: "Backlog",      icon: LayoutList,  count: backlogCards.length },
+          { key: "sprint",   label: "Sprint Board",  icon: Columns3,    count: cards.filter(c => c.type === "sprint").length },
+          { key: "history",  label: "History",       icon: History,     count: completedSprints.length },
+        ].map(({ key, label, icon: Icon, count }) => (
+          <button key={key} onClick={() => setView(key as typeof view)}
+            className={cn(
+              "flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors",
+              view === key ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
+            )}>
+            <Icon className="w-4 h-4" />
+            {label}
+            {count > 0 && <span className="ml-0.5 text-xs text-slate-500">{count}</span>}
+          </button>
+        ))}
       </div>
 
-      {/* ── Backlog View ─────────────────────────────────────────────────── */}
+      {/* ── Backlog ──────────────────────────────────────────────────────── */}
       {view === "backlog" && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <h2 className="text-base font-semibold text-slate-800">Product Backlog</h2>
+              <h2 className="text-base font-semibold text-slate-800">Marketing Backlog</h2>
               {backlogCards.length > 0 && (
-                <span className="text-xs text-slate-500">{totalSP(backlogCards)} pts</span>
+                <span className="text-xs text-slate-500">{backlogCards.length} items · {totalPts(backlogCards)} pts</span>
               )}
             </div>
-            <button
-              onClick={() => setModal({ card: { type: "backlog", status: "backlog" } })}
-              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              Add item
-            </button>
+            <div className="flex items-center gap-2">
+              {!activeSprint && (
+                <button onClick={() => setSprintModal({})}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors">
+                  <Flag className="w-3.5 h-3.5" />
+                  Start sprint
+                </button>
+              )}
+              <button onClick={() => setCardModal({ card: { type: "backlog", status: "backlog" } })}
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors">
+                <Plus className="w-3.5 h-3.5" />
+                Add item
+              </button>
+            </div>
           </div>
 
+          {activeSprint && (
+            <div className="flex items-center gap-2 px-4 py-2.5 bg-indigo-50 border border-indigo-200 rounded-xl">
+              <Flag className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <span className="text-xs font-semibold text-indigo-700">{activeSprint.name}</span>
+                {activeSprint.goal && <span className="text-xs text-indigo-500 ml-2">· {activeSprint.goal}</span>}
+                {activeSprint.endDate && (
+                  <span className="text-xs text-indigo-400 ml-2">ends {fmtDate(activeSprint.endDate)}</span>
+                )}
+              </div>
+              <button onClick={() => setView("sprint")}
+                className="text-xs font-medium text-indigo-600 hover:text-indigo-800 shrink-0">
+                View board →
+              </button>
+            </div>
+          )}
+
           {backlogCards.length === 0 ? (
-            <div
-              onClick={() => setModal({ card: { type: "backlog", status: "backlog" } })}
-              className="flex flex-col items-center justify-center py-16 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 cursor-pointer hover:border-indigo-300 hover:text-indigo-400 transition-colors"
-            >
+            <div onClick={() => setCardModal({ card: { type: "backlog", status: "backlog" } })}
+              className="flex flex-col items-center justify-center py-16 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 cursor-pointer hover:border-indigo-300 hover:text-indigo-400 transition-colors">
               <Plus className="w-8 h-8 mb-2" />
               <p className="text-sm font-medium">Add your first backlog item</p>
             </div>
           ) : (
             <div className="bg-white rounded-2xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
-              {backlogCards
-                .sort((a, b) => a.position - b.position)
-                .map(card => (
-                  <div
-                    key={card.id}
-                    className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 group transition-colors"
-                  >
-                    <GripVertical className="w-4 h-4 text-slate-300 shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-slate-800 truncate">{card.title}</p>
-                      {card.description && (
-                        <p className="text-xs text-slate-500 truncate">{card.description}</p>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      {card.storyPoints != null && <StoryBadge pts={card.storyPoints} />}
-                      {card.assignee && <Avatar member={card.assignee} />}
-                      <button
-                        onClick={() => moveToSprint(card)}
-                        title="Move to sprint"
-                        className="opacity-0 group-hover:opacity-100 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-all"
-                      >
+              {backlogCards.sort((a, b) => a.position - b.position).map(card => (
+                <div key={card.id} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 group transition-colors">
+                  <GripVertical className="w-4 h-4 text-slate-300 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-slate-800 truncate">{card.title}</p>
+                    {card.description && <p className="text-xs text-slate-500 truncate">{card.description}</p>}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {card.storyPoints != null && <StoryBadge pts={card.storyPoints} />}
+                    {card.assignee && <Avatar member={card.assignee} />}
+                    {activeSprint && (
+                      <button onClick={() => moveToSprint(card)} title="Move to active sprint"
+                        className="opacity-0 group-hover:opacity-100 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-all">
                         Sprint <ArrowRight className="w-3 h-3" />
                       </button>
-                      <button
-                        onClick={() => setModal({ card })}
-                        className="opacity-0 group-hover:opacity-100 p-1.5 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-all"
-                      >
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+                    )}
+                    <button onClick={() => setCardModal({ card })}
+                      className="opacity-0 group-hover:opacity-100 p-1.5 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-all">
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
                   </div>
-                ))}
+                </div>
+              ))}
             </div>
           )}
         </div>
       )}
 
-      {/* ── Sprint Board View ─────────────────────────────────────────────── */}
+      {/* ── Sprint Board ─────────────────────────────────────────────────── */}
       {view === "sprint" && (
+        <div className="space-y-4">
+          {!activeSprint ? (
+            <div className="flex flex-col items-center justify-center py-20 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 space-y-3">
+              <Flag className="w-10 h-10" />
+              <div className="text-center">
+                <p className="text-sm font-medium text-slate-600">No active sprint</p>
+                <p className="text-xs text-slate-400 mt-1">Start a sprint to begin moving cards from the backlog</p>
+              </div>
+              <button onClick={() => setSprintModal({})}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors">
+                <Flag className="w-4 h-4" />
+                Start sprint
+              </button>
+            </div>
+          ) : (
+            <>
+              {/* Sprint header */}
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Flag className="w-4 h-4 text-indigo-500" />
+                    <h2 className="text-base font-semibold text-slate-800">{activeSprint.name}</h2>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-medium">Active</span>
+                  </div>
+                  {activeSprint.goal && <p className="text-xs text-slate-500 mt-0.5 ml-6">{activeSprint.goal}</p>}
+                  {(activeSprint.startDate || activeSprint.endDate) && (
+                    <p className="text-xs text-slate-400 mt-0.5 ml-6 flex items-center gap-1">
+                      <Calendar className="w-3 h-3" />
+                      {fmtDate(activeSprint.startDate)} → {fmtDate(activeSprint.endDate)}
+                    </p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="text-right">
+                    <p className="text-xs text-slate-500">
+                      {cards.filter(c => c.sprintId === activeSprint.id && c.status === "completed").length} / {cards.filter(c => c.sprintId === activeSprint.id).length} cards
+                      · {totalPts(cards.filter(c => c.sprintId === activeSprint.id && c.status === "completed"))} pts done
+                    </p>
+                  </div>
+                  <button onClick={() => setCardModal({ card: { type: "sprint", status: "not_started" } })}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors">
+                    <Plus className="w-3.5 h-3.5" />
+                    Add card
+                  </button>
+                  <button onClick={() => setCompleteModal(activeSprint)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-600 text-white hover:bg-emerald-700 transition-colors">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Complete sprint
+                  </button>
+                </div>
+              </div>
+
+              {/* Columns */}
+              <div className="grid grid-cols-4 gap-4">
+                {SPRINT_COLS.map(col => {
+                  const colCards = sprintColCards(col.key);
+                  const isDragTarget = dragOver === col.key;
+                  return (
+                    <div key={col.key}
+                      onDragOver={e => onDragOver(e, col.key)}
+                      onDrop={e => onDrop(e, col.key)}
+                      className={cn(
+                        "rounded-2xl transition-colors min-h-[400px] flex flex-col",
+                        isDragTarget ? "bg-indigo-50 ring-2 ring-indigo-300" : "bg-slate-50"
+                      )}>
+                      <div className="flex items-center justify-between px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <div className={cn("w-2 h-2 rounded-full", col.dot)} />
+                          <span className={cn("text-xs font-semibold uppercase tracking-wide", col.color)}>{col.label}</span>
+                          <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-full", col.bg, col.color)}>
+                            {colCards.length}
+                          </span>
+                        </div>
+                        <button onClick={() => setCardModal({ card: { type: "sprint", status: col.key } })}
+                          className="p-1 rounded-md text-slate-400 hover:text-indigo-600 hover:bg-white transition-colors">
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      {colCards.some(c => c.storyPoints != null) && (
+                        <div className="px-4 pb-1">
+                          <span className="text-[10px] text-slate-400">{totalPts(colCards)} pts</span>
+                        </div>
+                      )}
+                      <div className="flex-1 px-3 pb-3 space-y-2">
+                        {colCards.map(card => (
+                          <SprintCard key={card.id} card={card}
+                            onEdit={() => setCardModal({ card })}
+                            onDragStart={onDragStart} onDragEnd={onDragEnd} />
+                        ))}
+                        {colCards.length === 0 && !isDragTarget && (
+                          <div onClick={() => setCardModal({ card: { type: "sprint", status: col.key } })}
+                            className="flex items-center justify-center h-20 rounded-xl border-2 border-dashed border-slate-200 text-slate-300 cursor-pointer hover:border-indigo-200 hover:text-indigo-300 transition-colors">
+                            <Plus className="w-5 h-5" />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── History ──────────────────────────────────────────────────────── */}
+      {view === "history" && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <h2 className="text-base font-semibold text-slate-800">Active Sprint</h2>
-              {cards.filter(c => c.type === "sprint").length > 0 && (
+              <h2 className="text-base font-semibold text-slate-800">Sprint History</h2>
+              {completedSprints.length > 0 && (
                 <span className="text-xs text-slate-500">
-                  {totalSP(cards.filter(c => c.type === "sprint"))} pts total
+                  {completedSprints.length} sprint{completedSprints.length !== 1 ? "s" : ""} · avg velocity{" "}
+                  {Math.round(
+                    completedSprints.reduce((s, sp) => s + totalPts(sp.cards.filter(c => c.status === "completed")), 0) /
+                    Math.max(completedSprints.length, 1)
+                  )} pts
                 </span>
               )}
             </div>
-            <button
-              onClick={() => setModal({ card: { type: "sprint", status: "not_started" } })}
-              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              Add to sprint
-            </button>
           </div>
 
-          <div className="grid grid-cols-4 gap-4">
-            {SPRINT_COLS.map(col => {
-              const colCards = sprintCards(col.key).sort((a, b) => a.position - b.position);
-              const isDragTarget = dragOver === col.key;
-              return (
-                <div
-                  key={col.key}
-                  onDragOver={e => onDragOver(e, col.key)}
-                  onDrop={e => onDrop(e, col.key)}
-                  className={cn(
-                    "rounded-2xl transition-colors min-h-[400px] flex flex-col",
-                    isDragTarget ? "bg-indigo-50 ring-2 ring-indigo-300" : "bg-slate-50"
-                  )}
-                >
-                  {/* Column header */}
-                  <div className="flex items-center justify-between px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <span className={cn("text-xs font-semibold uppercase tracking-wide", col.color)}>
-                        {col.label}
-                      </span>
-                      <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-full", col.bg, col.color)}>
-                        {colCards.length}
-                      </span>
-                    </div>
-                    <button
-                      onClick={() => setModal({ card: { type: "sprint", status: col.key } })}
-                      className="p-1 rounded-md text-slate-400 hover:text-indigo-600 hover:bg-white transition-colors"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-
-                  {/* Story points */}
-                  {colCards.some(c => c.storyPoints != null) && (
-                    <div className="px-4 pb-1">
-                      <span className="text-[10px] text-slate-400">{totalSP(colCards)} pts</span>
-                    </div>
-                  )}
-
-                  {/* Cards */}
-                  <div className="flex-1 px-3 pb-3 space-y-2">
-                    {colCards.map(card => (
-                      <KanbanCard
-                        key={card.id}
-                        card={card}
-                        onEdit={() => setModal({ card })}
-                        onDragStart={onDragStart}
-                        onDragEnd={onDragEnd}
-                      />
-                    ))}
-
-                    {colCards.length === 0 && !isDragTarget && (
-                      <div
-                        onClick={() => setModal({ card: { type: "sprint", status: col.key } })}
-                        className="flex items-center justify-center h-20 rounded-xl border-2 border-dashed border-slate-200 text-slate-300 cursor-pointer hover:border-indigo-200 hover:text-indigo-300 transition-colors"
-                      >
-                        <Plus className="w-5 h-5" />
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Backlog → Sprint tip */}
-          {backlogCards.length > 0 && (
-            <div className="flex items-center gap-2 text-xs text-slate-400 pt-2">
-              <ChevronRight className="w-3 h-3" />
-              Switch to Backlog view to move items into this sprint
+          {completedSprints.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 space-y-2">
+              <History className="w-10 h-10" />
+              <p className="text-sm font-medium text-slate-600">No completed sprints yet</p>
+              <p className="text-xs text-slate-400">Complete your first sprint to see velocity and history here</p>
             </div>
+          ) : (
+            <>
+              {/* Velocity summary */}
+              <div className="grid grid-cols-3 gap-4">
+                <div className="bg-white rounded-xl border border-slate-200 p-4 text-center">
+                  <p className="text-2xl font-bold text-indigo-600">
+                    {Math.round(
+                      completedSprints.reduce((s, sp) => s + totalPts(sp.cards.filter(c => c.status === "completed")), 0) /
+                      Math.max(completedSprints.length, 1)
+                    )}
+                  </p>
+                  <p className="text-xs text-slate-500 mt-1">Avg velocity (pts/sprint)</p>
+                </div>
+                <div className="bg-white rounded-xl border border-slate-200 p-4 text-center">
+                  <p className="text-2xl font-bold text-emerald-600">
+                    {Math.round(
+                      completedSprints.reduce((s, sp) => {
+                        const done = sp.cards.filter(c => c.status === "completed").length;
+                        return s + (sp.cards.length > 0 ? (done / sp.cards.length) * 100 : 0);
+                      }, 0) / Math.max(completedSprints.length, 1)
+                    )}%
+                  </p>
+                  <p className="text-xs text-slate-500 mt-1">Avg completion rate</p>
+                </div>
+                <div className="bg-white rounded-xl border border-slate-200 p-4 text-center">
+                  <p className="text-2xl font-bold text-slate-700">
+                    {completedSprints.reduce((s, sp) => s + sp.cards.filter(c => c.status === "completed").length, 0)}
+                  </p>
+                  <p className="text-xs text-slate-500 mt-1">Total cards delivered</p>
+                </div>
+              </div>
+
+              {/* Sprint list */}
+              <div className="space-y-3">
+                {completedSprints.map(sprint => (
+                  <SprintHistoryCard key={sprint.id} sprint={sprint} />
+                ))}
+              </div>
+            </>
           )}
         </div>
       )}
 
-      {/* Modals */}
-      {modal && (
-        <CardModal
-          card={modal.card}
-          members={members}
+      {/* ── Modals ───────────────────────────────────────────────────────── */}
+      {cardModal && (
+        <CardModal card={cardModal.card} members={members}
           onSave={handleSaveCard}
-          onDelete={modal.card.id ? handleDeleteCard : undefined}
-          onClose={() => setModal(null)}
-        />
+          onDelete={cardModal.card.id ? handleDeleteCard : undefined}
+          onClose={() => setCardModal(null)} />
       )}
-
+      {sprintModal !== null && (
+        <SprintModal sprint={sprintModal.sprint} onSave={handleCreateSprint} onClose={() => setSprintModal(null)} />
+      )}
+      {completeModal && (
+        <CompleteSprintModal sprint={completeModal} onComplete={handleCompleteSprint} onClose={() => setCompleteModal(null)} />
+      )}
       {memberPanel && (
-        <MemberPanel
-          members={members}
-          onAdd={handleAddMember}
-          onRemove={handleRemoveMember}
-          onClose={() => setMemberPanel(false)}
-        />
+        <MemberPanel members={members} onAdd={handleAddMember} onRemove={handleRemoveMember} onClose={() => setMemberPanel(false)} />
       )}
     </div>
   );

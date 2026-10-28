@@ -520,19 +520,36 @@ model KanbanMember {
   cards     KanbanCard[]
 }
 
+model KanbanSprint {
+  id          String      @id @default(cuid())
+  name        String
+  goal        String?
+  startDate   DateTime?
+  endDate     DateTime?
+  status      String      @default("active") // "active" | "completed"
+  completedAt DateTime?
+  cards       KanbanCard[]
+  createdAt   DateTime    @default(now())
+
+  @@index([status])
+}
+
 model KanbanCard {
-  id          String        @id @default(cuid())
+  id          String         @id @default(cuid())
   title       String
   description String?
-  type        String        @default("backlog") // "backlog" | "sprint"
-  status      String        @default("backlog") // "backlog" | "not_started" | "in_progress" | "under_review" | "completed"
+  type        String         @default("backlog") // "backlog" | "sprint"
+  status      String         @default("backlog") // "backlog" | "not_started" | "in_progress" | "under_review" | "completed"
   storyPoints Int?
   assigneeId  String?
-  assignee    KanbanMember? @relation(fields: [assigneeId], references: [id])
-  position    Int           @default(0)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  assignee    KanbanMember?  @relation(fields: [assigneeId], references: [id])
+  sprintId    String?
+  sprint      KanbanSprint?  @relation(fields: [sprintId], references: [id])
+  position    Int            @default(0)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
 
   @@index([type, status])
+  @@index([sprintId])
   @@index([position])
 }

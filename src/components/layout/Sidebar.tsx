@@ -30,6 +30,12 @@ const NAV_ITEMS = [
     description: "Full-funnel snapshot",
   },
   {
+    href: "/kanban",
+    label: "Project Management",
+    icon: KanbanSquare,
+    description: "Sprints, backlog & team",
+  },
+  {
     href: "/pacing",
     label: "Pacing",
     icon: Target,
@@ -70,12 +76,6 @@ const NAV_ITEMS = [
     label: "Email",
     icon: Mail,
     description: "HubSpot email performance",
-  },
-  {
-    href: "/kanban",
-    label: "Kanban",
-    icon: KanbanSquare,
-    description: "Sprint planning & backlog",
   },
   {
     href: "/ai-analyst",
