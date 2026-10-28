@@ -9,7 +9,6 @@ import {
   TrendingUp,
   Target,
   ChevronRight,
-  PencilLine,
   Sparkles,
   Search,
   Megaphone,
@@ -19,7 +18,7 @@ import {
   Filter,
   Bell,
   Mail,
-  Bot,
+  KanbanSquare,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -73,22 +72,16 @@ const NAV_ITEMS = [
     description: "HubSpot email performance",
   },
   {
-    href: "/manual",
-    label: "Manual Entry",
-    icon: PencilLine,
-    description: "Enter data manually",
+    href: "/kanban",
+    label: "Kanban",
+    icon: KanbanSquare,
+    description: "Sprint planning & backlog",
   },
   {
     href: "/ai-analyst",
     label: "AI Analyst",
     icon: Sparkles,
     description: "Company AI breakdown",
-  },
-  {
-    href: "/mar-ops",
-    label: "Mar Ops Agent",
-    icon: Bot,
-    description: "Marketing ops AI chat",
   },
   {
     href: "/alerts",

@@ -510,3 +510,29 @@ model VerificationToken {
 
   @@unique([identifier, token])
 }
+
+model KanbanMember {
+  id        String       @id @default(cuid())
+  name      String
+  email     String?
+  color     String       @default("#6366f1")
+  createdAt DateTime     @default(now())
+  cards     KanbanCard[]
+}
+
+model KanbanCard {
+  id          String        @id @default(cuid())
+  title       String
+  description String?
+  type        String        @default("backlog") // "backlog" | "sprint"
+  status      String        @default("backlog") // "backlog" | "not_started" | "in_progress" | "under_review" | "completed"
+  storyPoints Int?
+  assigneeId  String?
+  assignee    KanbanMember? @relation(fields: [assigneeId], references: [id])
+  position    Int           @default(0)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([type, status])
+  @@index([position])
+}
