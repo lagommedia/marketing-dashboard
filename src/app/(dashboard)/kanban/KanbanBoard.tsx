@@ -99,12 +99,14 @@ function StoryBadge({ pts, size = "sm" }: { pts: number; size?: "sm" | "md" }) {
 
 // ── Card Modal ───────────────────────────────────────────────────────────────
 
+type PendingItem = { tempId: string; title: string; storyPoints: number | null; assigneeId: string | null };
+
 function CardModal({
   card, members, onSave, onDelete, onClose,
 }: {
   card: Partial<Card> & { type: Card["type"]; status: Card["status"] };
   members: Member[];
-  onSave:   (data: Partial<Card>) => Promise<void>;
+  onSave:   (data: Partial<Card>, pendingItems: PendingItem[]) => Promise<void>;
   onDelete?: () => Promise<void>;
   onClose:  () => void;
 }) {
@@ -115,26 +117,29 @@ function CardModal({
   const [dueDate,     setDueDate]     = useState(card.dueDate ? card.dueDate.slice(0, 10) : "");
   const [saving,      setSaving]      = useState(false);
 
-  // Checklist local state (only available when editing an existing card)
-  const [checklist,   setChecklist]   = useState<ChecklistItem[]>(card.checklist ?? []);
-  const [newItemTitle, setNewItemTitle] = useState("");
-  const [newItemPts,   setNewItemPts]   = useState<number | null>(null);
-  const [newItemAssignee, setNewItemAssignee] = useState<string | null>(null);
-  const [addingItem,   setAddingItem]  = useState(false);
+  // Saved checklist items (existing card)
+  const [checklist,       setChecklist]       = useState<ChecklistItem[]>(card.checklist ?? []);
+  // Pending items for new cards (not yet persisted)
+  const [pendingItems,    setPendingItems]     = useState<PendingItem[]>([]);
+  const [newItemTitle,    setNewItemTitle]     = useState("");
+  const [newItemPts,      setNewItemPts]       = useState<number | null>(null);
+  const [newItemAssignee, setNewItemAssignee]  = useState<string | null>(null);
+  const [addingItem,      setAddingItem]       = useState(false);
 
   const isExisting = !!card.id;
+
+  const isOverdue = dueDate && new Date(dueDate) < new Date() && card.status !== "completed";
+
+  // ── Card save ──────────────────────────────────────────────────────────────
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!title.trim()) return;
     setSaving(true);
-    await onSave({
-      title,
-      description: description || null,
-      storyPoints: pts,
-      assigneeId,
-      dueDate: dueDate || null,
-    });
+    await onSave(
+      { title, description: description || null, storyPoints: pts, assigneeId, dueDate: dueDate || null },
+      pendingItems,
+    );
     setSaving(false);
     onClose();
   }
@@ -147,18 +152,34 @@ function CardModal({
     onClose();
   }
 
-  async function addChecklistItem(e: React.FormEvent) {
+  // ── Checklist helpers ─────────────────────────────────────────────────────
+
+  function addPendingOrSavedItem(e: React.FormEvent) {
     e.preventDefault();
-    if (!newItemTitle.trim() || !card.id) return;
-    setAddingItem(true);
-    const res = await fetch(`/api/kanban/cards/${card.id}/checklist`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: newItemTitle, storyPoints: newItemPts, assigneeId: newItemAssignee }),
-    });
-    const item = await res.json();
-    setChecklist(prev => [...prev, item]);
-    setNewItemTitle(""); setNewItemPts(null); setNewItemAssignee(null);
-    setAddingItem(false);
+    if (!newItemTitle.trim()) return;
+    if (isExisting) {
+      // Persist immediately
+      setAddingItem(true);
+      fetch(`/api/kanban/cards/${card.id}/checklist`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: newItemTitle, storyPoints: newItemPts, assigneeId: newItemAssignee }),
+      })
+        .then(r => r.json())
+        .then(item => {
+          setChecklist(prev => [...prev, item]);
+          setNewItemTitle(""); setNewItemPts(null); setNewItemAssignee(null);
+          setAddingItem(false);
+        });
+    } else {
+      // Stage locally — will be created after the card is saved
+      setPendingItems(prev => [...prev, {
+        tempId: crypto.randomUUID(),
+        title: newItemTitle.trim(),
+        storyPoints: newItemPts,
+        assigneeId: newItemAssignee,
+      }]);
+      setNewItemTitle(""); setNewItemPts(null); setNewItemAssignee(null);
+    }
   }
 
   async function toggleItem(item: ChecklistItem) {
@@ -175,6 +196,10 @@ function CardModal({
     setChecklist(prev => prev.filter(i => i.id !== id));
   }
 
+  function removePending(tempId: string) {
+    setPendingItems(prev => prev.filter(i => i.tempId !== tempId));
+  }
+
   async function updateItemAssignee(item: ChecklistItem, memberId: string | null) {
     const res = await fetch(`/api/kanban/checklist/${item.id}`, {
       method: "PUT", headers: { "Content-Type": "application/json" },
@@ -184,13 +209,13 @@ function CardModal({
     setChecklist(prev => prev.map(i => i.id === item.id ? updated : i));
   }
 
+  const allItems   = isExisting ? checklist : pendingItems.map(p => ({ ...p, id: p.tempId, cardId: "", completed: false, assignee: members.find(m => m.id === p.assigneeId) ?? null, position: 0 })) as ChecklistItem[];
   const doneCount  = checklist.filter(i => i.completed).length;
-  const totalCount = checklist.length;
+  const totalCount = allItems.length;
   const donePts    = checklist.filter(i => i.completed).reduce((s, i) => s + (i.storyPoints ?? 0), 0);
-  const totalPtsChecklist = checklist.reduce((s, i) => s + (i.storyPoints ?? 0), 0);
+  const totalPtsChecklist = allItems.reduce((s, i) => s + (i.storyPoints ?? 0), 0);
 
-  // Overdue detection
-  const isOverdue = dueDate && new Date(dueDate) < new Date() && card.status !== "completed";
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
@@ -221,7 +246,6 @@ function CardModal({
               />
             </div>
 
-            {/* Due date + Assignee row */}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-slate-700 mb-1">Due date</label>
@@ -260,42 +284,41 @@ function CardModal({
             </div>
           </form>
 
-          {/* Checklist — only for existing cards */}
-          {isExisting && (
-            <div className="px-5 pb-5 space-y-3 border-t border-slate-100 pt-4">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-semibold text-slate-700 uppercase tracking-wide">
-                  Task checklist
-                </h4>
-                {totalCount > 0 && (
-                  <span className="text-xs text-slate-500">
-                    {doneCount}/{totalCount} done
-                    {totalPtsChecklist > 0 && ` · ${donePts}/${totalPtsChecklist} pts`}
-                  </span>
-                )}
-              </div>
-
-              {/* Progress bar */}
+          {/* ── Checklist ── */}
+          <div className="px-5 pb-5 space-y-3 border-t border-slate-100 pt-4">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-semibold text-slate-700 uppercase tracking-wide">Task checklist</h4>
               {totalCount > 0 && (
-                <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-indigo-500 rounded-full transition-all"
-                    style={{ width: `${Math.round((doneCount / totalCount) * 100)}%` }}
-                  />
-                </div>
+                <span className="text-xs text-slate-500">
+                  {isExisting ? `${doneCount}/${totalCount} done` : `${totalCount} task${totalCount !== 1 ? "s" : ""} queued`}
+                  {totalPtsChecklist > 0 && isExisting && ` · ${donePts}/${totalPtsChecklist} pts`}
+                  {totalPtsChecklist > 0 && !isExisting && ` · ${totalPtsChecklist} pts`}
+                </span>
               )}
+            </div>
 
-              {/* Items */}
-              <div className="space-y-1.5">
-                {checklist.map(item => (
+            {/* Progress bar (existing cards only) */}
+            {isExisting && totalCount > 0 && (
+              <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                <div className="h-full bg-indigo-500 rounded-full transition-all"
+                  style={{ width: `${Math.round((doneCount / totalCount) * 100)}%` }} />
+              </div>
+            )}
+
+            {/* Item list */}
+            <div className="space-y-1.5">
+              {allItems.map(item => {
+                const isPending = !isExisting;
+                return (
                   <div key={item.id} className="flex items-start gap-2 group">
+                    {/* Checkbox — only functional for saved items */}
                     <button
                       type="button"
-                      onClick={() => toggleItem(item)}
+                      onClick={() => !isPending && toggleItem(item)}
                       className={cn(
                         "mt-0.5 w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors",
-                        item.completed
-                          ? "bg-indigo-500 border-indigo-500"
+                        isPending ? "border-slate-200 cursor-default"
+                          : item.completed ? "bg-indigo-500 border-indigo-500"
                           : "border-slate-300 hover:border-indigo-400"
                       )}
                     >
@@ -305,21 +328,26 @@ function CardModal({
                       <p className={cn("text-sm", item.completed ? "line-through text-slate-400" : "text-slate-700")}>
                         {item.title}
                       </p>
-                      <div className="flex items-center gap-2 mt-1">
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
                         {item.storyPoints != null && (
                           <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-indigo-100 text-indigo-700 text-[9px] font-bold">
                             {item.storyPoints}
                           </span>
                         )}
-                        {/* Per-item assignee selector */}
-                        <select
-                          value={item.assigneeId ?? ""}
-                          onChange={e => updateItemAssignee(item, e.target.value || null)}
-                          className="text-[10px] text-slate-500 border-0 bg-transparent focus:outline-none cursor-pointer hover:text-slate-700 max-w-[120px]"
-                        >
-                          <option value="">No assignee</option>
-                          {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                        </select>
+                        {isExisting ? (
+                          <select
+                            value={item.assigneeId ?? ""}
+                            onChange={e => updateItemAssignee(item, e.target.value || null)}
+                            className="text-[10px] text-slate-500 border-0 bg-transparent focus:outline-none cursor-pointer hover:text-slate-700 max-w-[120px]"
+                          >
+                            <option value="">No assignee</option>
+                            {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                          </select>
+                        ) : (
+                          item.assignee && (
+                            <span className="text-[10px] text-slate-500">{item.assignee.name}</span>
+                          )
+                        )}
                         {item.assignee && (
                           <span
                             className="w-4 h-4 rounded-full text-[9px] font-bold text-white flex items-center justify-center shrink-0"
@@ -333,62 +361,59 @@ function CardModal({
                     </div>
                     <button
                       type="button"
-                      onClick={() => deleteItem(item.id)}
+                      onClick={() => isPending ? removePending(item.id) : deleteItem(item.id)}
                       className="opacity-0 group-hover:opacity-100 p-1 rounded text-slate-300 hover:text-red-500 transition-all shrink-0"
                     >
                       <X className="w-3 h-3" />
                     </button>
                   </div>
-                ))}
-              </div>
-
-              {/* Add new item */}
-              <form onSubmit={addChecklistItem} className="space-y-2 pt-1">
-                <input
-                  type="text" value={newItemTitle} onChange={e => setNewItemTitle(e.target.value)}
-                  placeholder="Add a task…"
-                  className="w-full text-sm rounded-lg border border-slate-200 px-3 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                />
-                {newItemTitle.trim() && (
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1">
-                      <select
-                        value={newItemAssignee ?? ""}
-                        onChange={e => setNewItemAssignee(e.target.value || null)}
-                        className="w-full text-xs rounded-md border border-slate-200 px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                      >
-                        <option value="">Assignee</option>
-                        {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                      </select>
-                    </div>
-                    <div className="flex gap-1">
-                      {FIBONACCI.map(n => (
-                        <button key={n} type="button" onClick={() => setNewItemPts(newItemPts === n ? null : n)}
-                          className={cn(
-                            "w-6 h-6 rounded-full text-[10px] font-bold transition-colors",
-                            newItemPts === n ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-indigo-100"
-                          )}>
-                          {n}
-                        </button>
-                      ))}
-                    </div>
-                    <button
-                      type="submit" disabled={addingItem}
-                      className="px-3 py-1.5 rounded-md text-xs font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors shrink-0"
-                    >
-                      Add
-                    </button>
-                  </div>
-                )}
-              </form>
+                );
+              })}
             </div>
-          )}
-          {!isExisting && (
-            <p className="px-5 pb-4 text-xs text-slate-400">Save the card first to add checklist tasks.</p>
-          )}
+
+            {/* Add new task row */}
+            <form onSubmit={addPendingOrSavedItem} className="space-y-2 pt-1">
+              <input
+                type="text" value={newItemTitle} onChange={e => setNewItemTitle(e.target.value)}
+                placeholder="Add a task…"
+                className="w-full text-sm rounded-lg border border-slate-200 px-3 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              />
+              {newItemTitle.trim() && (
+                <div className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <select
+                      value={newItemAssignee ?? ""}
+                      onChange={e => setNewItemAssignee(e.target.value || null)}
+                      className="w-full text-xs rounded-md border border-slate-200 px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    >
+                      <option value="">Assignee</option>
+                      {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex gap-1">
+                    {FIBONACCI.map(n => (
+                      <button key={n} type="button" onClick={() => setNewItemPts(newItemPts === n ? null : n)}
+                        className={cn(
+                          "w-6 h-6 rounded-full text-[10px] font-bold transition-colors",
+                          newItemPts === n ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-indigo-100"
+                        )}>
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    type="submit" disabled={addingItem}
+                    className="px-3 py-1.5 rounded-md text-xs font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors shrink-0"
+                  >
+                    Add
+                  </button>
+                </div>
+              )}
+            </form>
+          </div>
         </div>
 
-        {/* Footer actions */}
+        {/* Footer */}
         <div className="flex gap-2 px-5 py-4 border-t border-slate-100 shrink-0">
           {onDelete && (
             <button type="button" onClick={handleDelete} disabled={saving}
@@ -402,7 +427,7 @@ function CardModal({
           </button>
           <button type="submit" form="card-form" disabled={saving || !title.trim()}
             className="flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors">
-            {saving ? "Saving…" : isExisting ? "Save" : "Add card"}
+            {saving ? "Saving…" : isExisting ? "Save" : pendingItems.length > 0 ? `Add card + ${pendingItems.length} task${pendingItems.length !== 1 ? "s" : ""}` : "Add card"}
           </button>
         </div>
       </div>
@@ -1116,7 +1141,7 @@ export function KanbanBoard() {
 
   // ── Card CRUD ─────────────────────────────────────────────────────────────
 
-  async function handleSaveCard(data: Partial<Card>) {
+  async function handleSaveCard(data: Partial<Card>, pendingItems: PendingItem[] = []) {
     const id = cardModal?.card.id;
     if (id) {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -1138,6 +1163,16 @@ export function KanbanBoard() {
         body: JSON.stringify(payload),
       });
       const created = await res.json();
+      // Create any pending checklist items now that we have the card id
+      if (pendingItems.length > 0) {
+        const items = await Promise.all(pendingItems.map(item =>
+          fetch(`/api/kanban/cards/${created.id}/checklist`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ title: item.title, storyPoints: item.storyPoints, assigneeId: item.assigneeId }),
+          }).then(r => r.json())
+        ));
+        created.checklist = items;
+      }
       setCards(prev => [...prev, created]);
     }
   }
