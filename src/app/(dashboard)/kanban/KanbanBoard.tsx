@@ -6,7 +6,7 @@ import {
   LayoutList, Columns3, History, GripVertical, Pencil,
   Flag, CheckCircle2, ChevronDown, ChevronUp, Calendar,
   Target, BarChart2, TrendingUp, TrendingDown, Minus,
-  AlertTriangle, Lock,
+  AlertTriangle, Lock, Sparkles, CheckSquare, Square,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -124,12 +124,14 @@ function PriorityBadge({ priority }: { priority: number }) {
 
 // ── Bulk Add Modal ────────────────────────────────────────────────────────────
 
-function BulkAddModal({ onSave, onClose }: {
-  onSave:  (titles: string[]) => Promise<void>;
+function BulkAddModal({ members, onSave, onClose }: {
+  members: Member[];
+  onSave:  (titles: string[], assigneeId: string | null) => Promise<void>;
   onClose: () => void;
 }) {
-  const [text,   setText]   = useState("");
-  const [saving, setSaving] = useState(false);
+  const [text,       setText]       = useState("");
+  const [assigneeId, setAssigneeId] = useState<string>("");
+  const [saving,     setSaving]     = useState(false);
 
   const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
 
@@ -137,7 +139,7 @@ function BulkAddModal({ onSave, onClose }: {
     e.preventDefault();
     if (lines.length === 0) return;
     setSaving(true);
-    await onSave(lines);
+    await onSave(lines, assigneeId || null);
     setSaving(false);
     onClose();
   }
@@ -162,6 +164,18 @@ function BulkAddModal({ onSave, onClose }: {
             rows={10} autoFocus
             className="w-full px-3 py-2.5 text-sm border border-slate-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 font-mono"
           />
+          {members.length > 0 && (
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Assign all to (optional)</label>
+              <select
+                value={assigneeId} onChange={e => setAssigneeId(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 bg-white"
+              >
+                <option value="">Unassigned</option>
+                {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </select>
+            </div>
+          )}
           {lines.length > 0 && (
             <p className="text-xs text-slate-500">
               <span className="font-semibold text-indigo-600">{lines.length}</span> ticket{lines.length !== 1 ? "s" : ""} will be created
@@ -1316,13 +1330,43 @@ function SprintCard({ card, onEdit, onBlock, onDragStart, onDragEnd }: {
 
 // ── Sprint History Card ───────────────────────────────────────────────────────
 
+type SprintSummaryCategory = { name: string; items: string[]; summary: string };
+type SprintSummary = { headline: string; overview: string; categories: SprintSummaryCategory[] };
+
 function SprintHistoryCard({ sprint }: { sprint: Sprint }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded,    setExpanded]    = useState(false);
+  const [summary,     setSummary]     = useState<SprintSummary | null>(null);
+  const [summaryErr,  setSummaryErr]  = useState<string | null>(null);
+  const [generating,  setGenerating]  = useState(false);
+
   const completed  = sprint.cards.filter(c => c.status === "completed");
   const incomplete = sprint.cards.filter(c => c.status !== "completed");
   const velocity   = totalPts(completed);
   const planned    = totalPts(sprint.cards);
   const rate       = sprint.cards.length > 0 ? Math.round((completed.length / sprint.cards.length) * 100) : 0;
+
+  async function generateSummary() {
+    setGenerating(true);
+    setSummaryErr(null);
+    try {
+      const res = await fetch(`/api/kanban/sprints/${sprint.id}/summary`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) { setSummaryErr(data.error ?? "Failed to generate summary"); }
+      else { setSummary(data as SprintSummary); }
+    } catch { setSummaryErr("Network error"); }
+    setGenerating(false);
+  }
+
+  const CATEGORY_COLORS: Record<string, string> = {
+    "SEO / AEO / GEO":        "bg-violet-50 border-violet-200 text-violet-700",
+    "Paid Media":              "bg-blue-50   border-blue-200   text-blue-700",
+    "PR & Communications":     "bg-sky-50    border-sky-200    text-sky-700",
+    "Social Media":            "bg-pink-50   border-pink-200   text-pink-700",
+    "Email Marketing":         "bg-amber-50  border-amber-200  text-amber-700",
+    "Content & Creative":      "bg-emerald-50 border-emerald-200 text-emerald-700",
+    "Analytics & Reporting":   "bg-indigo-50 border-indigo-200 text-indigo-700",
+    "Other":                   "bg-slate-50  border-slate-200  text-slate-600",
+  };
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
@@ -1424,6 +1468,57 @@ function SprintHistoryCard({ sprint }: { sprint: Sprint }) {
               </div>
             </div>
           )}
+
+          {/* AI Sprint Summary */}
+          <div className="pt-2 border-t border-slate-200">
+            {!summary ? (
+              <button
+                onClick={generateSummary}
+                disabled={generating || completed.length === 0}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 transition-colors"
+              >
+                <Sparkles className="w-4 h-4" />
+                {generating ? "Generating summary…" : "Generate AI Sprint Summary"}
+              </button>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-violet-500" />
+                    <p className="text-sm font-semibold text-slate-900">AI Sprint Summary</p>
+                  </div>
+                  <button onClick={() => setSummary(null)}
+                    className="text-xs text-slate-400 hover:text-slate-600 transition-colors">
+                    Regenerate
+                  </button>
+                </div>
+                <div className="bg-violet-50 rounded-xl border border-violet-200 p-4 space-y-2">
+                  <p className="text-sm font-semibold text-violet-900">{summary.headline}</p>
+                  <p className="text-sm text-violet-800 leading-relaxed">{summary.overview}</p>
+                </div>
+                <div className="grid grid-cols-1 gap-2">
+                  {summary.categories.map(cat => (
+                    <div key={cat.name}
+                      className={cn("rounded-xl border p-3 space-y-1.5", CATEGORY_COLORS[cat.name] ?? "bg-slate-50 border-slate-200 text-slate-600")}>
+                      <p className="text-xs font-bold uppercase tracking-wide">{cat.name}</p>
+                      <p className="text-xs leading-relaxed">{cat.summary}</p>
+                      <ul className="space-y-0.5">
+                        {cat.items.map((item, i) => (
+                          <li key={i} className="text-xs flex items-start gap-1.5">
+                            <span className="mt-0.5 shrink-0">·</span>
+                            <span>{item}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {summaryErr && (
+              <p className="mt-2 text-xs text-red-600">{summaryErr}</p>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -1452,6 +1547,10 @@ export function KanbanBoard() {
   // Inline editing on collapsed backlog rows
   const [inlineEdit, setInlineEdit] = useState<{ cardId: string; field: "title" | "priority" | "pts" | "assignee" } | null>(null);
   const [inlineVal,  setInlineVal]  = useState<string>("");
+
+  // Bulk selection in backlog
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkMoving,  setBulkMoving]  = useState(false);
 
   const dragging  = useRef<Card | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
@@ -1524,16 +1623,35 @@ export function KanbanBoard() {
     setCards(prev => prev.filter(c => c.id !== id));
   }
 
-  async function handleBulkAdd(titles: string[]) {
+  async function handleBulkAdd(titles: string[], assigneeId: string | null) {
     const created = await Promise.all(
       titles.map(title =>
         fetch("/api/kanban/cards", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title, type: "backlog", status: "backlog" }),
+          body: JSON.stringify({ title, type: "backlog", status: "backlog", ...(assigneeId && { assigneeId }) }),
         }).then(r => r.json())
       )
     );
     setCards(prev => [...prev, ...created]);
+  }
+
+  async function bulkMoveToSprint() {
+    if (!activeSprint || selectedIds.size === 0) return;
+    setBulkMoving(true);
+    const updated = await Promise.all(
+      [...selectedIds].map(id =>
+        fetch(`/api/kanban/cards/${id}`, {
+          method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type: "sprint", status: "not_started", sprintId: activeSprint.id }),
+        }).then(r => r.json())
+      )
+    );
+    setCards(prev => prev.map(c => {
+      const u = updated.find(u => u.id === c.id);
+      return u ?? c;
+    }));
+    setSelectedIds(new Set());
+    setBulkMoving(false);
   }
 
   async function commitInlineEdit(cardId: string, field: "title" | "priority" | "pts" | "assignee", value: string) {
@@ -1677,6 +1795,23 @@ export function KanbanBoard() {
     cards.filter(c => c.type === "sprint" && c.status === status && (!activeSprint || c.sprintId === activeSprint.id || c.sprintId === null))
       .sort((a, b) => a.position - b.position);
 
+  // Filters (shared across backlog + sprint views)
+  const [filterAssignee, setFilterAssignee] = useState<string>("all");
+  const [filterPriority, setFilterPriority] = useState<string>("all");
+
+  function applyFilters<T extends Card>(list: T[]): T[] {
+    return list.filter(c => {
+      if (filterAssignee !== "all" && c.assigneeId !== filterAssignee) return false;
+      if (filterPriority !== "all" && String(c.priority ?? "") !== filterPriority) return false;
+      return true;
+    });
+  }
+
+  const filteredBacklogCards   = applyFilters(backlogCards);
+  const filteredSprintCards    = (status: Card["status"]) => applyFilters(sprintColCards(status));
+  const filteredActiveSprintCards = applyFilters(activeSprintCards);
+  const hasActiveFilter = filterAssignee !== "all" || filterPriority !== "all";
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   if (loading) {
@@ -1793,7 +1928,7 @@ export function KanbanBoard() {
                 </div>
               ) : (
                 <div className="bg-white rounded-2xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
-                  {activeSprintCards.sort((a, b) => a.position - b.position).map(card => {
+                  {filteredActiveSprintCards.sort((a, b) => a.position - b.position).map(card => {
                     const isExpanded  = expandedCardId === card.id;
                     const checkDone   = card.checklist.filter(i => i.completed).length;
                     const checkTotal  = card.checklist.length;
@@ -1915,14 +2050,32 @@ export function KanbanBoard() {
 
           {/* ── Backlog Section ── */}
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-3">
                 <h2 className="text-base font-semibold text-slate-800">Marketing Backlog</h2>
                 {backlogCards.length > 0 && (
-                  <span className="text-xs text-slate-500">{backlogCards.length} items · {totalPts(backlogCards)} pts</span>
+                  <span className="text-xs text-slate-500">{filteredBacklogCards.length}{hasActiveFilter ? ` of ${backlogCards.length}` : ""} items · {totalPts(filteredBacklogCards)} pts</span>
                 )}
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* Filters */}
+                <select value={filterAssignee} onChange={e => setFilterAssignee(e.target.value)}
+                  className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                  <option value="all">All assignees</option>
+                  <option value="">Unassigned</option>
+                  {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+                <select value={filterPriority} onChange={e => setFilterPriority(e.target.value)}
+                  className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                  <option value="all">All priorities</option>
+                  {PRIORITY_LEVELS.map(p => <option key={p.level} value={String(p.level)}>{p.label}</option>)}
+                </select>
+                {hasActiveFilter && (
+                  <button onClick={() => { setFilterAssignee("all"); setFilterPriority("all"); }}
+                    className="px-2.5 py-1.5 text-xs text-slate-500 hover:text-slate-700 transition-colors">
+                    Clear
+                  </button>
+                )}
                 {!activeSprint && (
                   <button onClick={() => setSprintModal({})}
                     className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors">
@@ -1942,6 +2095,25 @@ export function KanbanBoard() {
                 </button>
               </div>
             </div>
+
+            {/* Bulk-select action bar */}
+            {selectedIds.size > 0 && (
+              <div className="flex items-center gap-3 px-4 py-2.5 bg-indigo-50 border border-indigo-200 rounded-xl">
+                <CheckSquare className="w-4 h-4 text-indigo-600 shrink-0" />
+                <span className="text-sm font-medium text-indigo-800">{selectedIds.size} selected</span>
+                {activeSprint && (
+                  <button onClick={bulkMoveToSprint} disabled={bulkMoving}
+                    className="inline-flex items-center gap-1.5 ml-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors">
+                    <ArrowRight className="w-3.5 h-3.5" />
+                    {bulkMoving ? "Moving…" : `Move ${selectedIds.size} to sprint`}
+                  </button>
+                )}
+                <button onClick={() => setSelectedIds(new Set())}
+                  className="ml-auto text-xs text-indigo-500 hover:text-indigo-700 transition-colors">
+                  Clear selection
+                </button>
+              </div>
+            )}
 
             {backlogCards.length === 0 ? (
               <div
@@ -1979,12 +2151,13 @@ export function KanbanBoard() {
                   await moveToBacklog(card);
                 }}
               >
-                {backlogCards.sort((a, b) => {
+                {filteredBacklogCards.sort((a, b) => {
                   const pa = a.priority ?? 99, pb = b.priority ?? 99;
                   if (pa !== pb) return pa - pb;
                   return a.position - b.position;
                 }).map(card => {
                   const isExpanded = expandedCardId === card.id;
+                  const isSelected = selectedIds.has(card.id);
                   const checkDone  = card.checklist.filter(i => i.completed).length;
                   const checkTotal = card.checklist.length;
                   return (
@@ -1995,12 +2168,18 @@ export function KanbanBoard() {
                     >
                       {/* Collapsed row */}
                       <div
-                        className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 group transition-colors cursor-pointer"
+                        className={cn("flex items-center gap-3 px-4 py-3 hover:bg-slate-50 group transition-colors cursor-pointer", isSelected && "bg-indigo-50")}
                         onClick={e => {
                           if ((e.target as HTMLElement).closest("[data-inline]")) return;
                           setExpandedCardId(isExpanded ? null : card.id);
                         }}
                       >
+                        {/* Checkbox */}
+                        <button data-inline type="button"
+                          onClick={e => { e.stopPropagation(); setSelectedIds(prev => { const s = new Set(prev); s.has(card.id) ? s.delete(card.id) : s.add(card.id); return s; }); }}
+                          className="shrink-0 text-slate-300 hover:text-indigo-500 transition-colors">
+                          {isSelected ? <CheckSquare className="w-4 h-4 text-indigo-500" /> : <Square className="w-4 h-4" />}
+                        </button>
                         <GripVertical className="w-4 h-4 text-slate-300 shrink-0" onClick={e => e.stopPropagation()} />
                         <ChevronDown className={cn("w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform", isExpanded && "rotate-180")} />
 
@@ -2261,7 +2440,25 @@ export function KanbanBoard() {
                     </p>
                   )}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* Filters */}
+                  <select value={filterAssignee} onChange={e => setFilterAssignee(e.target.value)}
+                    className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                    <option value="all">All assignees</option>
+                    <option value="">Unassigned</option>
+                    {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  </select>
+                  <select value={filterPriority} onChange={e => setFilterPriority(e.target.value)}
+                    className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                    <option value="all">All priorities</option>
+                    {PRIORITY_LEVELS.map(p => <option key={p.level} value={String(p.level)}>{p.label}</option>)}
+                  </select>
+                  {hasActiveFilter && (
+                    <button onClick={() => { setFilterAssignee("all"); setFilterPriority("all"); }}
+                      className="px-2.5 py-1.5 text-xs text-slate-500 hover:text-slate-700 transition-colors">
+                      Clear
+                    </button>
+                  )}
                   <div className="text-right">
                     <p className="text-xs text-slate-500">
                       {cards.filter(c => c.sprintId === activeSprint.id && c.status === "completed").length} / {cards.filter(c => c.sprintId === activeSprint.id).length} cards
@@ -2284,7 +2481,7 @@ export function KanbanBoard() {
               {/* Columns */}
               <div className="grid grid-cols-5 gap-4">
                 {SPRINT_COLS.map(col => {
-                  const colCards = sprintColCards(col.key);
+                  const colCards = filteredSprintCards(col.key);
                   const isDragTarget = dragOver === col.key;
                   return (
                     <div key={col.key}
@@ -2446,7 +2643,7 @@ export function KanbanBoard() {
           onClose={() => setBlockedModal(null)} />
       )}
       {bulkAddOpen && (
-        <BulkAddModal onSave={handleBulkAdd} onClose={() => setBulkAddOpen(false)} />
+        <BulkAddModal members={members} onSave={handleBulkAdd} onClose={() => setBulkAddOpen(false)} />
       )}
     </div>
   );
