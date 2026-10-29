@@ -122,6 +122,25 @@ function PriorityBadge({ priority }: { priority: number }) {
   );
 }
 
+function FilterSelect({ value, onChange, children }: {
+  value: string;
+  onChange: (v: string) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="relative inline-flex items-center">
+      <select
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        className="appearance-none pl-3 pr-7 py-1.5 text-xs border border-slate-200 rounded-lg bg-white text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-300 cursor-pointer"
+      >
+        {children}
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-2 w-3 h-3 text-slate-400" />
+    </div>
+  );
+}
+
 // ── Bulk Add Modal ────────────────────────────────────────────────────────────
 
 function BulkAddModal({ members, onSave, onClose }: {
@@ -2059,17 +2078,15 @@ export function KanbanBoard() {
               </div>
               <div className="flex items-center gap-2 flex-wrap">
                 {/* Filters */}
-                <select value={filterAssignee} onChange={e => setFilterAssignee(e.target.value)}
-                  className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                <FilterSelect value={filterAssignee} onChange={setFilterAssignee}>
                   <option value="all">All assignees</option>
                   <option value="">Unassigned</option>
                   {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                </select>
-                <select value={filterPriority} onChange={e => setFilterPriority(e.target.value)}
-                  className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                </FilterSelect>
+                <FilterSelect value={filterPriority} onChange={setFilterPriority}>
                   <option value="all">All priorities</option>
                   {PRIORITY_LEVELS.map(p => <option key={p.level} value={String(p.level)}>{p.label}</option>)}
-                </select>
+                </FilterSelect>
                 {hasActiveFilter && (
                   <button onClick={() => { setFilterAssignee("all"); setFilterPriority("all"); }}
                     className="px-2.5 py-1.5 text-xs text-slate-500 hover:text-slate-700 transition-colors">
@@ -2442,17 +2459,15 @@ export function KanbanBoard() {
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
                   {/* Filters */}
-                  <select value={filterAssignee} onChange={e => setFilterAssignee(e.target.value)}
-                    className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                  <FilterSelect value={filterAssignee} onChange={setFilterAssignee}>
                     <option value="all">All assignees</option>
                     <option value="">Unassigned</option>
                     {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                  </select>
-                  <select value={filterPriority} onChange={e => setFilterPriority(e.target.value)}
-                    className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                  </FilterSelect>
+                  <FilterSelect value={filterPriority} onChange={setFilterPriority}>
                     <option value="all">All priorities</option>
                     {PRIORITY_LEVELS.map(p => <option key={p.level} value={String(p.level)}>{p.label}</option>)}
-                  </select>
+                  </FilterSelect>
                   {hasActiveFilter && (
                     <button onClick={() => { setFilterAssignee("all"); setFilterPriority("all"); }}
                       className="px-2.5 py-1.5 text-xs text-slate-500 hover:text-slate-700 transition-colors">
