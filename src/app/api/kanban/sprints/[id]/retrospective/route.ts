@@ -147,6 +147,12 @@ Generate the sprint retrospective.`;
       };
     }
 
+    // Save retrospective to the sprint record
+    await prisma.kanbanSprint.update({
+      where: { id },
+      data: { retrospective: structured as object },
+    });
+
     return NextResponse.json(structured);
   } catch (err) {
     const msg = err instanceof Error ? err.message : "AI request failed";

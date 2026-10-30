@@ -6,7 +6,7 @@ import {
   LayoutList, Columns3, History, GripVertical, Pencil,
   Flag, CheckCircle2, ChevronDown, ChevronUp, Calendar,
   Target, BarChart2, TrendingUp, TrendingDown, Minus,
-  AlertTriangle, Lock, Sparkles, CheckSquare, Square,
+  AlertTriangle, Lock, Sparkles, CheckSquare, Square, FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -42,16 +42,27 @@ type Card = {
   position:      number;
 };
 
+type RetroCategory    = { name: string; items: string[]; summary: string };
+type RetroContributor = { name: string; completed: string[]; highlights: string };
+type SprintRetro      = {
+  headline:     string;
+  overview:     string;
+  categories:   RetroCategory[];
+  contributors: RetroContributor[];
+  incomplete:   { title: string; status: string }[];
+};
+
 type Sprint = {
-  id:          string;
-  name:        string;
-  goal:        string | null;
-  startDate:   string | null;
-  endDate:     string | null;
-  status:      "active" | "completed";
-  completedAt: string | null;
-  createdAt:   string;
-  cards:       Card[];
+  id:             string;
+  name:           string;
+  goal:           string | null;
+  startDate:      string | null;
+  endDate:        string | null;
+  status:         "active" | "completed";
+  completedAt:    string | null;
+  createdAt:      string;
+  cards:          Card[];
+  retrospective?: SprintRetro | null;
 };
 
 const FIBONACCI = [1, 2, 3, 5, 8, 13, 21];
@@ -840,16 +851,6 @@ function SprintModal({ sprint, onSave, onClose }: {
 
 // ── Complete Sprint Modal ─────────────────────────────────────────────────────
 
-type RetroCategory    = { name: string; items: string[]; summary: string };
-type RetroContributor = { name: string; completed: string[]; highlights: string };
-type SprintRetro      = {
-  headline: string;
-  overview: string;
-  categories: RetroCategory[];
-  contributors: RetroContributor[];
-  incomplete: { title: string; status: string }[];
-};
-
 const RETRO_CHANNEL_COLORS: Record<string, string> = {
   "SEO / AEO / GEO":        "bg-blue-50   border-blue-200   text-blue-800",
   "Paid Media":              "bg-purple-50 border-purple-200 text-purple-800",
@@ -1226,6 +1227,261 @@ function CompleteSprintModal({ sprint, onComplete, onClose }: {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Retrospectives View ───────────────────────────────────────────────────────
+
+function RetrospectivesView({
+  sprints,
+  onRetroSaved,
+}: {
+  sprints: Sprint[];
+  onRetroSaved: (sprintId: string, retro: SprintRetro) => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <h2 className="text-base font-semibold text-slate-800">Retrospectives</h2>
+        {sprints.length > 0 && (
+          <span className="text-xs text-slate-500">
+            {sprints.filter(s => s.retrospective).length} of {sprints.length} generated
+          </span>
+        )}
+      </div>
+
+      {sprints.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-20 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 space-y-2">
+          <FileText className="w-10 h-10" />
+          <p className="text-sm font-medium text-slate-600">No completed sprints yet</p>
+          <p className="text-xs text-slate-400">Complete your first sprint to generate retrospectives here</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {sprints.map(sprint => (
+            <RetroCard key={sprint.id} sprint={sprint} onRetroSaved={onRetroSaved} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RetroCard({
+  sprint,
+  onRetroSaved,
+}: {
+  sprint: Sprint;
+  onRetroSaved: (sprintId: string, retro: SprintRetro) => void;
+}) {
+  const [open,         setOpen]        = useState(!!sprint.retrospective);
+  const [retro,        setRetro]       = useState<SprintRetro | null>(sprint.retrospective ?? null);
+  const [generating,   setGenerating]  = useState(false);
+  const [retroErr,     setRetroErr]    = useState<string | null>(null);
+  const [slackSending, setSlackSending] = useState(false);
+  const [slackDone,    setSlackDone]   = useState(false);
+  const [slackErr,     setSlackErr]    = useState<string | null>(null);
+
+  const completedCards = sprint.cards.filter(c => c.status === "completed");
+  const completedAt    = sprint.completedAt
+    ? new Date(sprint.completedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+    : null;
+
+  async function generate() {
+    setGenerating(true);
+    setRetroErr(null);
+    try {
+      const res  = await fetch(`/api/kanban/sprints/${sprint.id}/retrospective`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        setRetroErr(data.error ?? "Failed to generate");
+      } else {
+        const r = data as SprintRetro;
+        setRetro(r);
+        setOpen(true);
+        onRetroSaved(sprint.id, r);
+      }
+    } catch {
+      setRetroErr("Network error");
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function shareToSlack() {
+    if (!retro) return;
+    setSlackSending(true);
+    setSlackErr(null);
+
+    const CHANNEL_EMOJI: Record<string, string> = {
+      "SEO / AEO / GEO": "🔍", "Paid Media": "💰", "PR & Communications": "📣",
+      "Social Media": "📱", "Email Marketing": "📧", "Content & Creative": "🎨",
+      "Analytics & Reporting": "📊", "Other": "📌",
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const blocks: any[] = [
+      { type: "header", text: { type: "plain_text", text: `✅  ${sprint.name} — Sprint Complete`, emoji: true } },
+      { type: "divider" },
+      { type: "section", text: { type: "mrkdwn", text: `🏆 *${retro.headline}*\n\n${retro.overview}` } },
+    ];
+
+    if (retro.categories.length > 0) {
+      blocks.push({ type: "divider" });
+      blocks.push({ type: "rich_text", elements: [{ type: "rich_text_section", elements: [{ type: "text", text: "📦  What We Shipped", style: { bold: true } }] }] });
+      for (const cat of retro.categories) {
+        const emoji = CHANNEL_EMOJI[cat.name] ?? "•";
+        const ticketList = cat.items.map((i: string) => `   • ${i}`).join("\n");
+        blocks.push({ type: "section", text: { type: "mrkdwn", text: `${emoji} *${cat.name}*\n${cat.summary}\n${ticketList}` } });
+      }
+    }
+    if (retro.contributors.length > 0) {
+      blocks.push({ type: "divider" });
+      blocks.push({ type: "rich_text", elements: [{ type: "rich_text_section", elements: [{ type: "text", text: "🌟  Team Shoutouts", style: { bold: true } }] }] });
+      blocks.push({ type: "section", text: { type: "mrkdwn", text: retro.contributors.map((c: RetroContributor) => `*${c.name}* — ${c.highlights}`).join("\n\n") } });
+    }
+    if (retro.incomplete.length > 0) {
+      blocks.push({ type: "divider" });
+      blocks.push({ type: "section", text: { type: "mrkdwn", text: `⏳ *Still in progress (${retro.incomplete.length})*\n${retro.incomplete.map((i: { title: string; status: string }) => `• ${i.title}  _${i.status}_`).join("\n")}` } });
+    }
+    blocks.push({ type: "divider" });
+    blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: `Generated by Marketing Dashboard  •  ${completedAt ?? new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}` }] });
+
+    try {
+      const res  = await fetch("/api/slack/post", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel: "#marketing", text: `${sprint.name} Sprint Retrospective — ${retro.headline}`, blocks }),
+      });
+      const data = await res.json();
+      if (!res.ok) setSlackErr(data.error ?? "Slack error");
+      else setSlackDone(true);
+    } catch {
+      setSlackErr("Network error");
+    } finally {
+      setSlackSending(false);
+    }
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+      {/* Header row */}
+      <div className="flex items-center gap-3 px-5 py-4">
+        <button onClick={() => setOpen(o => !o)} className="flex items-center gap-3 flex-1 min-w-0 text-left">
+          {open ? <ChevronUp className="w-4 h-4 text-slate-400 shrink-0" /> : <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />}
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-slate-900 truncate">{sprint.name}</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              {completedAt && `Completed ${completedAt}  ·  `}
+              {completedCards.length} ticket{completedCards.length !== 1 ? "s" : ""} delivered  ·  {totalPts(completedCards)} pts
+            </p>
+          </div>
+        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          {retro ? (
+            <>
+              {slackDone ? (
+                <div className="flex items-center gap-1 text-xs text-emerald-600">
+                  <CheckCircle2 className="w-3.5 h-3.5" />Posted
+                </div>
+              ) : (
+                <button onClick={shareToSlack} disabled={slackSending}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-[#4A154B] text-white hover:bg-[#3b0f3c] disabled:opacity-50 transition-colors">
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zM6.313 15.165a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zM8.834 6.313a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312zM18.956 8.834a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zM17.688 8.834a2.528 2.528 0 0 1-2.523 2.521 2.527 2.527 0 0 1-2.52-2.521V2.522A2.527 2.527 0 0 1 15.165 0a2.528 2.528 0 0 1 2.523 2.522v6.312zM15.165 18.956a2.528 2.528 0 0 1 2.523 2.522A2.528 2.528 0 0 1 15.165 24a2.527 2.527 0 0 1-2.52-2.522v-2.522h2.52zM15.165 17.688a2.527 2.527 0 0 1-2.52-2.523 2.526 2.526 0 0 1 2.52-2.52h6.313A2.527 2.527 0 0 1 24 15.165a2.528 2.528 0 0 1-2.522 2.523h-6.313z"/>
+                  </svg>
+                  {slackSending ? "Posting…" : "Share to #marketing"}
+                </button>
+              )}
+              <button onClick={generate} disabled={generating}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-violet-200 text-violet-700 hover:bg-violet-50 disabled:opacity-50 transition-colors">
+                <Sparkles className="w-3.5 h-3.5" />
+                {generating ? "Regenerating…" : "Regenerate"}
+              </button>
+            </>
+          ) : (
+            <button onClick={generate} disabled={generating}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 transition-colors">
+              <Sparkles className="w-3.5 h-3.5" />
+              {generating ? "Generating…" : "Generate Retrospective"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Error */}
+      {retroErr && (
+        <div className="px-5 pb-3">
+          <p className="text-xs text-red-600">{retroErr}</p>
+        </div>
+      )}
+      {slackErr && (
+        <div className="px-5 pb-3">
+          <p className="text-xs text-red-600">{slackErr}</p>
+        </div>
+      )}
+
+      {/* Retrospective body */}
+      {open && retro && (
+        <div className="px-5 pb-5 space-y-4 border-t border-slate-100 pt-4">
+          {/* Headline */}
+          <div className="rounded-xl bg-violet-50 border border-violet-200 p-4 space-y-1.5">
+            <p className="text-sm font-semibold text-violet-900">{retro.headline}</p>
+            <p className="text-sm text-violet-800 leading-relaxed">{retro.overview}</p>
+          </div>
+
+          {/* Categories */}
+          {retro.categories.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">What we shipped</p>
+              <div className="grid grid-cols-1 gap-2">
+                {retro.categories.map(cat => (
+                  <div key={cat.name} className={cn("rounded-xl border p-3 space-y-1.5",
+                    RETRO_CHANNEL_COLORS[cat.name] ?? "bg-slate-50 border-slate-200 text-slate-700")}>
+                    <p className="text-xs font-semibold">{cat.name}</p>
+                    <p className="text-xs leading-relaxed">{cat.summary}</p>
+                    <div className="flex flex-wrap gap-1 pt-0.5">
+                      {cat.items.map(item => (
+                        <span key={item} className="text-xs bg-white/60 border border-current/20 rounded-md px-2 py-0.5 opacity-80">{item}</span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Contributors */}
+          {retro.contributors.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Team shoutouts</p>
+              <div className="space-y-2">
+                {retro.contributors.map(c => (
+                  <div key={c.name} className="rounded-xl bg-emerald-50 border border-emerald-200 p-3 space-y-1">
+                    <p className="text-xs font-semibold text-emerald-800">{c.name}</p>
+                    <p className="text-xs text-emerald-700 leading-relaxed">{c.highlights}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Incomplete */}
+          {retro.incomplete.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Still in progress</p>
+              <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 space-y-1.5">
+                {retro.incomplete.map(item => (
+                  <div key={item.title} className="flex items-center justify-between gap-2">
+                    <p className="text-xs text-amber-800">{item.title}</p>
+                    <span className="text-xs bg-amber-100 border border-amber-200 rounded-md px-1.5 py-0.5 text-amber-700 whitespace-nowrap shrink-0">{item.status}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1852,7 +2108,7 @@ function SprintHistoryCard({ sprint }: { sprint: Sprint }) {
 // ── Main Board ────────────────────────────────────────────────────────────────
 
 export function KanbanBoard() {
-  const [view,           setView]           = useState<"backlog" | "sprint" | "history" | "analytics">("backlog");
+  const [view,           setView]           = useState<"backlog" | "sprint" | "history" | "analytics" | "retrospectives">("backlog");
   const [cards,          setCards]          = useState<Card[]>([]);
   const [members,        setMembers]        = useState<Member[]>([]);
   const [sprints,        setSprints]        = useState<Sprint[]>([]);
@@ -2176,10 +2432,11 @@ export function KanbanBoard() {
       {/* View toggle */}
       <div className="flex gap-1 p-1 bg-slate-100 rounded-xl w-fit">
         {[
-          { key: "backlog",  label: "Backlog",      icon: LayoutList,  count: backlogCards.length },
-          { key: "sprint",   label: "Sprint Board",  icon: Columns3,    count: cards.filter(c => c.type === "sprint").length },
-          { key: "history",   label: "History",      icon: History,    count: completedSprints.length },
-        { key: "analytics", label: "Analytics",    icon: BarChart2,  count: null },
+          { key: "backlog",        label: "Backlog",          icon: LayoutList, count: backlogCards.length },
+          { key: "sprint",         label: "Sprint Board",     icon: Columns3,   count: cards.filter(c => c.type === "sprint").length },
+          { key: "history",        label: "History",          icon: History,    count: completedSprints.length },
+          { key: "retrospectives", label: "Retrospectives",   icon: FileText,   count: completedSprints.filter(s => s.retrospective).length || null },
+          { key: "analytics",      label: "Analytics",        icon: BarChart2,  count: null },
         ].map(({ key, label, icon: Icon, count }) => (
           <button key={key} onClick={() => setView(key as typeof view)}
             className={cn(
@@ -2941,6 +3198,13 @@ export function KanbanBoard() {
           </div>
           <VelocityAnalytics sprints={completedSprints} />
         </div>
+      )}
+
+      {/* ── Retrospectives ──────────────────────────────────────────────── */}
+      {view === "retrospectives" && (
+        <RetrospectivesView sprints={completedSprints} onRetroSaved={(sprintId, retro) => {
+          setSprints(prev => prev.map(s => s.id === sprintId ? { ...s, retrospective: retro } : s));
+        }} />
       )}
 
       {/* ── Modals ───────────────────────────────────────────────────────── */}

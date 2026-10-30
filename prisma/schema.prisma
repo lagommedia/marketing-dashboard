@@ -522,15 +522,16 @@ model KanbanMember {
 }
 
 model KanbanSprint {
-  id          String       @id @default(cuid())
-  name        String
-  goal        String?
-  startDate   DateTime?
-  endDate     DateTime?
-  status      String       @default("active") // "active" | "completed"
-  completedAt DateTime?
-  cards       KanbanCard[]
-  createdAt   DateTime     @default(now())
+  id            String       @id @default(cuid())
+  name          String
+  goal          String?
+  startDate     DateTime?
+  endDate       DateTime?
+  status        String       @default("active") // "active" | "completed"
+  completedAt   DateTime?
+  retrospective Json?
+  cards         KanbanCard[]
+  createdAt     DateTime     @default(now())
 
   @@index([status])
 }
