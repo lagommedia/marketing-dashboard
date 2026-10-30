@@ -840,21 +840,247 @@ function SprintModal({ sprint, onSave, onClose }: {
 
 // ── Complete Sprint Modal ─────────────────────────────────────────────────────
 
+type RetroCategory    = { name: string; items: string[]; summary: string };
+type RetroContributor = { name: string; completed: string[]; highlights: string };
+type SprintRetro      = {
+  headline: string;
+  overview: string;
+  categories: RetroCategory[];
+  contributors: RetroContributor[];
+  incomplete: { title: string; status: string }[];
+};
+
+const RETRO_CHANNEL_COLORS: Record<string, string> = {
+  "SEO / AEO / GEO":        "bg-blue-50   border-blue-200   text-blue-800",
+  "Paid Media":              "bg-purple-50 border-purple-200 text-purple-800",
+  "PR & Communications":     "bg-rose-50   border-rose-200   text-rose-800",
+  "Social Media":            "bg-pink-50   border-pink-200   text-pink-800",
+  "Email Marketing":         "bg-amber-50  border-amber-200  text-amber-800",
+  "Content & Creative":      "bg-lime-50   border-lime-200   text-lime-800",
+  "Analytics & Reporting":   "bg-cyan-50   border-cyan-200   text-cyan-800",
+  "Other":                   "bg-slate-50  border-slate-200  text-slate-700",
+};
+
 function CompleteSprintModal({ sprint, onComplete, onClose }: {
   sprint:     Sprint;
-  onComplete: (incompleteAction: "backlog" | "next") => Promise<void>;
+  onComplete: (incompleteAction: "backlog" | "next") => Promise<string>;
   onClose:    () => void;
 }) {
   const incomplete = sprint.cards.filter(c => c.status !== "completed");
   const completed  = sprint.cards.filter(c => c.status === "completed");
-  const [action, setAction]   = useState<"backlog" | "next">("backlog");
-  const [saving, setSaving]   = useState(false);
+  const [action,       setAction]      = useState<"backlog" | "next">("backlog");
+  const [step,         setStep]        = useState<"confirm" | "retro">("confirm");
+  const [saving,       setSaving]      = useState(false);
+  const [retro,        setRetro]       = useState<SprintRetro | null>(null);
+  const [retroErr,     setRetroErr]    = useState<string | null>(null);
+  const [generating,   setGenerating]  = useState(false);
+  const [slackSending, setSlackSending] = useState(false);
+  const [slackDone,    setSlackDone]   = useState(false);
+  const [slackErr,     setSlackErr]    = useState<string | null>(null);
+  const [sprintId,     setSprintId]    = useState<string | null>(null);
 
   async function submit() {
     setSaving(true);
-    await onComplete(action);
+    const sid = await onComplete(action);
     setSaving(false);
-    onClose();
+    setSprintId(sid);
+    setStep("retro");
+    // auto-generate retrospective
+    if (sid) generateRetro(sid);
+  }
+
+  async function generateRetro(sid: string) {
+    setGenerating(true);
+    setRetroErr(null);
+    try {
+      const res  = await fetch(`/api/kanban/sprints/${sid}/retrospective`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) setRetroErr(data.error ?? "Failed to generate retrospective");
+      else setRetro(data as SprintRetro);
+    } catch {
+      setRetroErr("Network error — could not generate retrospective");
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function shareToSlack() {
+    if (!retro) return;
+    setSlackSending(true);
+    setSlackErr(null);
+
+    const lines: string[] = [
+      `*${sprint.name} — Sprint Retrospective*`,
+      "",
+      `*${retro.headline}*`,
+      "",
+      retro.overview,
+    ];
+
+    if (retro.categories.length > 0) {
+      lines.push("", "*What we shipped:*");
+      for (const cat of retro.categories) {
+        lines.push(`• *${cat.name}:* ${cat.summary}`);
+      }
+    }
+
+    if (retro.contributors.length > 0) {
+      lines.push("", "*Shoutouts:*");
+      for (const c of retro.contributors) {
+        lines.push(`• *${c.name}:* ${c.highlights}`);
+      }
+    }
+
+    if (retro.incomplete.length > 0) {
+      lines.push("", `*Still in progress (${retro.incomplete.length}):*`);
+      for (const item of retro.incomplete) {
+        lines.push(`• ${item.title} _(${item.status})_`);
+      }
+    }
+
+    try {
+      const res  = await fetch("/api/slack/post", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel: "#marketing", text: lines.join("\n") }),
+      });
+      const data = await res.json();
+      if (!res.ok) setSlackErr(data.error ?? "Slack error");
+      else setSlackDone(true);
+    } catch {
+      setSlackErr("Network error — could not post to Slack");
+    } finally {
+      setSlackSending(false);
+    }
+  }
+
+  if (step === "retro") {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
+        <div className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-2xl max-h-[90vh] flex flex-col">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 shrink-0">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-violet-500" />
+              <h3 className="text-sm font-semibold text-slate-900">Sprint retrospective — {sprint.name}</h3>
+            </div>
+            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors">
+              <X className="w-4 h-4 text-slate-500" />
+            </button>
+          </div>
+
+          <div className="overflow-y-auto flex-1 p-5 space-y-4">
+            {generating && (
+              <div className="flex flex-col items-center justify-center py-12 gap-3 text-slate-500">
+                <Sparkles className="w-6 h-6 text-violet-400 animate-pulse" />
+                <p className="text-sm">Generating retrospective…</p>
+              </div>
+            )}
+
+            {retroErr && (
+              <div className="rounded-xl bg-red-50 border border-red-200 p-4 space-y-2">
+                <p className="text-sm font-medium text-red-800">Could not generate retrospective</p>
+                <p className="text-xs text-red-600">{retroErr}</p>
+                {sprintId && (
+                  <button onClick={() => generateRetro(sprintId)}
+                    className="text-xs text-red-700 underline">Retry</button>
+                )}
+              </div>
+            )}
+
+            {retro && (
+              <div className="space-y-4">
+                {/* Headline + overview */}
+                <div className="rounded-xl bg-violet-50 border border-violet-200 p-4 space-y-1.5">
+                  <p className="text-sm font-semibold text-violet-900">{retro.headline}</p>
+                  <p className="text-sm text-violet-800 leading-relaxed">{retro.overview}</p>
+                </div>
+
+                {/* Categories */}
+                {retro.categories.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">What we shipped</p>
+                    <div className="grid grid-cols-1 gap-2">
+                      {retro.categories.map(cat => (
+                        <div key={cat.name} className={cn("rounded-xl border p-3 space-y-1.5",
+                          RETRO_CHANNEL_COLORS[cat.name] ?? "bg-slate-50 border-slate-200 text-slate-700")}>
+                          <p className="text-xs font-semibold">{cat.name}</p>
+                          <p className="text-xs leading-relaxed">{cat.summary}</p>
+                          <div className="flex flex-wrap gap-1 pt-0.5">
+                            {cat.items.map(item => (
+                              <span key={item} className="text-xs bg-white/60 border border-current/20 rounded-md px-2 py-0.5 opacity-80">
+                                {item}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Contributors */}
+                {retro.contributors.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Team shoutouts</p>
+                    <div className="space-y-2">
+                      {retro.contributors.map(c => (
+                        <div key={c.name} className="rounded-xl bg-emerald-50 border border-emerald-200 p-3 space-y-1">
+                          <p className="text-xs font-semibold text-emerald-800">{c.name}</p>
+                          <p className="text-xs text-emerald-700 leading-relaxed">{c.highlights}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Incomplete */}
+                {retro.incomplete.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Still in progress</p>
+                    <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 space-y-1.5">
+                      {retro.incomplete.map(item => (
+                        <div key={item.title} className="flex items-center justify-between gap-2">
+                          <p className="text-xs text-amber-800">{item.title}</p>
+                          <span className="text-xs bg-amber-100 border border-amber-200 rounded-md px-1.5 py-0.5 text-amber-700 whitespace-nowrap shrink-0">
+                            {item.status}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Footer actions */}
+          <div className="shrink-0 px-5 py-4 border-t border-slate-100 flex items-center gap-2">
+            {retro && !slackDone && (
+              <button onClick={shareToSlack} disabled={slackSending}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium bg-[#4A154B] text-white hover:bg-[#3b0f3c] disabled:opacity-50 transition-colors">
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zM6.313 15.165a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zM8.834 6.313a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312zM18.956 8.834a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zM17.688 8.834a2.528 2.528 0 0 1-2.523 2.521 2.527 2.527 0 0 1-2.52-2.521V2.522A2.527 2.527 0 0 1 15.165 0a2.528 2.528 0 0 1 2.523 2.522v6.312zM15.165 18.956a2.528 2.528 0 0 1 2.523 2.522A2.528 2.528 0 0 1 15.165 24a2.527 2.527 0 0 1-2.52-2.522v-2.522h2.52zM15.165 17.688a2.527 2.527 0 0 1-2.52-2.523 2.526 2.526 0 0 1 2.52-2.52h6.313A2.527 2.527 0 0 1 24 15.165a2.528 2.528 0 0 1-2.522 2.523h-6.313z"/>
+                </svg>
+                {slackSending ? "Posting…" : "Share to #marketing"}
+              </button>
+            )}
+            {slackDone && (
+              <div className="flex items-center gap-1.5 text-xs text-emerald-600">
+                <CheckCircle2 className="w-4 h-4" />
+                Posted to #marketing
+              </div>
+            )}
+            {slackErr && (
+              <p className="text-xs text-red-600 flex-1">{slackErr}</p>
+            )}
+            <button onClick={onClose}
+              className="ml-auto px-4 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors">
+              Done
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -1737,8 +1963,8 @@ export function KanbanBoard() {
     setView("sprint");
   }
 
-  async function handleCompleteSprint(incompleteAction: "backlog" | "next") {
-    if (!activeSprint) return;
+  async function handleCompleteSprint(incompleteAction: "backlog" | "next"): Promise<string> {
+    if (!activeSprint) return "";
 
     // Move incomplete cards
     const incomplete = cards.filter(c => c.sprintId === activeSprint.id && c.status !== "completed");
@@ -1758,10 +1984,12 @@ export function KanbanBoard() {
       body: JSON.stringify({ status: "completed" }),
     });
     const completed = await res.json();
+    const sprintId = activeSprint.id;
 
     await loadData(); // Reload everything for consistency
-    setSprints(prev => prev.map(s => s.id === activeSprint.id ? completed : s));
+    setSprints(prev => prev.map(s => s.id === sprintId ? completed : s));
     setView("history");
+    return sprintId;
   }
 
   // ── Member CRUD ───────────────────────────────────────────────────────────
