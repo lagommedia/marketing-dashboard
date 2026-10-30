@@ -928,7 +928,7 @@ function CompleteSprintModal({ sprint, onComplete, onClose }: {
     // Headline + overview
     blocks.push({
       type: "section",
-      text: { type: "mrkdwn", text: `🏆 *${retro.headline}*\n\n${retro.overview}` },
+      text: { type: "mrkdwn", text: `<!here> 🏆 *${retro.headline}*\n\n${retro.overview}` },
     });
 
     // What we shipped
@@ -1324,7 +1324,7 @@ function RetroCard({
     const blocks: any[] = [
       { type: "header", text: { type: "plain_text", text: `✅  ${sprint.name} — Sprint Complete`, emoji: true } },
       { type: "divider" },
-      { type: "section", text: { type: "mrkdwn", text: `🏆 *${retro.headline}*\n\n${retro.overview}` } },
+      { type: "section", text: { type: "mrkdwn", text: `<!here> 🏆 *${retro.headline}*\n\n${retro.overview}` } },
     ];
 
     if (retro.categories.length > 0) {
