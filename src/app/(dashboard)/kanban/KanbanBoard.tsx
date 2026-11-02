@@ -2294,6 +2294,23 @@ export function KanbanBoard() {
       body: JSON.stringify(data),
     });
     const sprint = await res.json();
+
+    // Carry forward any cards that were left in a completed sprint (the "Next Sprint" choice)
+    const carryForward = cards.filter(c =>
+      c.type === "sprint" &&
+      c.sprintId !== null &&
+      sprints.find(s => s.id === c.sprintId)?.status === "completed"
+    );
+    if (carryForward.length > 0) {
+      await Promise.all(carryForward.map(c =>
+        fetch(`/api/kanban/cards/${c.id}`, {
+          method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sprintId: sprint.id, status: c.status === "completed" ? "not_started" : c.status }),
+        })
+      ));
+      await loadData();
+    }
+
     setSprints(prev => [sprint, ...prev]);
     setView("sprint");
   }
