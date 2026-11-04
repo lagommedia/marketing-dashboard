@@ -171,8 +171,17 @@ interface PaidMediaData {
 type SortKey = "spend" | "clicks" | "impressions" | "ctr" | "cpc" | "roas" | "conversions";
 type SortDir = "asc" | "desc";
 
-// Only these campaigns are shown — everything else is hidden
-const ACTIVE_CAMPAIGNS = ["Performance Max", "S_Non-Brand", "S_Brand"];
+const ACTIVE_CAMPAIGNS = [
+  "Performance Max",
+  "Demand Gen",
+  "S_Brand",
+  "S_Non-Brand",
+  "S_Non-Brand_AI",
+  "S_Non-Brand_Non-AI",
+  "S_Non-Brand_Competitors",
+  "S_Beta_Non-Brand_AI",
+  "S_Gamma_Non-Brand_AI",
+];
 
 // ---------------------------------------------------------------------------
 // Helpers
