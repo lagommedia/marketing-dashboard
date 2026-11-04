@@ -2583,7 +2583,38 @@ export function KanbanBoard() {
                           </div>
                           <div className="flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
                             {card.priority != null && <PriorityBadge priority={card.priority} />}
-                            {card.storyPoints != null && <StoryBadge pts={card.storyPoints} />}
+                            {/* Story points — double-click to edit */}
+                            {inlineEdit?.cardId === card.id && inlineEdit.field === "pts" ? (
+                              <div className="flex gap-1">
+                                {[1,2,3,5,8,13].map(n => (
+                                  <button key={n} type="button"
+                                    className={cn("w-6 h-6 rounded text-[11px] font-bold",
+                                      card.storyPoints === n ? "bg-violet-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-violet-100")}
+                                    onClick={() => commitInlineEdit(card.id, "pts", String(n))}>
+                                    {n}
+                                  </button>
+                                ))}
+                                <button type="button"
+                                  className="w-6 h-6 rounded text-[11px] font-bold bg-slate-100 text-slate-500 hover:bg-slate-200"
+                                  onClick={() => commitInlineEdit(card.id, "pts", "")}>
+                                  ×
+                                </button>
+                              </div>
+                            ) : (
+                              <span
+                                title="Double-click to set story points"
+                                onDoubleClick={() => {
+                                  setInlineEdit({ cardId: card.id, field: "pts" });
+                                  setInlineVal(card.storyPoints != null ? String(card.storyPoints) : "");
+                                }}
+                                className="cursor-pointer"
+                              >
+                                {card.storyPoints != null
+                                  ? <StoryBadge pts={card.storyPoints} />
+                                  : <span className="opacity-0 group-hover:opacity-100 text-[10px] text-slate-400 border border-dashed border-slate-300 rounded px-1.5 py-0.5">pts</span>
+                                }
+                              </span>
+                            )}
                             {card.assignee && <Avatar member={card.assignee} />}
                             <button onClick={() => moveToBacklog(card)} title="Move back to backlog"
                               className="opacity-0 group-hover:opacity-100 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium bg-slate-100 text-slate-600 hover:bg-slate-200 transition-all">
