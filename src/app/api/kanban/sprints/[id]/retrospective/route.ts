@@ -120,7 +120,7 @@ Generate the sprint retrospective.`;
   try {
     const message = await client.messages.create({
       model:      "claude-haiku-4-5",
-      max_tokens: 2000,
+      max_tokens: 8000,
       system:     systemPrompt,
       messages:   [{ role: "user", content: userMsg }],
     });
@@ -138,13 +138,12 @@ Generate the sprint retrospective.`;
     try {
       structured = JSON.parse(raw) as SprintRetrospective;
     } catch {
-      structured = {
-        headline: "Sprint complete",
-        overview: raw,
-        categories: [],
-        contributors: [],
-        incomplete: incompleteCards.map(c => ({ title: c.title, status: c.status.replace(/_/g, " ") })),
-      };
+      // Response was truncated or malformed — return a 500 so the UI can retry
+      // rather than silently saving incomplete data with empty arrays.
+      return NextResponse.json(
+        { error: "AI response was truncated or malformed. Please try again." },
+        { status: 500 }
+      );
     }
 
     // Save retrospective to the sprint record
