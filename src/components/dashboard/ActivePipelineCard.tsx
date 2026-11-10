@@ -13,6 +13,7 @@ const STAGE_COLORS: Record<string, string> = {
   "Progressing":       "#6366f1",
   "Ready to Purchase": "#4338ca",
   "Quote Signed":      "#312e81",
+  "Pending Approval":  "#1e1b4b",
 };
 
 interface Props {

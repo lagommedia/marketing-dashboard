@@ -26,6 +26,7 @@ const SHORT_STAGE_LABELS: Record<string, string> = {
   "Progressing":       "Stage 3",
   "Ready to Purchase": "Stage 4",
   "Quote Signed":      "Stage 5",
+  "Pending Approval":  "Stage 6",
 };
 
 const CHANNEL_CONFIG = [

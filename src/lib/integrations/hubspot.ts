@@ -79,18 +79,20 @@ const DEAL_SOURCE_REFERRAL = "Referral";  // → Referral (SQOs + Closed Won onl
 
 /**
  * Deal stages that count as Active Pipeline (SQOs).
- * Only stages 1, 3, 4, 5 are included — stages 2 and 6 are excluded by design.
+ * Stages 1, 3, 4, 5, 6 are included — stage 2 is excluded by design.
  *
  *   qualifiedtobuy       Sales 1: Demo Completed
  *   decisionmakerboughtin Sales 3: Progressing
  *   6181928              Sales 4: Ready to Purchase
  *   179383700            Sales 5: Quote Signed
+ *   1013446417           Sales 6: Pending Approval
  */
 const ACTIVE_PIPELINE_STAGES = [
   "qualifiedtobuy",        // Sales 1: Demo Completed
   "decisionmakerboughtin", // Sales 3: Progressing
   "6181928",               // Sales 4: Ready to Purchase
   "179383700",             // Sales 5: Quote Signed
+  "1013446417",            // Sales 6: Pending Approval
 ];
 
 /** Deal stage ID for Closed Won (Sales 7) */
@@ -616,6 +618,7 @@ const STAGE_LABELS: Record<string, string> = {
   decisionmakerboughtin: "Progressing",
   "6181928":             "Ready to Purchase",
   "179383700":           "Quote Signed",
+  "1013446417":          "Pending Approval",
 };
 
 const STAGE_ORDER = [
@@ -623,6 +626,7 @@ const STAGE_ORDER = [
   "decisionmakerboughtin",
   "6181928",
   "179383700",
+  "1013446417",
 ];
 
 export interface PipelineStageRow {
