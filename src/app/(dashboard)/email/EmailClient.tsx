@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Mail, Send, Eye, MousePointerClick, UserMinus,
   TrendingUp, AlertCircle, RefreshCw, ChevronLeft, ChevronRight,
-  ExternalLink,
+  ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, Filter,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -130,6 +130,18 @@ function RatePill({ metric, value }: { metric: keyof typeof BENCHMARKS; value: n
   );
 }
 
+// ── Sort / filter types ───────────────────────────────────────────────────────
+
+type SortField = "publishDate" | "sent" | "openRate" | "clickRate" | "ctor" | "unsubRate" | "opens" | "clicks";
+type SortDir   = "asc" | "desc";
+
+function SortIcon({ field, sortField, sortDir }: { field: SortField; sortField: SortField; sortDir: SortDir }) {
+  if (field !== sortField) return <ArrowUpDown className="w-3 h-3 ml-1 opacity-30" />;
+  return sortDir === "desc"
+    ? <ArrowDown className="w-3 h-3 ml-1 text-indigo-500" />
+    : <ArrowUp   className="w-3 h-3 ml-1 text-indigo-500" />;
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function EmailClient() {
@@ -139,6 +151,12 @@ export default function EmailClient() {
   const [data,  setData]  = useState<EmailData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState<string | null>(null);
+
+  // Filters & sort
+  const [hideZeroSends, setHideZeroSends] = useState(true);
+  const [minSends,      setMinSends]      = useState("");
+  const [sortField,     setSortField]     = useState<SortField>("publishDate");
+  const [sortDir,       setSortDir]       = useState<SortDir>("desc");
 
   const fetchData = useCallback(async (y: number, m: number) => {
     setLoading(true);
@@ -172,6 +190,31 @@ export default function EmailClient() {
 
   const isCurrentMonth = year === now.getFullYear() && month === now.getMonth() + 1;
   const s = data?.summary;
+
+  function toggleSort(field: SortField) {
+    if (sortField === field) setSortDir(d => d === "desc" ? "asc" : "desc");
+    else { setSortField(field); setSortDir("desc"); }
+  }
+
+  const filteredCampaigns = useMemo(() => {
+    if (!data) return [];
+    let list = [...data.campaigns];
+    if (hideZeroSends) list = list.filter(c => c.sent > 0);
+    const min = parseInt(minSends, 10);
+    if (!isNaN(min) && min > 0) list = list.filter(c => c.sent >= min);
+    list.sort((a, b) => {
+      const av = a[sortField] as number;
+      const bv = b[sortField] as number;
+      // For dates stored as ISO strings, compare lexicographically (works fine)
+      if (sortField === "publishDate") {
+        return sortDir === "desc"
+          ? b.publishDate.localeCompare(a.publishDate)
+          : a.publishDate.localeCompare(b.publishDate);
+      }
+      return sortDir === "desc" ? bv - av : av - bv;
+    });
+    return list;
+  }, [data, hideZeroSends, minSends, sortField, sortDir]);
 
   return (
     <div className="flex-1 overflow-y-auto bg-slate-50 p-6 space-y-6">
@@ -312,11 +355,70 @@ export default function EmailClient() {
       {/* Campaign table */}
       {data && data.campaigns.length > 0 && (
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-slate-800">
-              Campaigns — {MONTHS[month - 1]} {year}
-            </h2>
-            <span className="text-xs text-slate-400">{data.campaigns.length} email{data.campaigns.length !== 1 ? "s" : ""}</span>
+          {/* Table header + filter bar */}
+          <div className="px-5 py-3 border-b border-slate-100 flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2 mr-auto">
+              <h2 className="text-sm font-semibold text-slate-800">
+                Campaigns — {MONTHS[month - 1]} {year}
+              </h2>
+              <span className="text-xs text-slate-400">
+                {filteredCampaigns.length}{filteredCampaigns.length !== data.campaigns.length ? ` of ${data.campaigns.length}` : ""} email{filteredCampaigns.length !== 1 ? "s" : ""}
+              </span>
+            </div>
+
+            {/* Filter controls */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <Filter className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+
+              {/* Hide 0 sends toggle */}
+              <button
+                onClick={() => setHideZeroSends(v => !v)}
+                className={cn(
+                  "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors",
+                  hideZeroSends
+                    ? "bg-indigo-50 border-indigo-200 text-indigo-700"
+                    : "bg-white border-slate-200 text-slate-500 hover:border-slate-300"
+                )}
+              >
+                Hide 0 sends
+              </button>
+
+              {/* Min sends input */}
+              <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-full px-2.5 py-1">
+                <span className="text-xs text-slate-400">Min sends</span>
+                <input
+                  type="number"
+                  min="0"
+                  value={minSends}
+                  onChange={e => setMinSends(e.target.value)}
+                  placeholder="—"
+                  className="w-14 text-xs text-slate-700 bg-transparent outline-none text-right"
+                />
+              </div>
+
+              {/* Sort quick-picks */}
+              <div className="flex items-center gap-1">
+                {(["ctor","openRate","clickRate","sent"] as SortField[]).map(f => {
+                  const labels: Record<string, string> = { ctor: "CTOR", openRate: "Open Rate", clickRate: "Click Rate", sent: "Sent" };
+                  const active = sortField === f;
+                  return (
+                    <button
+                      key={f}
+                      onClick={() => toggleSort(f)}
+                      className={cn(
+                        "inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border transition-colors",
+                        active
+                          ? "bg-indigo-50 border-indigo-200 text-indigo-700"
+                          : "bg-white border-slate-200 text-slate-500 hover:border-slate-300"
+                      )}
+                    >
+                      {labels[f]}
+                      {active && (sortDir === "desc" ? <ArrowDown className="w-3 h-3 ml-1" /> : <ArrowUp className="w-3 h-3 ml-1" />)}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
 
           <div className="overflow-x-auto">
@@ -324,19 +426,59 @@ export default function EmailClient() {
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50">
                   <th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Campaign</th>
-                  <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Date</th>
-                  <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Sent</th>
-                  <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Opens</th>
-                  <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Open Rate</th>
-                  <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Clicks</th>
-                  <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Click Rate</th>
-                  <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">CTOR</th>
+                  <th
+                    className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide cursor-pointer hover:text-slate-700 select-none"
+                    onClick={() => toggleSort("publishDate")}
+                  >
+                    <span className="inline-flex items-center justify-end">Date <SortIcon field="publishDate" sortField={sortField} sortDir={sortDir} /></span>
+                  </th>
+                  <th
+                    className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide cursor-pointer hover:text-slate-700 select-none"
+                    onClick={() => toggleSort("sent")}
+                  >
+                    <span className="inline-flex items-center justify-end">Sent <SortIcon field="sent" sortField={sortField} sortDir={sortDir} /></span>
+                  </th>
+                  <th
+                    className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide cursor-pointer hover:text-slate-700 select-none"
+                    onClick={() => toggleSort("opens")}
+                  >
+                    <span className="inline-flex items-center justify-end">Opens <SortIcon field="opens" sortField={sortField} sortDir={sortDir} /></span>
+                  </th>
+                  <th
+                    className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide cursor-pointer hover:text-slate-700 select-none"
+                    onClick={() => toggleSort("openRate")}
+                  >
+                    <span className="inline-flex items-center justify-end">Open Rate <SortIcon field="openRate" sortField={sortField} sortDir={sortDir} /></span>
+                  </th>
+                  <th
+                    className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide cursor-pointer hover:text-slate-700 select-none"
+                    onClick={() => toggleSort("clicks")}
+                  >
+                    <span className="inline-flex items-center justify-end">Clicks <SortIcon field="clicks" sortField={sortField} sortDir={sortDir} /></span>
+                  </th>
+                  <th
+                    className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide cursor-pointer hover:text-slate-700 select-none"
+                    onClick={() => toggleSort("clickRate")}
+                  >
+                    <span className="inline-flex items-center justify-end">Click Rate <SortIcon field="clickRate" sortField={sortField} sortDir={sortDir} /></span>
+                  </th>
+                  <th
+                    className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide cursor-pointer hover:text-slate-700 select-none"
+                    onClick={() => toggleSort("ctor")}
+                  >
+                    <span className="inline-flex items-center justify-end">CTOR <SortIcon field="ctor" sortField={sortField} sortDir={sortDir} /></span>
+                  </th>
                   <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Unsubs</th>
-                  <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Unsub %</th>
+                  <th
+                    className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide cursor-pointer hover:text-slate-700 select-none"
+                    onClick={() => toggleSort("unsubRate")}
+                  >
+                    <span className="inline-flex items-center justify-end">Unsub % <SortIcon field="unsubRate" sortField={sortField} sortDir={sortDir} /></span>
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
-                {data.campaigns.map((c, i) => (
+                {filteredCampaigns.map((c, i) => (
                   <tr
                     key={c.id}
                     className={cn(
