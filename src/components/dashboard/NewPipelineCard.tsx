@@ -37,15 +37,23 @@ function twelveQuartersFrom(toStr: string): string {
   return new Date(yr, q * 3, 1).toISOString().slice(0, 10);
 }
 
+function isQuarterStart(dateStr: string): boolean {
+  const d = new Date(dateStr + "T00:00:00");
+  return d.getDate() === 1 && [0, 3, 6, 9].includes(d.getMonth());
+}
+
 export function NewPipelineCard({ value, from, to, channel, pace, sparkData }: Props) {
   const [open, setOpen]           = useState(false);
   const [trendOpen, setTrendOpen] = useState(false);
   const [preview, setPreview]     = useState<MiniBarItem[] | null>(null);
   const previewUrl = `/api/pipeline/new-breakdown?from=${from}&to=${to}&channel=${channel}`;
 
-  // Always show 12 quarters in the breakdown modal regardless of selected range
-  const trendFrom  = twelveQuartersFrom(to);
-  const trendUrl   = `/api/pipeline/new-breakdown?from=${trendFrom}&to=${to}`;
+  // For quarterly ranges show the full 12-quarter breakdown modal.
+  // For non-quarterly ranges (e.g. "This week") use the trend modal so the
+  // selected period is respected and compared to equivalent prior periods.
+  const isQuarterly = isQuarterStart(from);
+  const trendFrom   = twelveQuartersFrom(to);
+  const trendUrl    = `/api/pipeline/new-breakdown?from=${trendFrom}&to=${to}`;
 
   // Fetch segment preview for the mini pie chart (always "all" channels, selected range only)
   useEffect(() => {
@@ -73,7 +81,7 @@ export function NewPipelineCard({ value, from, to, channel, pace, sparkData }: P
         value={value}
         subValue="click to see trend"
         pace={pace}
-        onClick={() => channel === "paid_media" ? setTrendOpen(true) : setOpen(true)}
+        onClick={() => (!isQuarterly || channel === "paid_media") ? setTrendOpen(true) : setOpen(true)}
         footer={sparkData ? <MiniSparkline data={sparkData} format="currency" /> : preview ? <MiniPiePreview items={preview} /> : undefined}
       />
       <PipelineBreakdownModal
@@ -93,6 +101,7 @@ export function NewPipelineCard({ value, from, to, channel, pace, sparkData }: P
         to={to}
         channel={channel}
         format="currency"
+        breakdown={!isQuarterly && channel === "all"}
       />
     </>
   );

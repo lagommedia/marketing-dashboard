@@ -452,7 +452,16 @@ export function MetricTrendModal({ open, onClose, metric, label, from, to, chann
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 shrink-0">
           <div>
             <h3 className="text-sm font-semibold text-slate-900">{label} — Trend</h3>
-            <p className="text-xs text-slate-400 mt-0.5">12 periods · selected range highlighted</p>
+            <p className="text-xs text-slate-400 mt-0.5">
+              {(() => {
+                const f = new Date(from + "T00:00:00");
+                const isQStart = f.getDate() === 1 && [0, 3, 6, 9].includes(f.getMonth());
+                if (isQStart) return "Last 12 quarters · selected range highlighted";
+                const days = Math.round((new Date(to + "T00:00:00").getTime() - f.getTime()) / 86_400_000) + 1;
+                const unit = days === 1 ? "day" : days === 7 ? "week" : days <= 32 ? "month" : "period";
+                return `Last 12 ${unit}s · selected range highlighted`;
+              })()}
+            </p>
           </div>
           <button
             onClick={onClose}
