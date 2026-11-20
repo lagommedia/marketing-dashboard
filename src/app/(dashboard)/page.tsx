@@ -308,8 +308,18 @@ function computeSparkPeriods(fromStr: string, toStr: string): RawSparkPeriod[] {
     raw.push({ label: `Q${fromQ + 1} ${from.getFullYear()}`, from: fromStr, to: toStr, isCurrent: true });
   } else {
     const SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-    const durMs = to.getTime() - from.getTime();
-    const lbl   = (t: string) => { const d = new Date(t + "T00:00:00"); return `${SHORT[d.getMonth()]} ${d.getFullYear()}`; };
+    const durMs  = to.getTime() - from.getTime();
+    const durDays = Math.round(durMs / 86_400_000) + 1;
+    // For short ranges (≤ 14 days) label by start date so weekly periods are distinguishable.
+    // For longer ranges label by end month-year as before.
+    const lbl = (wFrom: string, wTo: string) => {
+      if (durDays <= 14) {
+        const d = new Date(wFrom + "T00:00:00");
+        return `${SHORT[d.getMonth()]} ${d.getDate()}`;
+      }
+      const d = new Date(wTo + "T00:00:00");
+      return `${SHORT[d.getMonth()]} ${d.getFullYear()}`;
+    };
     const windows: { from: string; to: string }[] = [{ from: fromStr, to: toStr }];
     let prevTo = new Date(from.getTime() - 86_400_000);
     for (let i = 0; i < 4; i++) {
@@ -318,7 +328,7 @@ function computeSparkPeriods(fromStr: string, toStr: string): RawSparkPeriod[] {
       prevTo = new Date(prevFrom.getTime() - 86_400_000);
     }
     windows.forEach((w, i) =>
-      raw.push({ label: lbl(w.to), from: w.from, to: w.to, isCurrent: i === windows.length - 1 })
+      raw.push({ label: lbl(w.from, w.to), from: w.from, to: w.to, isCurrent: i === windows.length - 1 })
     );
   }
 

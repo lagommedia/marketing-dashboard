@@ -43,6 +43,18 @@ function firstOfYearIso(): string {
   return `${new Date().getFullYear()}-01-01`;
 }
 
+function weekBounds(offsetWeeks: number): { from: string; to: string } {
+  const d   = new Date();
+  const dow = d.getDay(); // 0=Sun, 1=Mon
+  const thisMon = new Date(d);
+  thisMon.setDate(d.getDate() - ((dow + 6) % 7));  // most recent Monday
+  const from = new Date(thisMon);
+  from.setDate(thisMon.getDate() + offsetWeeks * 7);
+  const to = new Date(from);
+  to.setDate(from.getDate() + 6);                   // Sunday of that week
+  return { from: toIso(from), to: toIso(to) };
+}
+
 function formatRange(from: string, to: string): string {
   const f = new Date(from + "T00:00:00");
   const t = new Date(to + "T00:00:00");
@@ -62,12 +74,14 @@ interface Preset {
 }
 
 const PRESETS: Preset[] = [
-  { label: "Since Jan 2025", from: () => "2025-01-01",           to: todayIso },
-  { label: "This quarter",   from: () => quarterBounds(0).from,  to: todayIso },
-  { label: "Last quarter",   from: () => quarterBounds(-1).from, to: () => quarterBounds(-1).to },
-  { label: "Year to date",   from: firstOfYearIso,               to: todayIso },
-  { label: "Last 30 days",   from: () => daysAgoIso(29),         to: todayIso },
-  { label: "Last 90 days",   from: () => daysAgoIso(89),         to: todayIso },
+  { label: "Since Jan 2025", from: () => "2025-01-01",             to: todayIso },
+  { label: "This quarter",   from: () => quarterBounds(0).from,    to: todayIso },
+  { label: "Last quarter",   from: () => quarterBounds(-1).from,   to: () => quarterBounds(-1).to },
+  { label: "Year to date",   from: firstOfYearIso,                 to: todayIso },
+  { label: "Last 30 days",   from: () => daysAgoIso(29),           to: todayIso },
+  { label: "Last 90 days",   from: () => daysAgoIso(89),           to: todayIso },
+  { label: "This week",      from: () => weekBounds(0).from,       to: todayIso },
+  { label: "Last week",      from: () => weekBounds(-1).from,      to: () => weekBounds(-1).to },
 ];
 
 const DEFAULT_FROM = () => quarterBounds(0).from;
