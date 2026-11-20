@@ -189,10 +189,19 @@ async function getEstimatedMarketingSpend(
   const qEnd    = new Date(year, q * 3 + 3, 0);
   const totalMs = qEnd.getTime() - qStart.getTime() + 86_400_000;
 
-  // Cap asOf at min(today, end of selected `to` day) so historical ranges work.
-  const toEndOfDay = new Date(to.getTime() + 86_400_000);
-  const asOf       = new Date(Math.min(new Date().getTime(), toEndOfDay.getTime()));
-  const pct        = Math.min(Math.max(asOf.getTime() - qStart.getTime(), 0), totalMs) / totalMs;
+  // Clamp the selected range to the quarter so multi-quarter presets don't
+  // over-count, and cap the end at today so future dates don't inflate it.
+  const today      = new Date();
+  const rangeStart = new Date(Math.max(from.getTime(), qStart.getTime()));
+  const rangeEnd   = new Date(Math.min(to.getTime(), qEnd.getTime(), today.getTime()));
+  const rangeMs    = Math.max(0, rangeEnd.getTime() - rangeStart.getTime() + 86_400_000);
+  const pct        = Math.min(rangeMs, totalMs) / totalMs;
+
+  const quarterDays = Math.round(totalMs / 86_400_000);
+  const rangeDays   = Math.round(rangeMs  / 86_400_000);
+  const pctLabel    = rangeDays === quarterDays
+    ? "% of quarter"
+    : `${rangeDays} of ${quarterDays} days in Q${q + 1}`;
 
   // Prefer manually-entered Gross Expenses from the Pacing page.
   const period = `${year}-Q${q + 1}`;
@@ -204,7 +213,7 @@ async function getEstimatedMarketingSpend(
   if (pacingTarget?.targetSpend != null) {
     return {
       value:    pacingTarget.targetSpend * pct,
-      subLabel: "Gross Expenses × % quarter elapsed",
+      subLabel: `Gross Expenses × ${pctLabel}`,
     };
   }
 
@@ -234,19 +243,21 @@ async function getEstimatedMarketingSpend(
     return { value: null, subLabel: "Run a Google Sheets sync" };
   }
 
-  // Cap sheets pct further by last data month so future months don't inflate %.
+  // Cap the sheets pct by last data month so future months don't inflate %.
   let lastDataDate = new Date();
   if (lastDataMonth) {
     const [mon, yr] = lastDataMonth.split(" ");
     const mIdx = SHORT_MONTHS_PAGE.indexOf(mon);
     lastDataDate = new Date(Number(yr), mIdx + 1, 1);
   }
-  const sheetsAsOf = new Date(Math.min(asOf.getTime(), lastDataDate.getTime()));
-  const sheetsPct  = Math.min(Math.max(sheetsAsOf.getTime() - qStart.getTime(), 0), totalMs) / totalMs;
+  // Apply same range-based pct (already computed above), further capped by last data month.
+  const sheetsRangeEnd = new Date(Math.min(rangeEnd.getTime(), lastDataDate.getTime()));
+  const sheetsRangeMs  = Math.max(0, sheetsRangeEnd.getTime() - rangeStart.getTime() + 86_400_000);
+  const sheetsPct      = Math.min(sheetsRangeMs, totalMs) / totalMs;
 
   return {
     value:    (grossCosts + sharedAllocation) * sheetsPct,
-    subLabel: "Marketing Opex + Shared Costs + Headcount",
+    subLabel: `Marketing Opex + Shared Costs × ${pctLabel}`,
   };
 }
 
