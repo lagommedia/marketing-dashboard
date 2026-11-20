@@ -3,15 +3,18 @@ import { prisma } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
-function pctElapsed(from: Date, to: Date): number {
+/** Returns the fraction of the quarter's budget attributable to the selected range. */
+function rangePct(from: Date, to: Date): number {
   const q      = Math.floor(from.getMonth() / 3);
   const qStart = new Date(from.getFullYear(), q * 3,     1);
   const qEnd   = new Date(from.getFullYear(), q * 3 + 3, 0);
-  const totalMs   = qEnd.getTime() - qStart.getTime() + 86_400_000;
-  // Cap at today or the end of the selected range, whichever is earlier
-  const asOf      = new Date(Math.min(Date.now(), new Date(to.getTime() + 86_400_000).getTime()));
-  const elapsedMs = Math.min(Math.max(asOf.getTime() - qStart.getTime(), 0), totalMs);
-  return elapsedMs / totalMs;
+  const totalMs  = qEnd.getTime() - qStart.getTime() + 86_400_000;
+  const today    = new Date();
+  // Clamp the selected range to the quarter and to today
+  const rangeStart = new Date(Math.max(from.getTime(), qStart.getTime()));
+  const rangeEnd   = new Date(Math.min(to.getTime(), qEnd.getTime(), today.getTime()));
+  const rangeMs    = Math.max(0, rangeEnd.getTime() - rangeStart.getTime() + 86_400_000);
+  return Math.min(rangeMs, totalMs) / totalMs;
 }
 
 export async function GET(req: NextRequest) {
@@ -49,7 +52,7 @@ export async function GET(req: NextRequest) {
     }
 
     const grossExpenses = target.targetSpend;
-    const pct           = pctElapsed(from, to);
+    const pct           = rangePct(from, to);
     const denominator   = grossExpenses * pct;
 
     if (denominator <= 0) {

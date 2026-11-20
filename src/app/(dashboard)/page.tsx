@@ -446,19 +446,25 @@ async function getEfficiencySparklines(
       const from = new Date(p.from + "T00:00:00");
       const to   = new Date(p.to   + "T00:00:00");
 
-      // GTM + CAC: use PacingTarget.targetSpend as the cost basis — same as the
-      // GTM Efficiency card — so sparkline and card always agree for the current quarter.
-      // pctElapsed caps at qEnd (not at last Sheets month) to match the card's logic.
+      // GTM + CAC: use PacingTarget.targetSpend × range fraction as the cost basis —
+      // same pro-rating logic as Estimated Marketing Cost so all cards agree.
       const q       = Math.floor(from.getMonth() / 3);
       const period  = `${from.getFullYear()}-Q${q + 1}`;
-      const qEnd    = new Date(from.getFullYear(), q * 3 + 3, 0); // last day of quarter
-      const asOf    = new Date(Math.min(Date.now(), qEnd.getTime() + 86_400_000));
+      const qStart  = new Date(from.getFullYear(), q * 3, 1);
+      const qEnd    = new Date(from.getFullYear(), q * 3 + 3, 0);
       const budget  = pacingMap.get(period) ?? null;
 
       let gtmVal: number | null = null, cacVal: number | null = null, ltvVal: number | null = null;
 
       if (budget != null && budget > 0) {
-        const denom = budget * pctElapsed(from, asOf);
+        // Clamp the period range to the quarter and to today
+        const totalMs    = qEnd.getTime() - qStart.getTime() + 86_400_000;
+        const today      = new Date();
+        const rangeStart = new Date(Math.max(from.getTime(), qStart.getTime()));
+        const rangeEnd   = new Date(Math.min(to.getTime(), qEnd.getTime(), today.getTime()));
+        const rangeMs    = Math.max(0, rangeEnd.getTime() - rangeStart.getTime() + 86_400_000);
+        const pct        = Math.min(rangeMs, totalMs) / totalMs;
+        const denom      = budget * pct;
         if (denom > 0) {
           if (p.revenue   != null && p.revenue   > 0) gtmVal = p.revenue / denom;
           if (p.closedWon != null && p.closedWon > 0) cacVal = denom / p.closedWon;
